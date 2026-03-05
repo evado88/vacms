@@ -7,7 +7,7 @@ services:
     image: va_explorer/pycrossva
     build: https://github.com/VA-Explorer/pyCrossVA.git#microservice-experiment
     ports:
-      - "5001:5001"
+      - "5001:80"
     env_file:
       - .env
 

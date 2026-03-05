@@ -16,6 +16,12 @@ ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=["va_explorer.org"])
 
 CSRF_TRUSTED_ORIGINS = ["https://*.moh.gov.zm"]
 
+# Media (uploads)
+MEDIA_URL = "/media/"
+MEDIA_ROOT = "/srv/vacms/shared/media"
+
+# Static (collectstatic output)
+STATIC_ROOT = "/srv/vacms/shared/static"
 # Caches
 
 CACHES = {

@@ -27,29 +27,27 @@ from va_explorer.va_data_management.utils.location_access import (
 from .constants import FEEDBACK_MODULE_FEATURES
 
 
-feedback_upload_root = Path(__file__).resolve().parents[1] / "static" / "data" / "uploads"
-feedback_upload_root.mkdir(parents=True, exist_ok=True)
+# Prefer MEDIA_ROOT for user uploads, not STATIC
+feedback_upload_root = Path(getattr(settings, "MEDIA_ROOT", Path(__file__).resolve().parents[2] / "media")) / "feedback" / "uploads"
+
 feedback_attachment_storage = FileSystemStorage(
     location=str(feedback_upload_root),
-    base_url=f"{settings.STATIC_URL}data/uploads/",
+    base_url=f"{settings.MEDIA_URL}feedback/uploads/",
 )
 
 
 def feedback_attachment_upload_path(instance, filename):
-    """
-    Generate a predictable upload path for feedback attachments.
-    Organizes files by year/month and bakes in useful context for admins.
-    """
     now = timezone.now()
     name, ext = os.path.splitext(filename)
     module = getattr(instance, "module", "feedback") or "feedback"
     severity = getattr(instance, "severity", "unspecified") or "unspecified"
     reporter = getattr(getattr(instance, "submitted_by", None), "username", "") or "anonymous"
-    safe_name = "-".join(
-        part for part in [module, severity, reporter, slugify(name)] if part
-    )
+
+    safe_name = "-".join(part for part in [module, severity, reporter, slugify(name)] if part)
+
     return "/".join(
         [
+            "feedback/uploads",                 # <— prefix
             now.strftime("%Y"),
             now.strftime("%m"),
             f"{safe_name}-{uuid.uuid4().hex[:8]}{ext}",

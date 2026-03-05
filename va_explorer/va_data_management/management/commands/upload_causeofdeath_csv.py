@@ -1,5 +1,7 @@
 import csv
 import json
+from ast import literal_eval
+from collections import defaultdict
 from pathlib import Path
 
 from django.core.management.base import BaseCommand, CommandError
@@ -27,6 +29,37 @@ def _parse_datetime_or_none(value):
     return dt
 
 
+def _parse_settings_or_none(raw_value):
+    raw = (raw_value or "").strip()
+    if not raw:
+        return {}
+
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        # Backward compatibility for exported rows with Python-style dict strings.
+        try:
+            parsed = literal_eval(raw)
+        except (ValueError, SyntaxError):
+            return None
+
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _parse_verbalautopsy_id_or_none(raw_value):
+    raw = (raw_value or "").strip()
+    if not raw:
+        return None
+    if raw.isdigit():
+        return int(raw)
+    # Common spreadsheet coercion of integers to floats (e.g., 1074.0).
+    if raw.endswith(".0"):
+        without_decimal = raw[:-2]
+        if without_decimal.isdigit():
+            return int(without_decimal)
+    return None
+
+
 class Command(BaseCommand):
     help = (
         "Upload cause, algorithm, settings, created, updated, and verbalautopsy_id "
@@ -43,6 +76,11 @@ class Command(BaseCommand):
             "--clear-existing",
             action="store_true",
             help="Delete all existing CauseOfDeath rows before upload.",
+        )
+        parser.add_argument(
+            "--dry-run",
+            action="store_true",
+            help="Validate and report results without inserting rows.",
         )
 
     @transaction.atomic
@@ -64,12 +102,18 @@ class Command(BaseCommand):
 
         valid_va_ids = set(VerbalAutopsy.objects.values_list("id", flat=True))
         created_count = 0
+        updated_count = 0
         skipped_count = 0
         timestamp_updates = 0
+        skip_invalid_id_or_cause = 0
+        skip_missing_va = 0
+        skip_invalid_settings = 0
+        skipped_samples = defaultdict(list)
 
-        with csv_path.open("r", newline="", encoding="utf-8") as csv_file:
+        with csv_path.open("r", newline="", encoding="utf-8-sig") as csv_file:
             reader = csv.DictReader(csv_file)
-            headers = set(reader.fieldnames or [])
+            raw_headers = reader.fieldnames or []
+            headers = {h.strip() for h in raw_headers if h}
 
             # Accept both correct and requested misspelled header.
             algorithm_column = "algorithm" if "algorithm" in headers else "algrorithm"
@@ -86,33 +130,70 @@ class Command(BaseCommand):
                 cause = (row.get("cause") or "").strip()
                 algorithm = (row.get(algorithm_column) or "").strip()
                 settings_raw = (row.get("settings") or "").strip()
-                verbalautopsy_id_raw = (row.get("verbalautopsy_id") or "").strip()
+                verbalautopsy_id_raw = row.get("verbalautopsy_id")
+                verbalautopsy_id = _parse_verbalautopsy_id_or_none(verbalautopsy_id_raw)
 
-                if not cause or not verbalautopsy_id_raw.isdigit():
+                if not cause or verbalautopsy_id is None:
                     skipped_count += 1
+                    skip_invalid_id_or_cause += 1
+                    if len(skipped_samples["invalid_id_or_cause"]) < 5:
+                        skipped_samples["invalid_id_or_cause"].append(
+                            {
+                                "cause": cause,
+                                "verbalautopsy_id": (verbalautopsy_id_raw or "").strip(),
+                            }
+                        )
                     continue
 
-                verbalautopsy_id = int(verbalautopsy_id_raw)
                 if verbalautopsy_id not in valid_va_ids:
                     skipped_count += 1
+                    skip_missing_va += 1
+                    if len(skipped_samples["missing_verbalautopsy"]) < 5:
+                        skipped_samples["missing_verbalautopsy"].append(verbalautopsy_id)
                     continue
 
-                try:
-                    settings = json.loads(settings_raw) if settings_raw else {}
-                except json.JSONDecodeError:
+                settings = _parse_settings_or_none(settings_raw)
+                if settings is None:
                     skipped_count += 1
+                    skip_invalid_settings += 1
+                    if len(skipped_samples["invalid_settings"]) < 5:
+                        skipped_samples["invalid_settings"].append(
+                            {
+                                "verbalautopsy_id": verbalautopsy_id,
+                                "settings_preview": settings_raw[:120],
+                            }
+                        )
+                    continue
+
+                existing = CauseOfDeath.objects.filter(
+                    verbalautopsy_id=verbalautopsy_id,
+                    algorithm=algorithm,
+                ).first()
+
+                if options["dry_run"]:
+                    if existing is None:
+                        created_count += 1
+                    else:
+                        updated_count += 1
                     continue
 
                 created_dt = _parse_datetime_or_none(row.get("created"))
                 updated_dt = _parse_datetime_or_none(row.get("updated"))
 
-                cod = CauseOfDeath.objects.create(
-                    cause=cause,
-                    algorithm=algorithm,
-                    settings=settings,
-                    verbalautopsy_id=verbalautopsy_id,
-                )
-                created_count += 1
+                if existing is None:
+                    cod = CauseOfDeath.objects.create(
+                        cause=cause,
+                        algorithm=algorithm,
+                        settings=settings,
+                        verbalautopsy_id=verbalautopsy_id,
+                    )
+                    created_count += 1
+                else:
+                    existing.cause = cause
+                    existing.settings = settings
+                    existing.save(update_fields=["cause", "settings", "updated"])
+                    cod = existing
+                    updated_count += 1
 
                 if created_dt is not None or updated_dt is not None:
                     CauseOfDeath.objects.filter(pk=cod.pk).update(
@@ -124,6 +205,14 @@ class Command(BaseCommand):
         self.stdout.write(
             self.style.SUCCESS(
                 "Upload complete. "
-                f"Created={created_count}, TimestampUpdated={timestamp_updates}, Skipped={skipped_count}"
+                f"Created={created_count}, Updated={updated_count}, "
+                f"TimestampUpdated={timestamp_updates}, Skipped={skipped_count} "
+                f"(invalid_id_or_cause={skip_invalid_id_or_cause}, "
+                f"missing_verbalautopsy={skip_missing_va}, invalid_settings={skip_invalid_settings})"
             )
         )
+        for reason, samples in skipped_samples.items():
+            self.stdout.write(f"Skip samples for {reason}: {samples}")
+
+        if options["dry_run"]:
+            self.stdout.write(self.style.WARNING("Dry run enabled: no rows were inserted."))

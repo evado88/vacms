@@ -85,22 +85,22 @@ def test_trends(user: User):
     assert va_table_data["uncoded"]["1 month"] == 2
     assert va_table_data["uncoded"]["Overall"] == 4
 
-    # Check that the underlying graph data are correct
-    # Graphs do not show VAs collected in the current month
-    # Thus, the collected VAs were in: October, April, and September
+    # Check that underlying graph data are cumulative and non-decreasing.
+    # The 12-month VA chart excludes current month; records in range are:
+    # October (previous year), April, and September.
     assert json_data["graphs"]["collected"]["y"] == [
         1.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
         1.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
         1.0,
+        1.0,
+        1.0,
+        1.0,
+        2.0,
+        2.0,
+        2.0,
+        2.0,
+        2.0,
+        3.0,
     ]
     # Graphs do not show VAs coded in the current month
     # Thus, there are no coded VAs in the time period in question
@@ -118,21 +118,20 @@ def test_trends(user: User):
         0.0,
         0.0,
     ]
-    # Graphs do not show VAs uncoded in the current month
-    # Thus, the uncoded VAs were in: October, April, and September
+    # Uncoded trend is also cumulative.
     assert json_data["graphs"]["uncoded"]["y"] == [
         1.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
         1.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
         1.0,
+        1.0,
+        1.0,
+        1.0,
+        2.0,
+        2.0,
+        2.0,
+        2.0,
+        2.0,
+        3.0,
     ]
 
     # VAs in issue list includes VAs with no cause in Cause of Death
@@ -230,6 +229,21 @@ def test_trends_no_data(user: User):
     assert json_data["additionalIndeterminateCods"] == 0
 
     assert json_data["isFieldWorker"] is False
+
+
+def test_trends_section_model_only(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    response = client.get("/trends?section=model", follow=True)
+    assert response.status_code == 200
+    payload = json.loads(response.content)
+
+    assert isinstance(payload.get("modelTrends"), dict)
+    assert payload.get("vaTable") == {}
+    assert payload.get("graphs") == {}
+    assert payload.get("issueList") == []
+    assert payload.get("indeterminateCodList") == []
 
 
 def _seed_home_dashboard_scope_data():

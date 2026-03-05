@@ -105,6 +105,15 @@ def get_context_for_va_table(va_list, user):
     return context
 
 
+def _to_cumulative(values):
+    running = 0.0
+    cumulative = []
+    for value in values:
+        running += float(value)
+        cumulative.append(running)
+    return cumulative
+
+
 # NOTE: using Id10012 (Interview date) to drive stats/views. submissiondate is
 # unreliable or inaccurate due to bulk submissions
 def get_trends_data(user):
@@ -163,8 +172,9 @@ def get_trends_data(user):
             how="left",
         ).fillna(0)
 
+        collected_monthly = plot_df["y_collected"].astype(float).values.tolist()
         graphs["collected"]["x"] = plot_df["x"].values.tolist()
-        graphs["collected"]["y"] = plot_df["y_collected"].values.tolist()
+        graphs["collected"]["y"] = _to_cumulative(collected_monthly)
 
         # Coded; same query as above, just filtered by whether the va has been coded
         plot_df = plot_df.merge(
@@ -176,14 +186,14 @@ def get_trends_data(user):
             how="left",
         ).fillna(0)
 
+        coded_monthly = plot_df["y_coded"].astype(float).values.tolist()
         graphs["coded"]["x"] = plot_df["x"].values.tolist()
-        graphs["coded"]["y"] = plot_df["y_coded"].values.tolist()
+        graphs["coded"]["y"] = _to_cumulative(coded_monthly)
 
         # Uncoded; just take the difference between the two previous queries
+        uncoded_monthly = (plot_df["y_collected"] - plot_df["y_coded"]).astype(float).values.tolist()
         graphs["uncoded"]["x"] = plot_df["x"].values.tolist()
-        graphs["uncoded"]["y"] = (
-            plot_df["y_collected"] - plot_df["y_coded"]
-        ).values.tolist()
+        graphs["uncoded"]["y"] = _to_cumulative(uncoded_monthly)
 
         # VAs successfully coded in the past 24 hours, 1 week, and 1 month
         vas_coded_24_hours = va_df.loc[vas_24_hours, :].query("cause == cause").shape[0]

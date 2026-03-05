@@ -895,23 +895,43 @@ def _get_cached_home_chart_bundle(request):
     return chart_payload
 
 
-def _get_cached_trends_bundle(request):
-    cache_key = _fastpath_cache_key("home_trends_bundle", request, extra={"component": "trends"})
+def _get_cached_trends_bundle(request, *, include_va=True, include_model=True):
+    cache_key = _fastpath_cache_key(
+        "home_trends_bundle",
+        request,
+        extra={
+            "component": "trends",
+            "schema_version": 2,
+            "include_va": int(include_va),
+            "include_model": int(include_model),
+        },
+    )
     cached_payload = cache.get(cache_key)
     if cached_payload is not None:
         return cached_payload
 
-    with timed_block("home.trends.va_trends_data", request=request):
-        (
-            va_table,
-            graphs,
-            issue_list,
-            indeterminate_cod_list,
-            additional_issues,
-            additional_indeterminate_cods,
-        ) = get_trends_data(request.user)
-    with timed_block("home.trends.model_trends_data", request=request):
-        model_trends = get_model_trends_data(request.user)
+    va_table = {}
+    graphs = {}
+    issue_list = []
+    indeterminate_cod_list = []
+    additional_issues = 0
+    additional_indeterminate_cods = 0
+    model_trends = {}
+
+    if include_va:
+        with timed_block("home.trends.va_trends_data", request=request):
+            (
+                va_table,
+                graphs,
+                issue_list,
+                indeterminate_cod_list,
+                additional_issues,
+                additional_indeterminate_cods,
+            ) = get_trends_data(request.user)
+
+    if include_model:
+        with timed_block("home.trends.model_trends_data", request=request):
+            model_trends = get_model_trends_data(request.user)
 
     payload = {
         "vaTable": va_table,
@@ -937,7 +957,18 @@ class Index(CustomAuthMixin, TemplateView):
 
 class Trends(CustomAuthMixin, View):
     def get(self, request, *args, **kwargs):
-        return JsonResponse(_get_cached_trends_bundle(request))
+        section = (request.GET.get("section") or "all").strip().lower()
+        include_va = section in {"all", "va"}
+        include_model = section in {"all", "model"}
+        if section not in {"all", "va", "model"}:
+            return JsonResponse({"detail": "Unsupported trends section."}, status=400)
+        return JsonResponse(
+            _get_cached_trends_bundle(
+                request,
+                include_va=include_va,
+                include_model=include_model,
+            )
+        )
 
 
 trends_endpoint_view = Trends.as_view()
@@ -1021,8 +1052,12 @@ class HomeDashboardTabChartAPIView(CustomAuthMixin, PermissionRequiredMixin, Vie
             )
             return JsonResponse(payload)
 
-        trends_payload = _get_cached_trends_bundle(request)
         if tab_key == "trends":
+            trends_payload = _get_cached_trends_bundle(
+                request,
+                include_va=False,
+                include_model=True,
+            )
             metric_map = {
                 "households": "households",
                 "pregnancies": "pregnancies",
@@ -1052,6 +1087,11 @@ class HomeDashboardTabChartAPIView(CustomAuthMixin, PermissionRequiredMixin, Vie
             return JsonResponse(payload)
 
         if tab_key == "va_statistics":
+            trends_payload = _get_cached_trends_bundle(
+                request,
+                include_va=True,
+                include_model=False,
+            )
             graph_map = {
                 "interviewed": "collected",
                 "coded": "coded",
@@ -1111,9 +1151,12 @@ class HomeDashboardTabTableAPIView(CustomAuthMixin, PermissionRequiredMixin, Vie
             )
             return JsonResponse(payload)
 
-        trends_payload = _get_cached_trends_bundle(request)
-
         if tab_key == "trends":
+            trends_payload = _get_cached_trends_bundle(
+                request,
+                include_va=False,
+                include_model=True,
+            )
             metric_map = {
                 "households": "households",
                 "pregnancies": "pregnancies",
@@ -1137,6 +1180,11 @@ class HomeDashboardTabTableAPIView(CustomAuthMixin, PermissionRequiredMixin, Vie
             return JsonResponse(payload)
 
         if tab_key == "va_statistics":
+            trends_payload = _get_cached_trends_bundle(
+                request,
+                include_va=True,
+                include_model=False,
+            )
             if table_key == "summary":
                 payload = {"vaTable": trends_payload.get("vaTable", {})}
                 cache.set(

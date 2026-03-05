@@ -85,6 +85,15 @@ def _empty_metric_trend(month_labels):
     }
 
 
+def _to_cumulative(values):
+    running = 0.0
+    cumulative = []
+    for value in values:
+        running += float(value)
+        cumulative.append(running)
+    return cumulative
+
+
 def build_trend_for_queryset(queryset, key_field="key"):
     now_local = timezone.localtime(timezone.now())
     since_day = now_local - timedelta(days=1)
@@ -122,7 +131,8 @@ def build_trend_for_queryset(queryset, key_field="key"):
     output["table"]["recorded"]["1 month"] = sum(1 for ts in timestamps if ts >= since_month)
 
     month_counter = Counter(ts.strftime("%Y-%m") for ts in timestamps)
-    output["graphs"]["recorded"]["y"] = [float(month_counter.get(key, 0)) for key in month_keys]
+    monthly_counts = [float(month_counter.get(key, 0)) for key in month_keys]
+    output["graphs"]["recorded"]["y"] = _to_cumulative(monthly_counts)
     return output
 
 
