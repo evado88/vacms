@@ -20,10 +20,10 @@
     </div>
     <div class="ou-card-body">
       <form method="get" class="ou-filter-row">
-        {% crispy filterset.form %}
+        {% crispy filter.form %}
         <div class="ou-form-actions">
           <button class="btn btn-primary" type="submit">Search</button>
-          {% if filterset.is_valid %}
+          {% if filter.is_valid %}
             <a class="btn btn-secondary" href="{% url 'va_data_management:pregnancy_outcomes' %}">Reset</a>
           {% endif %}
           {% if download_url == "" %}

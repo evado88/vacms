@@ -27,28 +27,16 @@ class PregnancyOutcomes(CustomAuthMixin, PermissionRequiredMixin, ListView):
     model = PregnancyOutcome
 
     def get_queryset(self):
-        queryset = PregnancyOutcome.objects.all()
         queryset = restrict_queryset_to_user_locations(
-            queryset,
+            PregnancyOutcome.objects.all(),
             self.request.user,
         ).order_by("-id")
-        # Filtering example: by district
-        if self.request.GET.get("id"):
-            queryset = queryset.filter(district__icontains=self.request.GET["id"])
-        if self.request.GET.get("mother"):
-            queryset = queryset.filter(district__icontains=self.request.GET["mother"])
-        if self.request.GET.get("respondent"):
-            queryset = queryset.filter(district__icontains=self.request.GET["respondent"])
-        if self.request.GET.get("district"):
-            queryset = queryset.filter(district__icontains=self.request.GET["district"])
-        if self.request.GET.get("date_of_delivery"):
-            queryset = queryset.filter(district__icontains=self.request.GET["date_of_delivery"])
         self.filterset = PregnancyOutcomeFilter(self.request.GET, queryset=queryset)
         return self.filterset.qs.order_by("-id")
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context['filterset'] = self.filterset        
+        context["filter"] = self.filterset
         return context
 
 class PregnancyOutcomeAccessMixin(SingleObjectMixin):

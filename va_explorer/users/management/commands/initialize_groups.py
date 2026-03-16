@@ -27,12 +27,16 @@ GROUPS_PERMISSIONS = {
     },
     "Data Managers": {
         Dashboard: ["view_dashboard", "download_data", "view_pii", "supervise_users"],
-        User: ["view_user"],
+        User: [],
         VerbalAutopsy: [
             "change_verbalautopsy",
             "view_verbalautopsy",
             "delete_verbalautopsy",
         ],
+        Household: ["view_household", "change_household"],
+        Pregnancy: ["view_pregnancy", "change_pregnancy"],
+        PregnancyOutcome: ["view_pregnancyoutcome", "change_pregnancyoutcome"],
+        Death: ["view_death", "change_death"],
         DataCleanup: ["view_datacleanup", "download", "bulk_download"],
     },
     "Data Viewers": {

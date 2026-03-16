@@ -70,6 +70,11 @@ class DeathEdit(CustomAuthMixin, PermissionRequiredMixin, DeathAccessMixin, Succ
     def get_success_url(self):
         return reverse("va_data_management:death_detail", kwargs={"id": self.object.id})
 
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["id"] = self.object.id
+        return context
+
 
 class DeathDelete(CustomAuthMixin, PermissionRequiredMixin, DeleteView):
     permission_required = "va_data_management.delete_death"

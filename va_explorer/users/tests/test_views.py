@@ -1,10 +1,12 @@
 import pytest
-from django.contrib.auth.models import AnonymousUser, Permission
+from django.contrib.auth.models import AnonymousUser, Group, Permission
+from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import PermissionDenied
 from django.test import Client, RequestFactory
 from django.urls import reverse
 
 from va_explorer.tests.factories import GroupFactory, NewUserFactory, UserFactory
+from va_explorer.users.management.commands.initialize_groups import GROUPS_PERMISSIONS
 from va_explorer.users.models import User
 from va_explorer.users.views import (
     UserRedirectView,
@@ -14,6 +16,19 @@ from va_explorer.users.views import (
 )
 
 pytestmark = pytest.mark.django_db
+
+
+def seeded_group(name):
+    group, _ = Group.objects.get_or_create(name=name)
+    group.permissions.clear()
+    for model_class, codenames in GROUPS_PERMISSIONS[name].items():
+        content_type = ContentType.objects.get_for_model(model_class)
+        permissions = Permission.objects.filter(
+            content_type=content_type,
+            codename__in=codenames,
+        )
+        group.permissions.add(*permissions)
+    return group
 
 
 class TestUserRedirectView:
@@ -170,6 +185,15 @@ class TestUserCreateView:
             b"You must set a new password before you can view this page"
             in response.content
         )
+
+    def test_data_manager_cannot_access_user_index(self):
+        user = UserFactory.create(groups=[seeded_group("Data Managers")])
+        client = Client()
+        client.force_login(user)
+
+        response = client.get(reverse("users:index"))
+
+        assert response.status_code == 403
 
 
 class TestUserUpdateView:
