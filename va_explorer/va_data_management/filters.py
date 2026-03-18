@@ -29,21 +29,10 @@ class DateInput(forms.DateInput):
 # Verbal Autopsy (VA) list
 # =========================
 class VAFilter(FilterSet):
-    id = CharFilter(
-        field_name="id",
-        label="ID",
-        validators=[validate_integer],
-        widget=TextInput(attrs={"class": "form-text"}),
-    )
     interviewer = CharFilter(
         field_name="Id10010",
         lookup_expr="icontains",
         label="Interviewer",
-        widget=TextInput(attrs={"class": "form-text"}),
-    )
-    deceased = CharFilter(
-        method="filter_deceased",
-        label="Deceased",
         widget=TextInput(attrs={"class": "form-text"}),
     )
     start_date = DateFilter(
@@ -58,10 +47,16 @@ class VAFilter(FilterSet):
         label="Latest Date",
         widget=DateInput(attrs={"class": "form-date datepicker"}),
     )
-    location = CharFilter(
-        field_name="location__name",
+    district = CharFilter(
+        field_name="district",
         lookup_expr="icontains",
-        label="Facility",
+        label="District",
+        widget=TextInput(attrs={"class": "form-text"}),
+    )
+    ward = CharFilter(
+        field_name="ward",
+        lookup_expr="icontains",
+        label="Ward",
         widget=TextInput(attrs={"class": "form-text"}),
     )
     cause = CharFilter(

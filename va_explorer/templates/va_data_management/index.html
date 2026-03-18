@@ -6,6 +6,34 @@
 
 {% load crispy_forms_tags %}
 
+{% block page_styles %}
+  {{ block.super }}
+  <style>
+    .ou-va-filter-row {
+      gap: 0.75rem;
+    }
+
+    .ou-va-filter-row > .form-group,
+    .ou-va-filter-row > .form-row,
+    .ou-va-filter-row > .form-inline,
+    .ou-va-filter-row > .controls,
+    .ou-va-filter-row > .control-group {
+      margin-bottom: 0;
+    }
+
+    .ou-va-filter-actions {
+      margin-left: 0;
+      align-self: flex-end;
+    }
+
+    @media (min-width: 768px) {
+      .ou-va-filter-actions {
+        margin-left: auto;
+      }
+    }
+  </style>
+{% endblock %}
+
 {% block content %}
   {% include 'partials/_va_update_stats.html' %}
 
@@ -20,9 +48,9 @@
       <h2 class="ou-card-title">Filters</h2>
     </div>
     <div class="ou-card-body">
-      <form method="get" class="ou-filter-row">
+      <form method="get" class="ou-filter-row ou-va-filter-row">
         {% crispy filterset.form %}
-        <div class="ou-form-actions">
+        <div class="ou-form-actions ou-va-filter-actions">
           <button class="btn btn-primary" type="submit">Search</button>
           {% if filterset.is_valid %}
             <a class="btn btn-secondary" href="{% url 'data_management:index' %}">Reset</a>

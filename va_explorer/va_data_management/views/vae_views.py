@@ -3,7 +3,7 @@ import re
 from django.contrib import messages
 from django.contrib.auth.mixins import PermissionRequiredMixin
 from django.contrib.messages.views import SuccessMessageMixin
-from django.db.models import Count, F, Q, TextField
+from django.db.models import Count, F, OuterRef, Q, Subquery, TextField
 from django.db.models import Value as V
 from django.db.models.functions import Concat
 from django.shortcuts import redirect
@@ -21,7 +21,7 @@ from django.views.generic.detail import SingleObjectMixin
 from va_explorer.utils.mixins import CustomAuthMixin
 from va_explorer.va_data_management.filters import VAFilter
 from va_explorer.va_data_management.forms import VerbalAutopsyForm
-from va_explorer.va_data_management.models import Location, VerbalAutopsy
+from va_explorer.va_data_management.models import CauseCodingIssue, Location, VerbalAutopsy
 from va_explorer.va_data_management.tasks import run_coding_algorithms
 from va_explorer.va_data_management.utils.date_parsing import parse_date
 from va_explorer.va_data_management.utils.loading import get_va_summary_stats
@@ -34,14 +34,31 @@ class Index(CustomAuthMixin, PermissionRequiredMixin, ListView):
     paginate_by = 15
 
     def get_queryset(self):
-        # Restrict to VAs this user can access and prefetch related for performance
+        # Restrict to VAs this user can access and prefetch related for performance.
+        # Use Subquery for error/warning counts to avoid a Cartesian product JOIN
+        # between causes (CauseOfDeath) and coding_issues (CauseCodingIssue).
+        errors_subq = (
+            CauseCodingIssue.objects.filter(
+                verbalautopsy=OuterRef("pk"), severity="error"
+            )
+            .values("verbalautopsy")
+            .annotate(c=Count("id"))
+            .values("c")
+        )
+        warnings_subq = (
+            CauseCodingIssue.objects.filter(
+                verbalautopsy=OuterRef("pk"), severity="warning"
+            )
+            .values("verbalautopsy")
+            .annotate(c=Count("id"))
+            .values("c")
+        )
         queryset = (
             self.request.user.verbal_autopsies()
-            .select_related("location")
-            .select_related("causes")
-            .select_related("coding_issues")
             .annotate(
-                deceased=Concat("Id10017", V(" "), "Id10018", output_field=TextField())
+                deceased=Concat("Id10017", V(" "), "Id10018", output_field=TextField()),
+                errors=Subquery(errors_subq),
+                warnings=Subquery(warnings_subq),
             )
             .values(
                 "id",
@@ -51,12 +68,8 @@ class Index(CustomAuthMixin, PermissionRequiredMixin, ListView):
                 "Id10010",
                 "Id10012",
                 "deceased",
-                errors=Count(
-                    F("coding_issues"), filter=Q(coding_issues__severity="error")
-                ),
-                warnings=Count(
-                    F("coding_issues"), filter=Q(coding_issues__severity="warning")
-                ),
+                "errors",
+                "warnings",
             )
         )
 
