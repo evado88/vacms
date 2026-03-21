@@ -423,28 +423,42 @@ table.home-page-statistics th {
     transition: all 0.3s ease;
 }
 
-/* Toggle Button */
+/* Toggle Button — in-flow nav item, always visible inside the collapsed sidebar */
+.sidebar-container .sidebar-toggle,
 .sidebar-toggle {
-    position: absolute;
-    top: 20px;
-    right: -50px;
-    width: 40px;
-    height: 40px;
-    background: #009140;
-    border: none;
-    border-radius: 0 8px 8px 0;
-    color: white;
-    cursor: pointer;
+    position: static;
+    width: 100%;
     display: flex;
     align-items: center;
-    justify-content: center;
-    transition: all 0.3s ease;
-    box-shadow: 2px 0 10px rgba(0, 0, 0, 0.1);
+    padding: 12px 8px 12px 20px;
+    color: #bdc3c7;
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    outline: none;
+    cursor: pointer;
+    transition: color 0.3s ease;
+    text-align: left;
+    -webkit-appearance: none;
+    appearance: none;
 }
 
-.sidebar-toggle:hover {
-    background: #e67816;
-    transform: translateX(5px);
+/* Scoped to .sidebar-container to beat dashboard.css's broad button/:is(button) rules
+   which load later and share the same specificity as a plain class selector. */
+.sidebar-container .sidebar-toggle:hover,
+.sidebar-container .sidebar-toggle:focus,
+.sidebar-container .sidebar-toggle:active {
+    background: transparent !important;
+    color: #e67816;
+    border: none;
+    box-shadow: none;
+    outline: none;
+}
+
+.sidebar-container .sidebar-toggle:focus-visible {
+    outline: 2px solid #009140;
+    outline-offset: -2px;
 }
 
 /* Desktop Collapse Toggle */
@@ -477,6 +491,7 @@ table.home-page-statistics th {
 .sidebar-nav {
     flex: 1;
     padding: 20px 0;
+    overflow-x: visible;
     overflow-y: auto;
     width: 100%;
     box-sizing: border-box;
@@ -701,6 +716,7 @@ a.link-default:hover {
     width: var(--sidebar-collapsed-width);
     min-width: var(--sidebar-collapsed-width);
     max-width: var(--sidebar-collapsed-width);
+    overflow: visible;
 }
 
 .sidebar-container.collapsed .brand-text,
@@ -711,6 +727,8 @@ a.link-default:hover {
     visibility: hidden;
     transform: translateX(-10px);
     width: 0;
+    height: 0;
+    overflow: hidden;
 }
 
 .sidebar-container.collapsed .collapse-caret {
@@ -746,26 +764,6 @@ a.link-default:hover {
     right: 20px;
 }
 
-/* Tooltip for collapsed state */
-.sidebar-container.collapsed .nav-link {
-    position: relative;
-}
-
-.sidebar-container.collapsed .nav-link:hover::after {
-    content: attr(data-tooltip);
-    position: absolute;
-    left: var(--sidebar-collapsed-width);
-    top: 50%;
-    transform: translateY(-50%);
-    background: rgba(0, 0, 0, 0.8);
-    color: white;
-    padding: 6px 10px;
-    border-radius: 4px;
-    font-size: 12px;
-    white-space: nowrap;
-    z-index: 1001;
-    opacity: 1;
-}
 
 .custom-footer {
     background: #ffffff;
