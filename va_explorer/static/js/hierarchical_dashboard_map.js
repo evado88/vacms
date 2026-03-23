@@ -1,6 +1,8 @@
 (function () {
   if (window.createHierarchicalDashboardMap) return;
 
+  const ZAMBIA_BOUNDS = [[-18.5, 21.5], [-8.0, 34.0]];
+
   const LEVEL_CONFIG = {
     1: { label: "Province", file: "level_1_provinces.geojson", key: "province_name" },
     2: { label: "District", file: "level_2_districts.geojson", key: "district_name" },
@@ -257,11 +259,8 @@
     const ensureMap = async () => {
       if (state.map || typeof L === "undefined") return;
       state.map = L.map(containerId, {
-        maxBounds: [
-          [-6, 20],
-          [-20, 34],
-        ],
-      }).setView([-13, 27], 6);
+        maxBounds: [[-6, 20], [-20, 34]],
+      }).fitBounds(ZAMBIA_BOUNDS, { padding: [10, 10] });
       state.map.attributionControl.setPrefix("");
       state.map.keyboard.disable();
       state.map.doubleClickZoom.disable();
@@ -338,7 +337,7 @@
       try {
         state.map.invalidateSize();
         if (!fitToDataBounds) {
-          state.map.setView([-13, 27], 6);
+          state.map.fitBounds(ZAMBIA_BOUNDS, { padding: [10, 10] });
           return;
         }
         const bounds = state.layer.getBounds();

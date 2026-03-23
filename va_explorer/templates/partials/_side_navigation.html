@@ -21,10 +21,10 @@
         <a
           class="nav-link {% if request.resolver_match.url_name == 'index' and request.resolver_match.namespace == 'home' %}active{% endif %}"
           href="{% url 'home:index' %}"
-          data-tooltip="Home"
+          data-tooltip="Operational Dashboard"
         >
-          <i class="fas fa-home nav-icon"></i>
-          <span class="nav-label">Home</span>
+          <i class="fas fa-chart-area nav-icon"></i>
+          <span class="nav-label">Operational Dashboard</span>
         </a>
       </li>
       {% if perms.va_analytics.view_dashboard %}
@@ -66,7 +66,7 @@
               href="{% url 'va_data_management:households' %}"
               data-tooltip="Households"
             >
-              <i class="fas fa-home nav-icon"></i>
+              <i class="fas fa-house-user nav-icon"></i>
               <span class="nav-label">Households</span>
             </a>
           </li>
@@ -214,17 +214,9 @@ document.addEventListener("DOMContentLoaded", function () {
     );
   }
 
-  // Determine the correct collapsed state for desktop.
-  // On dashboard pages (home and outcomes dashboards) the sidebar defaults to
-  // collapsed so the charts have maximum viewport width. Any explicit user
-  // toggle is persisted in localStorage and takes precedence.
-  function getDesktopCollapsedState() {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    return saved !== null ? saved === "true" : true;
-  }
-
+  // Sidebar is always collapsed on desktop — toggle is disabled.
   function applyDesktopState() {
-    setCollapsed(getDesktopCollapsedState());
+    setCollapsed(true);
   }
 
   function applyMobileState() {
@@ -260,28 +252,55 @@ document.addEventListener("DOMContentLoaded", function () {
   }
 
   // --- Toggle behavior ---
-  sidebarToggle.addEventListener("click", function () {
-    if (!isDesktop()) {
-      // Mobile: open/close the off-canvas sidebar
-      const isNowOpen = sidebar.classList.toggle("open");
-      sidebarOverlay.classList.toggle("active", isNowOpen);
-    } else {
-      // Desktop: collapse/expand (icon-only) and persist the user's choice
-      const isCollapsed = sidebar.classList.toggle("collapsed");
-      document.documentElement.style.setProperty(
-        "--sidebar-current-width",
-        isCollapsed ? "var(--sidebar-collapsed-width)" : "var(--sidebar-width)"
-      );
-      localStorage.setItem(STORAGE_KEY, isCollapsed.toString());
+  function toggleMobileSidebar() {
+    const isNowOpen = sidebar.classList.toggle("open");
+    sidebarOverlay.classList.toggle("active", isNowOpen);
+    // Update the mobile top bar button icon
+    const mobileToggle = document.getElementById("mobileSidebarToggle");
+    if (mobileToggle) {
+      const icon = mobileToggle.querySelector("i");
+      if (icon) {
+        icon.classList.toggle("fa-bars", !isNowOpen);
+        icon.classList.toggle("fa-times", isNowOpen);
+      }
     }
     updateToggleIcon();
+  }
+
+  sidebarToggle.addEventListener("click", function () {
+    if (!isDesktop()) {
+      toggleMobileSidebar();
+    }
+    // Desktop: toggle disabled — sidebar stays collapsed permanently.
   });
+
+  // Mobile top bar hamburger button
+  const mobileSidebarToggle = document.getElementById("mobileSidebarToggle");
+  if (mobileSidebarToggle) {
+    mobileSidebarToggle.addEventListener("click", function () {
+      if (!isDesktop()) {
+        toggleMobileSidebar();
+      }
+    });
+  }
+
+  function resetMobileToggleIcon() {
+    const mobileToggle = document.getElementById("mobileSidebarToggle");
+    if (mobileToggle) {
+      const icon = mobileToggle.querySelector("i");
+      if (icon) {
+        icon.classList.remove("fa-times");
+        icon.classList.add("fa-bars");
+      }
+    }
+  }
 
   // Clicking overlay closes the sidebar
   sidebarOverlay.addEventListener("click", function () {
     if (!isDesktop()) {
       sidebar.classList.remove("open");
       this.classList.remove("active");
+      resetMobileToggleIcon();
     }
     updateToggleIcon();
   });
@@ -291,6 +310,7 @@ document.addEventListener("DOMContentLoaded", function () {
     if (!isDesktop() && sidebar.classList.contains("open")) {
       sidebar.classList.remove("open");
       sidebarOverlay.classList.remove("active");
+      resetMobileToggleIcon();
       updateToggleIcon();
       return;
     }

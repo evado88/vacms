@@ -51,7 +51,7 @@
 }
 
 .sidebar-nav {
-  overflow-x: visible;
+  overflow-x: hidden;
   overflow-y: auto;
 }
 
@@ -139,6 +139,13 @@
 .collapsible-header[aria-expanded="true"] .collapse-caret {
   transform: rotate(180deg);
   transition: transform 0.18s ease;
+}
+
+/* Hide the sidebar toggle button on desktop — toggle is disabled */
+@media screen and (min-width: 996px) {
+  .sidebar-toggle {
+    display: none;
+  }
 }
 
 /* --- Mobile (<=995px) --- */

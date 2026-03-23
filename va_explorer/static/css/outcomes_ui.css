@@ -26,9 +26,14 @@
 
 .dashboard-shell .dashboard-tab-panel {
   background: var(--ou-dashboard-surface);
-  border: 1px solid var(--ou-border);
+  border: none;
   border-radius: 14px;
   box-shadow: var(--ou-shadow);
+  padding: 0;
+}
+
+.dashboard-shell .dashboard-tab-panel > * {
+  margin: 0;
 }
 
 .ou-page-header {
