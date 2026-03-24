@@ -532,6 +532,9 @@
 
   const init = async () => {
     setupDateInputs([filterElements.start, filterElements.end]);
+    const today = new Date().toISOString().slice(0, 10);
+    if (filterElements.start && !filterElements.start.value) filterElements.start.value = today;
+    if (filterElements.end && !filterElements.end.value) filterElements.end.value = today;
     bindEvents();
     await refreshAll();
   };

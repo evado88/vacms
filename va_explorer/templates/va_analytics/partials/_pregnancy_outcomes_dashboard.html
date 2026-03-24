@@ -11,39 +11,44 @@
   data-place-of-birth-endpoint="{% url 'va_analytics:po-place-of-birth-api' %}"
   data-map-endpoint="{% url 'va_analytics:po-map-api' %}"
 >
-  <div class="po-dashboard-columns">
-    <div class="po-dashboard-column po-dashboard-column--left">
-      <section class="sectionContainer panelView" id="poPanelSection" data-component="panel">
-        <div class="highlightsContainer" id="poSummaryCards" data-component="summary">
-          <div class="highlight">
-            <h3>Last Data Update</h3>
-            <p id="poCardLastDataUpdate">{{ card_last_data_update }}</p>
-          </div>
-          <div class="highlight">
-            <h3>Number of Events</h3>
-            <p id="poCardNumberOfEvents">{{ card_number_of_events }}</p>
-          </div>
-          <div class="highlight">
-            <h3>% of Events: Multiple Birth</h3>
-            <p id="poCardMultipleBirthPct">{{ card_multiple_birth_pct }}%</p>
-          </div>
-          <div class="highlight">
-            <h3>Mean Age</h3>
-            <p id="poCardMeanAge">{{ card_mean_age }}</p>
-          </div>
-          <div class="highlight">
-            <h3>% HIV+</h3>
-            <p id="poCardHivPct">{{ card_hiv_positive_pct }}%</p>
-          </div>
+  <!-- Row 1: KPIs -->
+  <div class="po-top-row">
+    <section class="sectionContainer panelView" id="poPanelSection" data-component="panel">
+      <div class="highlightsContainer" id="poSummaryCards" data-component="summary">
+        <div class="highlight">
+          <h3>Last Data Update</h3>
+          <p id="poCardLastDataUpdate">{{ card_last_data_update }}</p>
         </div>
-        <p id="poSummaryEmpty" class="po-empty-state" hidden>No pregnancy outcomes data available for the selected filters.</p>
+        <div class="highlight">
+          <h3>Number of Events</h3>
+          <p id="poCardNumberOfEvents">{{ card_number_of_events }}</p>
+        </div>
+        <div class="highlight">
+          <h3>% of Events: Multiple Birth</h3>
+          <p id="poCardMultipleBirthPct">{{ card_multiple_birth_pct }}%</p>
+        </div>
+        <div class="highlight">
+          <h3>Mean Age</h3>
+          <p id="poCardMeanAge">{{ card_mean_age }}</p>
+        </div>
+        <div class="highlight">
+          <h3>% HIV+</h3>
+          <p id="poCardHivPct">{{ card_hiv_positive_pct }}%</p>
+        </div>
+      </div>
+      <p id="poSummaryEmpty" class="po-empty-state" hidden>No pregnancy outcomes data available for the selected filters.</p>
+    </section>
+  </div>
 
-        <form id="poFiltersForm" class="controls" data-component="filters" method="get" action="{% url 'va_analytics:outcomes-dashboard' %}">
-          <small class="dashboard-note">
-            Note: this dashboard visualizes coded pregnancy outcomes and all charts sum to the coded total above.
-          </small>
-
-          <div class="filtersRow">
+  <!-- Row 2: Filters -->
+  <div class="po-filters-row">
+    <section class="sectionContainer" id="poFiltersSection" data-component="filters">
+      <form id="poFiltersForm" class="controls" method="get" action="{% url 'va_analytics:outcomes-dashboard' %}">
+        <small class="dashboard-note">
+          Note: this dashboard visualizes coded pregnancy outcomes and all charts sum to the coded total above.
+        </small>
+        <div class="filtersRow">
+          <div class="mainFiltersContainer">
             <label for="poMapViewSelect">Map:</label>
             <select id="poMapViewSelect" class="select">
               <option value="Province" {% if filter_map_view == "Province" %}selected{% endif %}>Province</option>
@@ -53,44 +58,45 @@
               <option value="EA" {% if filter_map_view == "EA" %}selected{% endif %}>EA</option>
             </select>
 
-            <div class="mainFiltersContainer">
-              <label for="poFilterPregnancyOutcome">Pregnancy Outcome:</label>
-              <select id="poFilterPregnancyOutcome" class="select" name="pregnancy_outcome">
-                <option value="">All</option>
-                {% for option in pregnancy_outcome_options %}
-                  <option value="{{ option }}" {% if filter_pregnancy_outcome == option %}selected{% endif %}>{{ option }}</option>
-                {% endfor %}
-              </select>
-            </div>
+            <label for="poFilterPregnancyOutcome">Pregnancy Outcome:</label>
+            <select id="poFilterPregnancyOutcome" class="select" name="pregnancy_outcome">
+              <option value="">All</option>
+              {% for option in pregnancy_outcome_options %}
+                <option value="{{ option }}" {% if filter_pregnancy_outcome == option %}selected{% endif %}>{{ option }}</option>
+              {% endfor %}
+            </select>
 
-            <div class="betweenDatesContainer">
-              <label for="poFilterTimePreset">DOB:</label>
-              <select id="poFilterTimePreset" class="select" name="time_preset">
-                <option value="all_time" {% if filter_time_preset == "all_time" %}selected{% endif %}>All time</option>
-                <option value="last_30_days" {% if filter_time_preset == "last_30_days" %}selected{% endif %}>Last 30 days</option>
-                <option value="last_7_days" {% if filter_time_preset == "last_7_days" %}selected{% endif %}>Last 7 days</option>
-                <option value="last_24_hours" {% if filter_time_preset == "last_24_hours" %}selected{% endif %}>Last 24 hours</option>
-                <option value="custom" {% if filter_time_preset == "custom" %}selected{% endif %}>Custom</option>
-              </select>
-
-              <div class="customDatesContainer">
-                <span>Between</span>
-                <label for="poFilterStartDatetime" class="sr-only">Start Date</label>
-                <input id="poFilterStartDatetime" class="input" type="date" name="start_datetime" value="{{ filter_start_datetime }}">
-                <span>and</span>
-                <label for="poFilterEndDatetime" class="sr-only">End Date</label>
-                <input id="poFilterEndDatetime" class="input" type="date" name="end_datetime" value="{{ filter_end_datetime }}">
-              </div>
-            </div>
-
-            <div class="formBtnsContainer">
-              <button id="poFiltersReset" type="button" class="button resetBtn">Reset</button>
-            </div>
+            <label for="poFilterTimePreset">DOB:</label>
+            <select id="poFilterTimePreset" class="select" name="time_preset">
+              <option value="all_time" {% if filter_time_preset == "all_time" %}selected{% endif %}>All time</option>
+              <option value="last_30_days" {% if filter_time_preset == "last_30_days" %}selected{% endif %}>Last 30 days</option>
+              <option value="last_7_days" {% if filter_time_preset == "last_7_days" %}selected{% endif %}>Last 7 days</option>
+              <option value="last_24_hours" {% if filter_time_preset == "last_24_hours" %}selected{% endif %}>Last 24 hours</option>
+              <option value="custom" {% if filter_time_preset == "custom" %}selected{% endif %}>Custom</option>
+            </select>
           </div>
-          <input type="hidden" id="poFilterMapView" name="map_view" value="{{ filter_map_view }}">
-        </form>
-      </section>
 
+          <div class="betweenDatesContainer customDatesContainer">
+            <span>Between</span>
+            <label for="poFilterStartDatetime" class="sr-only">Start Date</label>
+            <input id="poFilterStartDatetime" class="input" type="date" name="start_datetime" value="{{ filter_start_datetime }}">
+            <span>and</span>
+            <label for="poFilterEndDatetime" class="sr-only">End Date</label>
+            <input id="poFilterEndDatetime" class="input" type="date" name="end_datetime" value="{{ filter_end_datetime }}">
+          </div>
+
+          <div class="formBtnsContainer">
+            <button id="poFiltersReset" type="button" class="button resetBtn">Reset</button>
+          </div>
+        </div>
+        <input type="hidden" id="poFilterMapView" name="map_view" value="{{ filter_map_view }}">
+      </form>
+    </section>
+  </div>
+
+  <!-- Row 3: Map (left) + Charts (right) -->
+  <div class="po-content-row">
+    <div class="po-col-left">
       <section class="sectionContainer mapView" id="poMapSection" data-component="map">
         <h2>Geographic Distribution</h2>
         <div id="poMapBreadcrumb" class="map-breadcrumbs"></div>
@@ -101,53 +107,57 @@
       </section>
     </div>
 
-    <div class="po-dashboard-column po-dashboard-column--right">
-      <section class="sectionContainer trendView" id="poTrendSection" data-component="trend">
+    <div class="po-col-right">
+      <!-- Trend (mirrors Mortality Trend) -->
+      <section class="sectionContainer" id="poTrendSection" data-component="trend">
         <h2>Pregnancy Outcomes Trend</h2>
         <div class="chartsContainer">
-          <div class="topCauseLineChartContainer chart-canvas-wrap chart-canvas-wrap-short">
+          <div class="topCauseLineChartContainer chart-canvas-wrap">
             <canvas id="poTrendChart" data-component="trend-chart"></canvas>
           </div>
         </div>
         <p id="poTrendEmpty" class="po-empty-state" hidden>No trend data available for the selected filters.</p>
       </section>
 
-      <div class="po-right-middle-row">
-        <section class="sectionContainer topCausesView" id="poBirthOutcomesSection" data-component="birth-outcomes">
-          <h2>Birth Outcomes</h2>
-          <div class="chart-mode-toggle">
-            <input id="poBirthModeCount" type="radio" value="count" name="po_birth_mode" checked>
-            <label for="poBirthModeCount">Count</label>
-            <input id="poBirthModePercentage" type="radio" value="percentage" name="po_birth_mode">
-            <label for="poBirthModePercentage">Percentage</label>
-          </div>
-          <div class="chartsContainer">
-            <div class="topCausesContainer">
+      <!-- Inner row: Birth Outcomes + Place of Birth (mirrors Demographics + Place of Death) -->
+      <div class="po-inner-row">
+        <div class="po-inner-col">
+          <section class="sectionContainer" id="poBirthOutcomesSection" data-component="birth-outcomes">
+            <h2>Birth Outcomes</h2>
+            <div class="chart-mode-toggle">
+              <input id="poBirthModeCount" type="radio" value="count" name="po_birth_mode" checked>
+              <label for="poBirthModeCount">Count</label>
+              <input id="poBirthModePercentage" type="radio" value="percentage" name="po_birth_mode">
+              <label for="poBirthModePercentage">Percentage</label>
+            </div>
+            <div class="chartsContainer">
               <div class="chart-canvas-wrap">
                 <canvas id="poBirthOutcomesChart" data-component="birth-outcomes-chart"></canvas>
               </div>
             </div>
-          </div>
-          <p id="poBirthOutcomesEmpty" class="po-empty-state" hidden>No birth outcomes data available for the selected filters.</p>
-        </section>
-
-        <section class="sectionContainer" id="poPlaceOfBirthSection" data-component="place-of-birth">
-          <h2>Place of Birth</h2>
-          <div class="chart-mode-toggle">
-            <input id="poPlaceBirthModeCount" type="radio" value="count" name="po_place_birth_mode" checked>
-            <label for="poPlaceBirthModeCount">Count</label>
-            <input id="poPlaceBirthModePercentage" type="radio" value="percentage" name="po_place_birth_mode">
-            <label for="poPlaceBirthModePercentage">Percentage</label>
-          </div>
-          <div class="chartsContainer">
-            <div class="chart-canvas-wrap">
-              <canvas id="poPlaceOfBirthChart" data-component="place-of-birth-chart"></canvas>
+            <p id="poBirthOutcomesEmpty" class="po-empty-state" hidden>No birth outcomes data available for the selected filters.</p>
+          </section>
+        </div>
+        <div class="po-inner-col">
+          <section class="sectionContainer" id="poPlaceOfBirthSection" data-component="place-of-birth">
+            <h2>Place of Birth</h2>
+            <div class="chart-mode-toggle">
+              <input id="poPlaceBirthModeCount" type="radio" value="count" name="po_place_birth_mode" checked>
+              <label for="poPlaceBirthModeCount">Count</label>
+              <input id="poPlaceBirthModePercentage" type="radio" value="percentage" name="po_place_birth_mode">
+              <label for="poPlaceBirthModePercentage">Percentage</label>
             </div>
-          </div>
-          <p id="poPlaceOfBirthEmpty" class="po-empty-state" hidden>No place of birth data available for the selected filters.</p>
-        </section>
+            <div class="chartsContainer">
+              <div class="chart-canvas-wrap">
+                <canvas id="poPlaceOfBirthChart" data-component="place-of-birth-chart"></canvas>
+              </div>
+            </div>
+            <p id="poPlaceOfBirthEmpty" class="po-empty-state" hidden>No place of birth data available for the selected filters.</p>
+          </section>
+        </div>
       </div>
 
+      <!-- Gestational Age (mirrors Reporting Timeliness) -->
       <section class="sectionContainer" id="poGestationalAgeSection" data-component="gestational-age">
         <h2>Gestational Age at Outcome</h2>
         <div class="chartsContainer">
@@ -158,6 +168,7 @@
         <p id="poGestationalAgeEmpty" class="po-empty-state" hidden>No gestational age data available for the selected filters.</p>
       </section>
 
+      <!-- Antenatal Visits -->
       <section class="sectionContainer" id="poAncVisitsSection" data-component="anc-visits">
         <h2>Antenatal Visits at Outcome</h2>
         <div class="chartsContainer">

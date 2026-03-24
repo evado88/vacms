@@ -5,104 +5,123 @@
   data-cause-trend-endpoint="{% url 'va_analytics:dashboard-api' %}"
   data-map-endpoint="{% url 'va_analytics:dashboard-api' %}"
 >
-  <div class="va-dashboard-columns">
-    <div class="va-dashboard-column va-dashboard-column--left">
-      <section class="sectionContainer dashboard-card panelView mb-4" id="vaPanelSection" data-component="panel">
-        <h2>Summaries and Control Panel</h2>
-        <div class="dashboard-card-body">
-          <div class="highlightsContainer" id="vaSummaryCards" data-component="summary">
-            <div v-for="(value, key) in highlightsSummaries" :key="key" class="highlight">
-              <h3><% key %></h3>
-              <p :class="{'text-danger': key === 'Coded VAs' && value < 50}"><% value %></p>
-            </div>
+  <!-- Row 1: KPIs -->
+  <div class="va-top-row">
+    <section class="sectionContainer panelView" id="vaPanelSection" data-component="panel">
+      <div class="highlightsContainer" id="vaSummaryCards" data-component="summary">
+        <div v-for="(value, key) in highlightsSummaries" :key="key" class="highlight">
+          <h3><% key %></h3>
+          <p :class="{'text-danger': key === 'Coded VAs' && value < 50}"><% value %></p>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Row 2: Filters -->
+  <div class="va-filters-row">
+    <section class="sectionContainer" id="vaFiltersSection" data-component="filters">
+      <form id="vaFiltersForm" class="controls" @submit.prevent="updateDataAndMap">
+        <small class="dashboard-note">Filters update cause analyses and geographic drill context.</small>
+        <div class="filtersRow">
+          <div class="mainFiltersContainer">
+            <label for="causeSelected">Cause of Death:</label>
+            <select id="causeSelected" class="select" v-model="causeSelected" @change="updateDataAndMap">
+              <option value="">All Causes</option>
+              <option v-for="cause in listOfCausesDropdownOptions" :key="cause"><% cause %></option>
+            </select>
+
+            <label for="age">Age Group:</label>
+            <select id="age" class="select" v-model="ageSelected" @change="updateDataAndMap">
+              <option value="">All</option>
+              <option>Adult</option>
+              <option>Child</option>
+              <option>Neonate</option>
+            </select>
+
+            <label for="sex">Sex:</label>
+            <select id="sex" class="select" v-model="sexSelected" @change="updateDataAndMap">
+              <option value="">All</option>
+              <option>Male</option>
+              <option>Female</option>
+              <option>Ambiguous/Intersex</option>
+            </select>
+
+            <label for="vaSource">VA Source:</label>
+            <select id="vaSource" class="select" v-model="sourceSelected" @change="updateDataAndMap">
+              <option value="all">All</option>
+              <option value="community">Community</option>
+              <option value="facility">Facility</option>
+            </select>
+
+            <label for="deathDate">Death Date:</label>
+            <select id="deathDate" class="select" v-model="deathDateSelected" @change="updateDataAndMap()">
+              <option v-for="option in deathDateDropdownOptions" :key="option"><% option %></option>
+            </select>
           </div>
 
-          <form id="vaFiltersForm" class="controls" data-component="filters" @submit.prevent="updateDataAndMap">
-            <small class="dashboard-note">Filters update cause analyses and geographic drill context.</small>
-            <div class="filtersRow">
-              <div class="mainFiltersContainer">
-                <label for="causeSelected">Cause of Death:</label>
-                <select id="causeSelected" class="select" v-model="causeSelected" @change="updateDataAndMap">
-                  <option value="">All Causes</option>
-                  <option v-for="cause in listOfCausesDropdownOptions" :key="cause"><% cause %></option>
-                </select>
+          <div v-if="deathDateSelected === 'Custom'" class="betweenDatesContainer customDatesContainer">
+            <span>Between</span>
+            <label for="startDate" class="sr-only">Start Date</label>
+            <input id="startDate" class="input" type="date" required v-model="startDate" @change="updateDataAndMap">
+            <span>and</span>
+            <label for="endDate" class="sr-only">End Date</label>
+            <input id="endDate" class="input" type="date" required v-model="endDate" @change="updateDataAndMap">
+          </div>
 
-                <label for="age">Age Group:</label>
-                <select id="age" class="select" v-model="ageSelected" @change="updateDataAndMap">
-                  <option value="">All</option>
-                  <option>Adult</option>
-                  <option>Child</option>
-                  <option>Neonate</option>
-                </select>
-
-                <label for="sex">Sex:</label>
-                <select id="sex" class="select" v-model="sexSelected" @change="updateDataAndMap">
-                  <option value="">All</option>
-                  <option>Male</option>
-                  <option>Female</option>
-                  <option>Ambiguous/Intersex</option>
-                </select>
-
-                <label for="vaSource">VA Source:</label>
-                <select id="vaSource" class="select" v-model="sourceSelected" @change="updateDataAndMap">
-                  <option value="all">All</option>
-                  <option value="community">Community</option>
-                  <option value="facility">Facility</option>
-                </select>
-
-                <label for="deathDate">Death Date:</label>
-                <select id="deathDate" class="select" v-model="deathDateSelected" @change="updateDataAndMap()">
-                  <option v-for="option in deathDateDropdownOptions" :key="option"><% option %></option>
-                </select>
-              </div>
-
-              <div v-if="deathDateSelected === 'Custom'" class="betweenDatesContainer customDatesContainer">
-                <span>Between</span>
-                <label for="startDate" class="sr-only">Start Date</label>
-                <input id="startDate" class="input" type="date" required v-model="startDate" @change="updateDataAndMap">
-                <span>and</span>
-                <label for="endDate" class="sr-only">End Date</label>
-                <input id="endDate" class="input" type="date" required v-model="endDate" @change="updateDataAndMap">
-              </div>
-
-              <div class="formBtnsContainer">
-                <button type="button" class="button resetBtn" @click="resetAllDataToActive()">
-                  Reset All Filters
-                </button>
-                <small v-if="loading" class="loadingText">
-                  <span>Loading data...</span>
-                </small>
-              </div>
-            </div>
-          </form>
+          <div class="formBtnsContainer">
+            <button type="button" class="button resetBtn" @click="resetAllDataToActive()">
+              Reset
+            </button>
+            <small v-if="loading" class="loadingText">
+              <span>Loading data...</span>
+            </small>
+          </div>
         </div>
-      </section>
+      </form>
+    </section>
+  </div>
 
-      <section class="sectionContainer dashboard-card mapView mb-4" id="vaMapSection" data-component="map">
+  <!-- Row 3: Map (left) + Charts (right) -->
+  <div class="va-content-row">
+    <div class="va-col-left">
+      <section class="sectionContainer mapView" id="vaMapSection" data-component="map">
         <h2>Geographic Distribution</h2>
-        <div class="dashboard-card-body">
-          <div id="vaMapBreadcrumb" class="map-breadcrumbs"></div>
-          <div id="map">
-            <div id="vaMapLegend" class="legend"></div>
-          </div>
-          <p id="vaMapEmpty" class="po-empty-state" hidden>No geographic VA data available for the selected filters.</p>
+        <div id="vaMapBreadcrumb" class="map-breadcrumbs"></div>
+        <div id="map">
+          <div id="vaMapLegend" class="legend"></div>
         </div>
+        <p id="vaMapEmpty" class="po-empty-state" hidden>No geographic VA data available for the selected filters.</p>
       </section>
     </div>
 
-    <div class="va-dashboard-column va-dashboard-column--right">
-      <div class="va-right-top-row">
-        <section class="sectionContainer dashboard-card topCausesView mb-4" id="vaCodSection" data-component="causes">
-          <div class="dashboard-section-head">
-            <h2>Cause of Death Analysis</h2>
-            <div class="chart-mode-toggle chart-mode-toggle--right">
-              <input id="COD_count" type="radio" value="count" v-model="causeOfDeathValue">
-              <label for="COD_count">Count</label>
-              <input id="COD_percentage" type="radio" value="percentage" v-model="causeOfDeathValue">
-              <label for="COD_percentage">Percentage</label>
-            </div>
+    <div class="va-col-right">
+      <!-- Trend (mirrors Mortality Trend) -->
+      <section class="sectionContainer" id="vaTrendSection" data-component="trend">
+        <div class="dashboard-section-head">
+          <h2>Cause of Death Trend</h2>
+          <small class="text-muted">Monthly multi-cause trend</small>
+        </div>
+        <div class="chartsContainer" ref="trend">
+          <div class="chart-canvas-wrap">
+            <canvas id="vaCauseTrendChart" data-component="cause-trend-chart"></canvas>
           </div>
-          <div class="dashboard-card-body">
+        </div>
+        <p id="vaCauseTrendEmpty" class="po-empty-state" hidden>No coded cause trend data available for the selected filters.</p>
+      </section>
+
+      <!-- Inner row: COD Analysis + Demographics (mirrors Demographics + Place of Death) -->
+      <div class="va-inner-row">
+        <div class="va-inner-col">
+          <section class="sectionContainer" id="vaCodSection" data-component="causes">
+            <div class="dashboard-section-head">
+              <h2>Cause of Death Analysis</h2>
+              <div class="chart-mode-toggle">
+                <input id="COD_count" type="radio" value="count" v-model="causeOfDeathValue">
+                <label for="COD_count">Count</label>
+                <input id="COD_percentage" type="radio" value="percentage" v-model="causeOfDeathValue">
+                <label for="COD_percentage">Percentage</label>
+              </div>
+            </div>
             <div class="chartsContainer" ref="cod">
               <div class="topCausesContainer">
                 <stacked-bar-chart
@@ -126,62 +145,41 @@
               </div>
             </div>
             <p id="vaCodEmpty" class="po-empty-state" hidden>No coded cause of death data available for the selected filters.</p>
-          </div>
-        </section>
-
-        <section class="sectionContainer dashboard-card mb-4" id="vaDemographicSection" data-component="demographic-distribution">
-          <div class="dashboard-section-head">
+          </section>
+        </div>
+        <div class="va-inner-col">
+          <section class="sectionContainer" id="vaDemographicSection" data-component="demographic-distribution">
             <h2>Demographic Distribution</h2>
-          </div>
-          <div class="dashboard-card-body">
             <div class="chartsContainer">
               <div class="chart-canvas-wrap compact">
                 <canvas id="vaSexAgePyramidChart" data-component="va-sex-age-pyramid-chart"></canvas>
               </div>
             </div>
             <p id="vaSexAgePyramidEmpty" class="po-empty-state" hidden>No age-sex VA data available for the selected filters.</p>
-          </div>
-        </section>
+          </section>
+        </div>
       </div>
 
-      <section class="sectionContainer dashboard-card trendView mb-4" id="vaTrendSection" data-component="trend">
-        <div class="dashboard-section-head">
-          <h2>Cause of Death Trend</h2>
-          <small class="text-muted">Monthly multi-cause trend</small>
-        </div>
-        <div class="dashboard-card-body">
-          <div class="chartsContainer" ref="trend">
-            <div class="chart-canvas-wrap">
-              <canvas id="vaCauseTrendChart" data-component="cause-trend-chart"></canvas>
-            </div>
-          </div>
-          <p id="vaCauseTrendEmpty" class="po-empty-state" hidden>No coded cause trend data available for the selected filters.</p>
-        </div>
-      </section>
-
-      <section class="sectionContainer dashboard-card demographicsView mb-4" id="vaRegionalComparisonSection" data-component="regional-comparison">
+      <!-- Regional Comparison (mirrors Reporting Timeliness) -->
+      <section class="sectionContainer" id="vaRegionalComparisonSection" data-component="regional-comparison">
         <div class="dashboard-section-head">
           <h2>Cause of Death Comparison</h2>
           <small class="text-muted">Top 5 COD + Other</small>
         </div>
-        <div class="dashboard-card-body">
-          <div class="d-flex justify-content-between align-items-center flex-wrap mb-2">
-            <div class="mainFiltersContainer">
-              <label for="vaCompareBy">Compare by:</label>
-              <select id="vaCompareBy" class="select" v-model="regionalCompareBy" @change="runRegionalComparison">
-                <option value="province">Province</option>
-                <option value="age">Age</option>
-                <option value="source">VA Source</option>
-              </select>
-            </div>
-          </div>
-          <div ref="regionalComparison">
-            <div class="chart-canvas-wrap">
-              <canvas id="vaRegionalCauseComparisonChart" data-component="regional-cod-chart"></canvas>
-            </div>
-          </div>
-          <p id="vaRegionalComparisonEmpty" class="po-empty-state" hidden>No regional coded-cause comparison data available for the selected filters.</p>
+        <div class="mainFiltersContainer va-compare-filter">
+          <label for="vaCompareBy">Compare by:</label>
+          <select id="vaCompareBy" class="select" v-model="regionalCompareBy" @change="runRegionalComparison">
+            <option value="province">Province</option>
+            <option value="age">Age</option>
+            <option value="source">VA Source</option>
+          </select>
         </div>
+        <div ref="regionalComparison">
+          <div class="chart-canvas-wrap">
+            <canvas id="vaRegionalCauseComparisonChart" data-component="regional-cod-chart"></canvas>
+          </div>
+        </div>
+        <p id="vaRegionalComparisonEmpty" class="po-empty-state" hidden>No regional coded-cause comparison data available for the selected filters.</p>
       </section>
     </div>
   </div>
