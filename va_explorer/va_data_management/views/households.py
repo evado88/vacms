@@ -34,6 +34,16 @@ class Households(CustomAuthMixin, PermissionRequiredMixin, ListView):
     template_name = "va_data_management/households.html"
     paginate_by = 15
 
+    _SORT_FIELDS = {
+        "id": "id",
+        "enumerator": "enumerator",
+        "province": "province",
+        "district": "district",
+        "ward": "ward",
+        "locality_name": "locality_name",
+        "respondent": "respondent",
+    }
+
     def get_queryset(self):
         # Set up filter with GET params
         base_qs = Household.objects.all()
@@ -44,11 +54,11 @@ class Households(CustomAuthMixin, PermissionRequiredMixin, ListView):
                 "province": "province",
             },
         )
-        self.filter = HouseholdFilter(
-            self.request.GET,
-            queryset=base_qs.order_by("-id"),
-        )
-        return self.filter.qs.order_by("-id")
+        self.filter = HouseholdFilter(self.request.GET, queryset=base_qs)
+        order_by_raw = self.request.GET.get("order_by", "-id")
+        direction = "-" if order_by_raw.startswith("-") else ""
+        db_field = self._SORT_FIELDS.get(order_by_raw.lstrip("-"), "id")
+        return self.filter.qs.order_by(direction + db_field)
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)

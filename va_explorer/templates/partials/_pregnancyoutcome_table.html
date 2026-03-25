@@ -2,14 +2,15 @@
 
 <table class="table table-sm">
   <thead>
+    {% with ob=request.GET.order_by %}
     <tr>
-      <th><a href="?{% sort_url 'id' direction='-' %}">ID</a></th>
-      <th><a href="?{% sort_url 'enumerator' direction='-' %}">Enumerator</a></th>
-      <th><a href="?{% sort_url 'province' direction='-' %}">Province</a></th>
-      <th><a href="?{% sort_url 'district' direction='-' %}">District</a></th>
-      <th><a href="?{% sort_url 'ward' direction='-' %}">Ward</a></th>
-      <th><a href="?{% sort_url 'PO_41' direction='-' %}">Delivery/End Date</a></th>
-      <th><a href="?{% sort_url 'PO_46' direction='-' %}">Outcome</a></th>
+      <th><a href="?{% sort_url 'id' direction='-' %}">ID</a>{% if ob == 'id' %}▲{% elif ob == '-id' %}▼{% endif %}</th>
+      <th><a href="?{% sort_url 'enumerator' direction='-' %}">Enumerator</a>{% if ob == 'enumerator' %}▲{% elif ob == '-enumerator' %}▼{% endif %}</th>
+      <th><a href="?{% sort_url 'province' direction='-' %}">Province</a>{% if ob == 'province' %}▲{% elif ob == '-province' %}▼{% endif %}</th>
+      <th><a href="?{% sort_url 'district' direction='-' %}">District</a>{% if ob == 'district' %}▲{% elif ob == '-district' %}▼{% endif %}</th>
+      <th><a href="?{% sort_url 'ward' direction='-' %}">Ward</a>{% if ob == 'ward' %}▲{% elif ob == '-ward' %}▼{% endif %}</th>
+      <th><a href="?{% sort_url 'PO_41' direction='-' %}">Delivery/End Date</a>{% if ob == 'PO_41' %}▲{% elif ob == '-PO_41' %}▼{% endif %}</th>
+      <th><a href="?{% sort_url 'PO_46' direction='-' %}">Outcome</a>{% if ob == 'PO_46' %}▲{% elif ob == '-PO_46' %}▼{% endif %}</th>
       <th></th>
       {% if va_data_cleanup and perms.va_data_cleanup.download %}
         <th>Download</th>
@@ -18,13 +19,14 @@
         <th>Delete</th>
       {% endif %}
     </tr>
+    {% endwith %}
   </thead>
   <tbody>
     {% if object_list|length != 0 %}
       {% for o in object_list %}
         <tr>
           <td>{{ o.id }}</td>
-          <td>{{ o.enumerator|default:"Not Listed" }}</td>
+          <td>{{ o.enumerator|format_enumerator|default:"Not Listed" }}</td>
           <td>{{ o.province|default:"-" }}</td>
           <td>{{ o.district|default:"-" }}</td>
           <td>{{ o.ward|default:"-" }}</td>

@@ -2,18 +2,19 @@
 
 <table class="table table-sm">
   <thead>
+    {% with ob=request.GET.order_by %}
     <tr>
-      <th><a href="?{% sort_url 'id' direction='-' %}">ID</a></th>
-      <th><a href="?{% sort_url 'Id10012' direction='-' %}">Interviewed</a></th>
+      <th><a href="?{% sort_url 'id' direction='-' %}">ID</a>{% if ob == 'id' %}▲{% elif ob == '-id' %}▼{% endif %}</th>
+      <th><a href="?{% sort_url 'Id10012' direction='-' %}">Interviewed</a>{% if ob == 'Id10012' %}▲{% elif ob == '-Id10012' %}▼{% endif %}</th>
       {% if not user.is_fieldworker %}
-        <th><a href="?{% sort_url 'Id10010' direction='-' %}">Interviewer</a></th>
+        <th><a href="?{% sort_url 'Id10010' direction='-' %}">Interviewer</a>{% if ob == 'Id10010' %}▲{% elif ob == '-Id10010' %}▼{% endif %}</th>
       {% endif %}
-      <th><a href="?{% sort_url 'facility' direction='-' %}">Facility</a></th>
-      <th><a href="?{% sort_url 'deceased' direction='-' %}">Deceased</a></th>
-      <th><a href="?{% sort_url 'Id10023' direction='-' %}">Deathdate</a></th>
-      <th><a href="?{% sort_url 'cause' direction='-' %}">Cause</a></th>
-      <th><a href="?{% sort_url 'warnings' direction='-' %}">Warnings</a></th>
-      <th><a href="?{% sort_url 'errors' direction='-' %}">Errors</a></th>
+      <th><a href="?{% sort_url 'province' direction='-' %}">Province</a>{% if ob == 'province' %}▲{% elif ob == '-province' %}▼{% endif %}</th>
+      <th><a href="?{% sort_url 'district' direction='-' %}">District</a>{% if ob == 'district' %}▲{% elif ob == '-district' %}▼{% endif %}</th>
+      <th><a href="?{% sort_url 'deceased' direction='-' %}">Deceased</a>{% if ob == 'deceased' %}▲{% elif ob == '-deceased' %}▼{% endif %}</th>
+      <th><a href="?{% sort_url 'Id10023' direction='-' %}">Deathdate</a>{% if ob == 'Id10023' %}▲{% elif ob == '-Id10023' %}▼{% endif %}</th>
+      <th><a href="?{% sort_url 'cause' direction='-' %}">Cause</a>{% if ob == 'cause' %}▲{% elif ob == '-cause' %}▼{% endif %}</th>
+      <th><a href="?{% sort_url 'errors' direction='-' %}">Errors</a>{% if ob == 'errors' %}▲{% elif ob == '-errors' %}▼{% endif %}</th>
       <th></th>
       {% if va_data_cleanup and perms.va_data_cleanup.download %}
         <th>
@@ -30,6 +31,7 @@
         </th>
       {% endif %}
     </tr>
+    {% endwith %}
   </thead>
   <tbody>
     {% if va_list|length != 0 %}
@@ -40,11 +42,11 @@
           {% if not user.is_fieldworker %}
             <td>{% pii_filter "Id10010" va.interviewer|default:"Not Listed" %}</td>
           {% endif %}
-          <td>{{ va.facility|default:"Not Provided" }}</td>
+          <td>{{ va.province|default:"-" }}</td>
+          <td>{{ va.district|default:"-" }}</td>
           <td>{% pii_filter "Id10017" va.deceased|default:"Subject Unknown" %}</td>
           <td>{{ va.dod|standard_date|default:"Date Unknown" }}</td>
           <td>{{ va.cause|default:"Not Coded" }}</td>
-          <td>{{ va.warnings }}</td>
           <td>{{ va.errors }}</td>
           <td><a class="btn btn-primary" href="{% url 'data_management:show' id=va.id %}">View</a></td>
           {% if va_data_cleanup and perms.va_data_cleanup.download %}

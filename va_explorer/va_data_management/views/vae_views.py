@@ -5,7 +5,7 @@ from django.contrib.auth.mixins import PermissionRequiredMixin
 from django.contrib.messages.views import SuccessMessageMixin
 from django.db.models import Count, F, OuterRef, Q, Subquery, TextField
 from django.db.models import Value as V
-from django.db.models.functions import Concat
+from django.db.models.functions import Coalesce, Concat
 from django.shortcuts import redirect
 from django.urls import reverse, reverse_lazy
 from django.views.generic import (
@@ -45,44 +45,37 @@ class Index(CustomAuthMixin, PermissionRequiredMixin, ListView):
             .annotate(c=Count("id"))
             .values("c")
         )
-        warnings_subq = (
-            CauseCodingIssue.objects.filter(
-                verbalautopsy=OuterRef("pk"), severity="warning"
-            )
-            .values("verbalautopsy")
-            .annotate(c=Count("id"))
-            .values("c")
-        )
         queryset = (
             self.request.user.verbal_autopsies()
             .annotate(
                 deceased=Concat("Id10017", V(" "), "Id10018", output_field=TextField()),
                 errors=Subquery(errors_subq),
-                warnings=Subquery(warnings_subq),
+                district_display=Coalesce("district", "area"),
             )
             .values(
                 "id",
-                "location__name",
+                "province",
+                "district_display",
                 "causes__cause",
                 "Id10023",
                 "Id10010",
                 "Id10012",
                 "deceased",
                 "errors",
-                "warnings",
             )
         )
 
         # sort by chosen field (default is VA ID)
         # get raw sort key (includes direction)
-        sort_key_raw = self.request.GET.get("order_by", "id")
+        sort_key_raw = self.request.GET.get("order_by", "-interviewed")
         # strip out direction and map to va field
         sort_key = sort_key_raw.lstrip("-")
         sort_key_to_field = {
             "id": "id",
             "interviewer": "Id10010",
             "dod": "Id10023",
-            "facility": "location__name",
+            "province": "province",
+            "district": "district",
             "cause": "causes__cause",
             "interviewed": "Id10012",
             "deceased": "deceased",
@@ -131,9 +124,9 @@ class Index(CustomAuthMixin, PermissionRequiredMixin, ListView):
                 "dod": (
                     parse_date(va["Id10023"]) if (va["Id10023"] != "dk") else "Unknown"
                 ),
-                "facility": va["location__name"],
+                "province": va["province"],
+                "district": va["district_display"],
                 "cause": va["causes__cause"],
-                "warnings": va["warnings"],
                 "errors": va["errors"],
             }
             for va in context["object_list"]

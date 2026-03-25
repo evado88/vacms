@@ -153,6 +153,30 @@
   gap: var(--ou-gap-1);
 }
 
+.ou-va-filter-row {
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: flex-end;
+}
+
+.ou-va-filter-row > .form-group {
+  flex: 0 0 auto;
+  margin-bottom: 0;
+  min-width: 0;
+}
+
+.ou-va-filter-row .form-group :is(input, select, .form-control, .custom-select) {
+  width: auto;
+  min-width: 8rem;
+  max-width: 11rem;
+}
+
+.ou-va-filter-actions {
+  flex: 0 0 auto;
+  margin-left: auto;
+  margin-bottom: 0;
+}
+
 .ou-filter-actions {
   display: flex;
   flex-wrap: wrap;

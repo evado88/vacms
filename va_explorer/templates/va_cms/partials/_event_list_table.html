@@ -1,21 +1,27 @@
 {% load va_explorer_tags %}
 <table class="table table-striped table-hover">
   <thead>
+    {% with ob=request.GET.order_by %}
     <tr>
-      <th>ID</th>
-      <th>Status</th>
-      <th>VA Interview Date</th>
-      <th>Interviewer</th>
+      <th><a href="?{% sort_url 'id' direction='-' %}">ID</a>{% if ob == 'id' %}▲{% elif ob == '-id' %}▼{% endif %}</th>
+      <th><a href="?{% sort_url 'interviewer' direction='-' %}">Interviewer</a>{% if ob == 'interviewer' %}▲{% elif ob == '-interviewer' %}▼{% endif %}</th>
+      <th><a href="?{% sort_url 'province' direction='-' %}">Province</a>{% if ob == 'province' %}▲{% elif ob == '-province' %}▼{% endif %}</th>
+      <th><a href="?{% sort_url 'district' direction='-' %}">District</a>{% if ob == 'district' %}▲{% elif ob == '-district' %}▼{% endif %}</th>
+      <th><a href="?{% sort_url 'va_interview_status' direction='-' %}">Status</a>{% if ob == 'va_interview_status' %}▲{% elif ob == '-va_interview_status' %}▼{% endif %}</th>
+      <th><a href="?{% sort_url 'interview_scheduled_date' direction='-' %}">VA Interview Date</a>{% if ob == 'interview_scheduled_date' %}▲{% elif ob == '-interview_scheduled_date' %}▼{% endif %}</th>
       <th>&nbsp;</th>
     </tr>
+    {% endwith %}
   </thead>
   <tbody>
     {% for event in object_list %}
       <tr>
         <td>{{ event.id }}</td>
+        <td>{{ event.va_interview_staff.name|default:event.va_interview_staff.get_full_name|default:"Unassigned" }}</td>
+        <td>{{ event.record_province|default:"-" }}</td>
+        <td>{{ event.record_district|default:"-" }}</td>
         <td>{{ event.get_event_status_display }}</td>
         <td>{{ event.interview_scheduled_date|standard_date|default:"--" }}</td>
-        <td>{{ event.va_interview_staff.name|default:event.va_interview_staff.get_full_name|default:"Unassigned" }}</td>
         <td>
           <a
             href="{% url 'cms-event-detail' event.pk %}"

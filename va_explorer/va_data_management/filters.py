@@ -2,6 +2,7 @@ from django import forms
 from django.core.exceptions import ValidationError
 from django.forms import Select, TextInput
 from django_filters import BooleanFilter, CharFilter, DateFilter, FilterSet
+from crispy_forms.helper import FormHelper
 from fuzzywuzzy import fuzz
 
 from .models import VerbalAutopsy, Pregnancy, Household, PregnancyOutcome, Death
@@ -35,6 +36,18 @@ class VAFilter(FilterSet):
         label="Interviewer",
         widget=TextInput(attrs={"class": "form-text"}),
     )
+    province = CharFilter(
+        field_name="province",
+        lookup_expr="icontains",
+        label="Province",
+        widget=TextInput(attrs={"class": "form-text"}),
+    )
+    district = CharFilter(
+        field_name="district",
+        lookup_expr="icontains",
+        label="District",
+        widget=TextInput(attrs={"class": "form-text"}),
+    )
     start_date = DateFilter(
         field_name="Id10023",
         lookup_expr="gte",
@@ -46,18 +59,6 @@ class VAFilter(FilterSet):
         lookup_expr="lte",
         label="Latest Date",
         widget=DateInput(attrs={"class": "form-date datepicker"}),
-    )
-    district = CharFilter(
-        field_name="district",
-        lookup_expr="icontains",
-        label="District",
-        widget=TextInput(attrs={"class": "form-text"}),
-    )
-    ward = CharFilter(
-        field_name="ward",
-        lookup_expr="icontains",
-        label="Ward",
-        widget=TextInput(attrs={"class": "form-text"}),
     )
     cause = CharFilter(
         field_name="causes__cause",
@@ -74,6 +75,12 @@ class VAFilter(FilterSet):
     class Meta:
         model = VerbalAutopsy
         fields = []
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.form.helper = FormHelper()
+        self.form.helper.form_tag = False
+        self.form.helper.disable_csrf = True
 
     def filter_deceased(self, queryset, name, value):
         if value:
@@ -251,12 +258,6 @@ class PregnancyOutcomeFilter(FilterSet):
 # Death list
 # =========================
 class DeathFilter(FilterSet):
-    id = CharFilter(
-        field_name="id",
-        lookup_expr="icontains",
-        label="ID",
-        widget=TextInput(attrs={"class": "form-text"}),
-    )
     province = CharFilter(
         field_name="province",
         lookup_expr="icontains",
@@ -279,12 +280,6 @@ class DeathFilter(FilterSet):
         field_name="enumerator",
         lookup_expr="icontains",
         label="Enumerator",
-        widget=TextInput(attrs={"class": "form-text"}),
-    )
-    respondent = CharFilter(
-        field_name="respondent",
-        lookup_expr="icontains",
-        label="Respondent",
         widget=TextInput(attrs={"class": "form-text"}),
     )
     deceased = CharFilter(

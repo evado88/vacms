@@ -26,13 +26,26 @@ class PregnancyOutcomes(CustomAuthMixin, PermissionRequiredMixin, ListView):
     paginate_by = 15
     model = PregnancyOutcome
 
+    _SORT_FIELDS = {
+        "id": "id",
+        "enumerator": "enumerator",
+        "province": "province",
+        "district": "district",
+        "ward": "ward",
+        "PO_41": "PO_41",
+        "PO_46": "PO_46",
+    }
+
     def get_queryset(self):
         queryset = restrict_queryset_to_user_locations(
             PregnancyOutcome.objects.all(),
             self.request.user,
-        ).order_by("-id")
+        )
         self.filterset = PregnancyOutcomeFilter(self.request.GET, queryset=queryset)
-        return self.filterset.qs.order_by("-id")
+        order_by_raw = self.request.GET.get("order_by", "-id")
+        direction = "-" if order_by_raw.startswith("-") else ""
+        db_field = self._SORT_FIELDS.get(order_by_raw.lstrip("-"), "id")
+        return self.filterset.qs.order_by(direction + db_field)
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)

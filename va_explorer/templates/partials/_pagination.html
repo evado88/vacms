@@ -21,12 +21,7 @@
   </ul>
   {% endif %}
 
-  <ul class="pagination justify-content-center">
-    {% if page_obj.has_previous and page_obj.paginator.num_pages > 2 %}
-      <li><a href="?{% param_replace page=page_obj.previous_page_number %}" class="page-link">&laquo; PREV </a></li>
-    {% endif %}
-    {% if page_obj.has_next and page_obj.paginator.num_pages > 2 %}
-      <li><a href="?{% param_replace page=page_obj.next_page_number %}" class="page-link"> NEXT &raquo;</a></li>
-   {% endif %}
+  <ul class="pagination justify-content-center align-items-center">
+    <li class="px-3 text-muted">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</li>
   </ul>
 </nav>

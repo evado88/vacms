@@ -9,7 +9,7 @@
   <nav class="sidebar-nav" id="sidebarNav">
     <ul class="nav flex-column">
       <!-- Toggle button sits above Home so it's always in the collapsed sidebar -->
-      <li class="nav-item">
+      <li class="nav-item d-none">
         <button class="sidebar-toggle" id="sidebarToggle" aria-label="Toggle sidebar">
           <i class="fas fa-bars nav-icon"></i>
           <span class="nav-label">Menu</span>
@@ -49,7 +49,7 @@
             <a
               class="nav-link {% if request.resolver_match.url_name == 'cms-event-list' or request.resolver_match.url_name == 'cms-event-detail' %}active{% endif %}"
               href="{% url 'cms-event-list' %}"
-              data-tooltip="Events"
+              data-tooltip="Scheduled Verbal Autopsies"
             >
               <i class="fas fa-calendar nav-icon"></i>
               <span class="nav-label">Scheduled VAs</span>
@@ -112,9 +112,9 @@
             <a
               class="nav-link {% if request.resolver_match.url_name == 'show' or request.resolver_match.url_name == 'index' and request.resolver_match.namespace == 'va_data_management' %}active{% endif %}"
               href="{% url 'va_data_management:index' %}"
-              data-tooltip="Data Management"
+              data-tooltip="Verbal Autopsies"
             >
-              <i class="fas fa-notes-medical nav-icon"></i>
+              <i class="fas fa-file-medical nav-icon"></i>
               <span class="nav-label">Verbal<br>Autopsies</span>
             </a>
           </li>
