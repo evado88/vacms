@@ -702,20 +702,6 @@ def get_va_summary_stats(vas, filter_fields=False, cache_key="va_summary_stats")
             "Id10012",
         )
 
-    def _max_parsed_date(values):
-        latest = None
-        for value in values:
-            parsed = parse_date(value)
-            if not parsed or parsed in {"dk", "nan", "none", "null"}:
-                continue
-            try:
-                current = datetime.strptime(parsed, "%Y-%m-%d").date()
-            except ValueError:
-                continue
-            if latest is None or current > latest:
-                latest = current
-        return latest
-
     # check cache for va summary stats and set it if not already there
     stats = cache.get(cache_key) if cache_key else None
     if not stats:
@@ -723,30 +709,46 @@ def get_va_summary_stats(vas, filter_fields=False, cache_key="va_summary_stats")
             last_created=Max("created"),
             last_interview=Max("Id10012"),
             total_vas=Count("id"),
+            # Max() on ISO text dates is lexicographic, which equals chronological
+            # for well-formed YYYY-MM-DD* strings — avoids loading all rows to Python.
+            _max_submissiondate=Max("submissiondate"),
         )
-        latest_submission = _max_parsed_date(vas.values_list("submissiondate", flat=True))
+        raw_sd = agg.get("_max_submissiondate")
+        if raw_sd:
+            parsed_sd = parse_date(str(raw_sd))
+            if parsed_sd and parsed_sd not in {"dk", "nan", "none", "null"}:
+                try:
+                    latest_submission = datetime.strptime(parsed_sd, "%Y-%m-%d").date()
+                except ValueError:
+                    latest_submission = None
+            else:
+                latest_submission = None
+        else:
+            latest_submission = None
+
+        # Facility VAs are expected to resolve a facility Location; community VAs
+        # are expected to resolve an SRS cluster.
+        ineligible_count = vas.filter(
+            Q(Id10023__in=["DK", "dk"])
+            | Q(Id10023__isnull=True)
+            | (
+                Q(community_va__iexact="yes")
+                & Q(cluster__isnull=True)
+            )
+            | (
+                ~Q(community_va__iexact="yes")
+                & Q(location__isnull=True)
+            )
+        ).count()
+
         stats = {
             "last_update": latest_submission or agg.get("last_created"),
             "last_interview": agg.get("last_interview"),
             "total_vas": agg.get("total_vas"),
+            "ineligible_vas": ineligible_count,
         }
         if cache_key:
             cache.set(cache_key, stats, timeout=60 * 60)
-
-    # Facility VAs are expected to resolve a facility Location; community VAs
-    # are expected to resolve an SRS cluster.
-    stats["ineligible_vas"] = vas.filter(
-        Q(Id10023__in=["DK", "dk"])
-        | Q(Id10023__isnull=True)
-        | (
-            Q(community_va__iexact="yes")
-            & Q(cluster__isnull=True)
-        )
-        | (
-            ~Q(community_va__iexact="yes")
-            & Q(location__isnull=True)
-        )
-    ).count()
 
     # clean up dates if non-null
     if stats["last_update"] and not isinstance(stats["last_update"], str):

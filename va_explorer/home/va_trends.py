@@ -72,8 +72,11 @@ def empty_graph_data():
 
 
 def get_context_for_va_table(va_list, user):
-    context = [
-        {
+    context = []
+    for va in va_list:
+        causes = list(va.causes.all())
+        issues = list(va.coding_issues.all())
+        context.append({
             "id": va.id,
             "deceased": f"{va.Id10017} {va.Id10018}",
             "interviewer": va.Id10010,
@@ -82,22 +85,10 @@ def get_context_for_va_table(va_list, user):
             ),
             "dod": parse_date(va.Id10023) if (va.Id10023 != "dk") else "Unknown",
             "facility": va.location.name if va.location else "Not Provided",
-            "cause": (
-                va.causes.all()[0].cause if len(va.causes.all()) > 0 else "Not Coded"
-            ),
-            "warnings": len(
-                [
-                    issue
-                    for issue in va.coding_issues.all()
-                    if issue.severity == "warning"
-                ]
-            ),
-            "errors": len(
-                [issue for issue in va.coding_issues.all() if issue.severity == "error"]
-            ),
-        }
-        for va in va_list
-    ]
+            "cause": causes[0].cause if causes else "Not Coded",
+            "warnings": sum(1 for issue in issues if issue.severity == "warning"),
+            "errors": sum(1 for issue in issues if issue.severity == "error"),
+        })
     # Usually handled by filter, but not in this case
     for item in context:
         if not user.can_view_pii:

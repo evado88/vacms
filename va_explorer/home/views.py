@@ -90,17 +90,23 @@ def _first_valid_timestamp(record, date_fields):
 def _latest_timestamps_by_identifier(queryset, key_field, date_fields):
     filtered = queryset.exclude(**{f"{key_field}__isnull": True}).exclude(**{key_field: ""})
     latest_by_key = {}
-    only_fields = list(date_fields) + [key_field]
-    for record in filtered.only(*only_fields):
-        identifier = getattr(record, key_field, None)
+    value_fields = list(date_fields) + [key_field]
+    # Use .values().iterator() to avoid model-instance construction overhead and
+    # to stream rows without caching the entire result set in the QuerySet.
+    for row in filtered.values(*value_fields).iterator(chunk_size=2000):
+        identifier = row.get(key_field)
         if not identifier:
             continue
-        timestamp = _first_valid_timestamp(record, date_fields)
-        if timestamp is None:
-            continue
-        existing = latest_by_key.get(identifier)
-        if existing is None or timestamp > existing:
-            latest_by_key[identifier] = timestamp
+        for field in date_fields:
+            val = row.get(field)
+            if not val:
+                continue
+            timestamp = _parse_submission_timestamp(val)
+            if timestamp is not None:
+                existing = latest_by_key.get(identifier)
+                if existing is None or timestamp > existing:
+                    latest_by_key[identifier] = timestamp
+                break
     return latest_by_key
 
 
@@ -714,6 +720,24 @@ def _get_national_operational_view_data(
         location_level,
         location_value,
     )
+
+    # When a time window is active, pre-filter querysets at the DB level so that
+    # Python only iterates records that can fall within the window. ISO date
+    # text fields sort lexicographically, which equals chronological order for
+    # well-formed YYYY-MM-DD* strings. We include null/empty rows because they
+    # might carry a valid fallback date in another field.
+    if start_dt is not None:
+        _cutoff = (start_dt.date() - timedelta(days=1)).isoformat()
+        _date_prefilter = (
+            Q(submissiondate__gte=_cutoff)
+            | Q(submissiondate__isnull=True)
+            | Q(submissiondate="")
+        )
+        households_qs = households_qs.filter(_date_prefilter)
+        pregnancies_qs = pregnancies_qs.filter(_date_prefilter)
+        pregnancy_outcomes_qs = pregnancy_outcomes_qs.filter(_date_prefilter)
+        deaths_qs = deaths_qs.filter(_date_prefilter)
+        va_qs = va_qs.filter(_date_prefilter)
 
     with timed_block("home.nov.latest_timestamps.households", request=request):
         households_by_key, eas_by_key = _latest_household_timestamps(households_qs)
@@ -1806,11 +1830,6 @@ class RegionalOperationsComponentContextMixin:
             entry["events"] += deaths + pregnancies + outcomes
 
         overdue_cutoff = datetime.today().date() - timedelta(days=180)
-        outcome_pregnancy_ids = set(
-            PregnancyOutcome.objects.exclude(pregnancy_id__isnull=True)
-            .exclude(pregnancy_id__exact="")
-            .values_list("pregnancy_id", flat=True)
-        )
 
         pregnancy_rows = Pregnancy.objects.filter(
             self._province_access_q("province", province_scope)
@@ -1821,9 +1840,18 @@ class RegionalOperationsComponentContextMixin:
                 PE_10A__gte=start_date_str,
                 PE_10A__lte=end_date_str,
             )
+        # Exclude pregnancies that already have a recorded outcome using a DB-level
+        # EXISTS subquery. This replaces a full-table load of PregnancyOutcome into
+        # a Python set, which was O(N) memory for the entire outcomes table.
+        pregnancy_rows = pregnancy_rows.exclude(
+            Q(
+                key__in=PregnancyOutcome.objects.exclude(pregnancy_id__isnull=True)
+                .exclude(pregnancy_id__exact="")
+                .values("pregnancy_id")
+            )
+        )
 
         for row in pregnancy_rows.values(
-            "key",
             "enumerator",
             "province",
             "district",
@@ -1832,10 +1860,6 @@ class RegionalOperationsComponentContextMixin:
         ):
             due_date = self._coerce_date(row.get("PE_10A"))
             if not due_date or due_date > overdue_cutoff:
-                continue
-
-            key = row.get("key")
-            if key and key in outcome_pregnancy_ids:
                 continue
 
             name = self._format_csa_display_name(row.get("enumerator"))
