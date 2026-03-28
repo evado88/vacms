@@ -1,10 +1,12 @@
 import pytest
-from django.contrib.auth.models import AnonymousUser, Permission
+from django.contrib.auth.models import AnonymousUser, Group, Permission
+from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import PermissionDenied
 from django.test import Client, RequestFactory
 from django.urls import reverse
 
 from va_explorer.tests.factories import GroupFactory, NewUserFactory, UserFactory
+from va_explorer.users.management.commands.initialize_groups import GROUPS_PERMISSIONS
 from va_explorer.users.models import User
 from va_explorer.users.views import (
     UserRedirectView,
@@ -14,6 +16,19 @@ from va_explorer.users.views import (
 )
 
 pytestmark = pytest.mark.django_db
+
+
+def seeded_group(name):
+    group, _ = Group.objects.get_or_create(name=name)
+    group.permissions.clear()
+    for model_class, codenames in GROUPS_PERMISSIONS[name].items():
+        content_type = ContentType.objects.get_for_model(model_class)
+        permissions = Permission.objects.filter(
+            content_type=content_type,
+            codename__in=codenames,
+        )
+        group.permissions.add(*permissions)
+    return group
 
 
 class TestUserRedirectView:
@@ -171,6 +186,33 @@ class TestUserCreateView:
             in response.content
         )
 
+    def test_data_manager_cannot_access_user_index(self):
+        user = UserFactory.create(groups=[seeded_group("Data Managers")])
+        client = Client()
+        client.force_login(user)
+
+        response = client.get(reverse("users:index"))
+
+        assert response.status_code == 403
+
+
+def test_data_viewers_group_includes_default_data_view_permissions():
+    group = seeded_group("Data Viewers")
+
+    actual_permissions = set(
+        group.permissions.filter(content_type__app_label="va_data_management").values_list(
+            "codename", flat=True
+        )
+    )
+
+    assert {
+        "view_verbalautopsy",
+        "view_household",
+        "view_pregnancy",
+        "view_pregnancyoutcome",
+        "view_death",
+    }.issubset(actual_permissions)
+
 
 class TestUserUpdateView:
     def test_get_success_url(self, user: User, rf: RequestFactory):
@@ -190,6 +232,26 @@ class TestUserUpdateView:
         view.setup(request, pk=user.id)
 
         assert view.get_object() == user
+
+    def test_get_context_data_includes_group_permissions_json(
+        self, user: User, rf: RequestFactory
+    ):
+        admin_group = seeded_group("Admins")
+        user.groups.set([admin_group])
+
+        target_user = UserFactory.create(groups=[admin_group])
+
+        view = UserUpdateView()
+        request = rf.get(f"/users/update/{target_user.id}/")
+        request.user = user
+
+        view.setup(request, pk=target_user.id)
+        view.object = target_user
+
+        context = view.get_context_data()
+
+        assert "group_permissions_json" in context
+        assert '"Admins"' in context["group_permissions_json"]
 
 
 class TestUserSetPasswordView:

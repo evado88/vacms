@@ -3,9 +3,9 @@ import re
 from django.contrib import messages
 from django.contrib.auth.mixins import PermissionRequiredMixin
 from django.contrib.messages.views import SuccessMessageMixin
-from django.db.models import Count, F, Q, TextField
+from django.db.models import Count, F, OuterRef, Q, Subquery, TextField
 from django.db.models import Value as V
-from django.db.models.functions import Concat
+from django.db.models.functions import Coalesce, Concat
 from django.shortcuts import redirect
 from django.urls import reverse, reverse_lazy
 from django.views.generic import (
@@ -21,7 +21,7 @@ from django.views.generic.detail import SingleObjectMixin
 from va_explorer.utils.mixins import CustomAuthMixin
 from va_explorer.va_data_management.filters import VAFilter
 from va_explorer.va_data_management.forms import VerbalAutopsyForm
-from va_explorer.va_data_management.models import Location, VerbalAutopsy
+from va_explorer.va_data_management.models import CauseCodingIssue, Location, VerbalAutopsy
 from va_explorer.va_data_management.tasks import run_coding_algorithms
 from va_explorer.va_data_management.utils.date_parsing import parse_date
 from va_explorer.va_data_management.utils.loading import get_va_summary_stats
@@ -34,42 +34,48 @@ class Index(CustomAuthMixin, PermissionRequiredMixin, ListView):
     paginate_by = 15
 
     def get_queryset(self):
-        # Restrict to VAs this user can access and prefetch related for performance
+        # Restrict to VAs this user can access and prefetch related for performance.
+        # Use Subquery for error/warning counts to avoid a Cartesian product JOIN
+        # between causes (CauseOfDeath) and coding_issues (CauseCodingIssue).
+        errors_subq = (
+            CauseCodingIssue.objects.filter(
+                verbalautopsy=OuterRef("pk"), severity="error"
+            )
+            .values("verbalautopsy")
+            .annotate(c=Count("id"))
+            .values("c")
+        )
         queryset = (
             self.request.user.verbal_autopsies()
-            .select_related("location")
-            .select_related("causes")
-            .select_related("coding_issues")
             .annotate(
-                deceased=Concat("Id10017", V(" "), "Id10018", output_field=TextField())
+                deceased=Concat("Id10017", V(" "), "Id10018", output_field=TextField()),
+                errors=Subquery(errors_subq),
+                district_display=Coalesce("district", "area"),
             )
             .values(
                 "id",
-                "location__name",
+                "province",
+                "district_display",
                 "causes__cause",
                 "Id10023",
                 "Id10010",
                 "Id10012",
                 "deceased",
-                errors=Count(
-                    F("coding_issues"), filter=Q(coding_issues__severity="error")
-                ),
-                warnings=Count(
-                    F("coding_issues"), filter=Q(coding_issues__severity="warning")
-                ),
+                "errors",
             )
         )
 
         # sort by chosen field (default is VA ID)
         # get raw sort key (includes direction)
-        sort_key_raw = self.request.GET.get("order_by", "id")
+        sort_key_raw = self.request.GET.get("order_by", "-interviewed")
         # strip out direction and map to va field
         sort_key = sort_key_raw.lstrip("-")
         sort_key_to_field = {
             "id": "id",
             "interviewer": "Id10010",
             "dod": "Id10023",
-            "facility": "location__name",
+            "province": "province",
+            "district": "district",
             "cause": "causes__cause",
             "interviewed": "Id10012",
             "deceased": "deceased",
@@ -118,9 +124,9 @@ class Index(CustomAuthMixin, PermissionRequiredMixin, ListView):
                 "dod": (
                     parse_date(va["Id10023"]) if (va["Id10023"] != "dk") else "Unknown"
                 ),
-                "facility": va["location__name"],
+                "province": va["province"],
+                "district": va["district_display"],
                 "cause": va["causes__cause"],
-                "warnings": va["warnings"],
                 "errors": va["errors"],
             }
             for va in context["object_list"]

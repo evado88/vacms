@@ -39,6 +39,16 @@ def test_non_admin_cannot_access_feedback_mailbox(client):
     assert response.status_code == 403
 
 
+def test_data_manager_cannot_access_feedback_mailbox(client):
+    user = UserFactory()
+    user.groups.create(name="Data Managers")
+    client.force_login(user)
+
+    response = client.get(reverse("users:feedback_mailbox"))
+
+    assert response.status_code == 403
+
+
 def test_admin_can_view_feedback_mailbox_and_detail(client):
     admin = AdminFactory()
     feedback = Feedback.objects.create(

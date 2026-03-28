@@ -47,7 +47,11 @@
 .sidebar-container {
   transition: width 0.25s ease, transform 0.25s ease;
   will-change: transform, width;
-  overflow-x: visible;
+  overflow: visible;
+}
+
+.sidebar-nav {
+  overflow-x: hidden;
   overflow-y: auto;
 }
 
@@ -61,12 +65,15 @@
 .sidebar-container.collapsed {
   width: var(--sidebar-collapsed-width) !important;
   min-width: var(--sidebar-collapsed-width) !important;
+  overflow: visible;
 }
 .sidebar-container.collapsed .nav-label,
 .sidebar-container.collapsed .section-title {
   opacity: 0;
   transform: translateX(-8px);
   width: 0;
+  height: 0;
+  overflow: hidden;
   pointer-events: none;
 }
 
@@ -77,26 +84,25 @@
   pointer-events: auto;
 }
 
-.sidebar-container.collapsed .collapsible-header {
-  position: relative;
-}
-
-.sidebar-container.collapsed .collapsible-header:hover::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  left: var(--sidebar-collapsed-width);
-  top: 50%;
-  transform: translateY(-50%);
-  background: rgba(0, 0, 0, 0.8);
-  color: white;
-  padding: 6px 10px;
+/* Sidebar tooltip — rendered as a <div> appended to <body> via JS
+   so it escapes the sidebar-nav overflow clipping context */
+#sidebar-tooltip {
+  position: fixed;
+  background: rgba(30, 30, 30, 0.70);
+  color: #fff;
+  padding: 5px 10px;
   border-radius: 4px;
   font-size: 12px;
+  font-weight: bold;
   white-space: nowrap;
-  z-index: 1001;
+  pointer-events: none;
+  z-index: 9999;
+  opacity: 0;
+  transition: opacity 0.15s ease;
 }
 .sidebar-container.collapsed .sidebar-toggle {
-  text-align: center;
+  justify-content: center;
+  padding: 12px;
 }
 
 /* Supervision pop-out (hover) */
@@ -133,6 +139,13 @@
 .collapsible-header[aria-expanded="true"] .collapse-caret {
   transform: rotate(180deg);
   transition: transform 0.18s ease;
+}
+
+/* Hide the sidebar toggle button on desktop — toggle is disabled */
+@media screen and (min-width: 996px) {
+  .sidebar-toggle {
+    display: none;
+  }
 }
 
 /* --- Mobile (<=995px) --- */

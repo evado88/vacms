@@ -2,6 +2,7 @@ from django import forms
 from django.core.exceptions import ValidationError
 from django.forms import Select, TextInput
 from django_filters import BooleanFilter, CharFilter, DateFilter, FilterSet
+from crispy_forms.helper import FormHelper
 from fuzzywuzzy import fuzz
 
 from .models import VerbalAutopsy, Pregnancy, Household, PregnancyOutcome, Death
@@ -29,21 +30,22 @@ class DateInput(forms.DateInput):
 # Verbal Autopsy (VA) list
 # =========================
 class VAFilter(FilterSet):
-    id = CharFilter(
-        field_name="id",
-        label="ID",
-        validators=[validate_integer],
-        widget=TextInput(attrs={"class": "form-text"}),
-    )
     interviewer = CharFilter(
         field_name="Id10010",
         lookup_expr="icontains",
         label="Interviewer",
         widget=TextInput(attrs={"class": "form-text"}),
     )
-    deceased = CharFilter(
-        method="filter_deceased",
-        label="Deceased",
+    province = CharFilter(
+        field_name="province",
+        lookup_expr="icontains",
+        label="Province",
+        widget=TextInput(attrs={"class": "form-text"}),
+    )
+    district = CharFilter(
+        field_name="district",
+        lookup_expr="icontains",
+        label="District",
         widget=TextInput(attrs={"class": "form-text"}),
     )
     start_date = DateFilter(
@@ -57,12 +59,6 @@ class VAFilter(FilterSet):
         lookup_expr="lte",
         label="Latest Date",
         widget=DateInput(attrs={"class": "form-date datepicker"}),
-    )
-    location = CharFilter(
-        field_name="location__name",
-        lookup_expr="icontains",
-        label="Facility",
-        widget=TextInput(attrs={"class": "form-text"}),
     )
     cause = CharFilter(
         field_name="causes__cause",
@@ -79,6 +75,12 @@ class VAFilter(FilterSet):
     class Meta:
         model = VerbalAutopsy
         fields = []
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.form.helper = FormHelper()
+        self.form.helper.form_tag = False
+        self.form.helper.disable_csrf = True
 
     def filter_deceased(self, queryset, name, value):
         if value:
@@ -106,6 +108,12 @@ class VAFilter(FilterSet):
 # Pregnancy list
 # =========================
 class PregnancyFilter(FilterSet):
+    id = CharFilter(
+        field_name="id",
+        lookup_expr="icontains",
+        label="ID",
+        widget=TextInput(attrs={"class": "form-text"}),
+    )
     province = CharFilter(
         field_name="province",
         lookup_expr="icontains",
@@ -147,25 +155,17 @@ class PregnancyFilter(FilterSet):
         model = Pregnancy
         fields = []
 
-    def filter_respondent(self, queryset, name, value):
-        """Fuzzy search by respondent name (PE_02)."""
-        if value:
-            threshold = 75
-            qs = queryset.values("id", "PE_02")
-            matches = [
-                row.get("id")
-                for row in qs
-                if row.get("PE_02") and fuzz.token_set_ratio(value, row.get("PE_02")) > threshold
-            ]
-            return queryset.filter(id__in=matches)
-        return queryset
-
 
 # =========================
 # Household list
 # =========================
 class HouseholdFilter(FilterSet):
-    # Simple text and icontains filters
+    id = CharFilter(
+        field_name="id",
+        lookup_expr="icontains",
+        label="ID",
+        widget=TextInput(attrs={"class": "form-text"}),
+    )
     province = CharFilter(
         field_name="province",
         lookup_expr="icontains",
@@ -197,45 +197,9 @@ class HouseholdFilter(FilterSet):
         widget=TextInput(attrs={"class": "form-text"}),
     )
 
-    only_errors = BooleanFilter(
-        method="filter_errors",
-        label="Only Errors",
-        widget=Select(choices=TRUE_FALSE_CHOICES, attrs={"class": "custom-select"}),
-    )
-
     class Meta:
         model = Household
-        fields = []  # keep explicit and empty to avoid auto-building conflicting filters
-
-    # --- Fix for your error: define the method referenced by `only_errors` ---
-    def filter_errors(self, queryset, name, value):
-        """
-        When True, return households that have related DataQualityIssue(s) that are OPEN.
-        Uses the GenericRelation `dq_members` on Household -> DataQualityIssueMember -> issue.
-        """
-        if not value:
-            return queryset
-        return queryset.filter(
-            dq_members__issue__status="open"
-        ).distinct()
-
-    # Optional: fuzzy respondent search across Household.respondent and related members
-    # (Not wired to a filter control; add a CharFilter(method='filter_respondent_fuzzy') if desired.)
-    def filter_respondent_fuzzy(self, queryset, name, value):
-        if value:
-            threshold = 75
-            # Combine respondent (from Household) and names (from related HouseholdMember)
-            households = queryset.values("id", "respondent")
-            # Build a set of household IDs matching fuzzy respondent;
-            # if you need member names too, consider annotating or joining separately.
-            matches = []
-            for row in households:
-                hay = str(row.get("respondent") or "").strip()
-                if hay and fuzz.token_set_ratio(value, hay) > threshold:
-                    matches.append(row["id"])
-            if matches:
-                return queryset.filter(id__in=matches)
-        return queryset
+        fields = []
 
 
 # =========================
@@ -289,26 +253,6 @@ class PregnancyOutcomeFilter(FilterSet):
         model = PregnancyOutcome
         fields = []
 
-    def filter_respondent_fuzzy(self, queryset, name, value):
-        """Fuzzy match on respondent's name and related fields."""
-        if value:
-            threshold = 75
-            outcomes = queryset.values("id", "PO_01", "PO_04", "PO_23")
-            matches = [
-                outcome["id"]
-                for outcome in outcomes
-                if fuzz.token_set_ratio(
-                    value,
-                    " ".join([
-                        str(outcome.get("PO_01") or ""),
-                        str(outcome.get("PO_04") or ""),
-                        str(outcome.get("PO_23") or ""),
-                    ])
-                ) > threshold
-            ]
-            return queryset.filter(id__in=matches)
-        return queryset
-
 
 # =========================
 # Death list
@@ -338,6 +282,12 @@ class DeathFilter(FilterSet):
         label="Enumerator",
         widget=TextInput(attrs={"class": "form-text"}),
     )
+    deceased = CharFilter(
+        field_name="DE_03",
+        lookup_expr="icontains",
+        label="Deceased",
+        widget=TextInput(attrs={"class": "form-text"}),
+    )
     start_date = DateFilter(
         field_name="DE_06",
         lookup_expr="gte",
@@ -355,26 +305,3 @@ class DeathFilter(FilterSet):
         model = Death
         fields = []
 
-    def filter_respondent_fuzzy(self, queryset, name, value):
-        if value:
-            threshold = 75
-            records = queryset.values("id", "respondent")
-            matches = [
-                record["id"]
-                for record in records
-                if fuzz.token_set_ratio(value, record.get("respondent") or "") > threshold
-            ]
-            return queryset.filter(id__in=matches)
-        return queryset
-
-    def filter_deceased_fuzzy(self, queryset, name, value):
-        if value:
-            threshold = 75
-            records = queryset.values("id", "DE_03")
-            matches = [
-                record["id"]
-                for record in records
-                if fuzz.token_set_ratio(value, record.get("DE_03") or "") > threshold
-            ]
-            return queryset.filter(id__in=matches)
-        return queryset

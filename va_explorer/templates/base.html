@@ -37,10 +37,18 @@
   <script src="{% static 'vendor/jquery-3.5.1/jquery.min.js' %}"></script>
 </head>
 
-<body data-sidebar-context="{% if request.resolver_match.namespace == 'va_analytics' %}va_analytics{% else %}default{% endif %}">
-  <!-- Fixed Top Navigation -->
+<body data-sidebar-context="{% if request.resolver_match.namespace == 'va_analytics' or request.resolver_match.url_name == 'index' and request.resolver_match.namespace == 'home' %}dashboard{% else %}default{% endif %}">
+  <!-- Fixed Top Navigation (hidden on mobile) -->
   <div class="top-navigation-wrapper">
     {% include "partials/_top_navigation.html" %}
+  </div>
+
+  <!-- Mobile-only top bar (replaces top nav on small screens) -->
+  <div class="mobile-top-bar" id="mobileTopBar">
+    <button class="mobile-menu-btn" id="mobileSidebarToggle" aria-label="Open navigation menu">
+      <i class="fas fa-bars"></i>
+    </button>
+    <a class="mobile-brand" href="{% url 'home:index' %}">VA CMS</a>
   </div>
 
   <div class="app-shell">

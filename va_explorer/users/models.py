@@ -27,29 +27,27 @@ from va_explorer.va_data_management.utils.location_access import (
 from .constants import FEEDBACK_MODULE_FEATURES
 
 
-feedback_upload_root = Path(__file__).resolve().parents[1] / "static" / "data" / "uploads"
-feedback_upload_root.mkdir(parents=True, exist_ok=True)
+# Prefer MEDIA_ROOT for user uploads, not STATIC
+feedback_upload_root = Path(getattr(settings, "MEDIA_ROOT", Path(__file__).resolve().parents[2] / "media")) / "feedback" / "uploads"
+
 feedback_attachment_storage = FileSystemStorage(
     location=str(feedback_upload_root),
-    base_url=f"{settings.STATIC_URL}data/uploads/",
+    base_url=f"{settings.MEDIA_URL}feedback/uploads/",
 )
 
 
 def feedback_attachment_upload_path(instance, filename):
-    """
-    Generate a predictable upload path for feedback attachments.
-    Organizes files by year/month and bakes in useful context for admins.
-    """
     now = timezone.now()
     name, ext = os.path.splitext(filename)
     module = getattr(instance, "module", "feedback") or "feedback"
     severity = getattr(instance, "severity", "unspecified") or "unspecified"
     reporter = getattr(getattr(instance, "submitted_by", None), "username", "") or "anonymous"
-    safe_name = "-".join(
-        part for part in [module, severity, reporter, slugify(name)] if part
-    )
+
+    safe_name = "-".join(part for part in [module, severity, reporter, slugify(name)] if part)
+
     return "/".join(
         [
+            "feedback/uploads",                 # <— prefix
             now.strftime("%Y"),
             now.strftime("%m"),
             f"{safe_name}-{uuid.uuid4().hex[:8]}{ext}",
@@ -110,6 +108,7 @@ class User(AbstractUser):
     location_restrictions = ManyToManyField(
         Location, related_name="users", db_table="users_user_location_restrictions"
     )
+    denied_permissions = models.JSONField(blank=True, default=list)
 
     # The query set of verbal autopsies that this user has access to, based on
     # location restrictions
@@ -170,6 +169,26 @@ class User(AbstractUser):
             self.user_permissions.add(permission)
         else:
             self.user_permissions.remove(permission)
+
+    def _get_denied_permission_set(self):
+        denied = self.denied_permissions or []
+        if not isinstance(denied, list):
+            return set()
+        return {str(perm) for perm in denied if isinstance(perm, str) and "." in perm}
+
+    def has_perm(self, perm, obj=None):
+        if self.is_active and self.is_superuser:
+            return True
+        if perm in self._get_denied_permission_set():
+            return False
+        return super().has_perm(perm, obj=obj)
+
+    def get_all_permissions(self, obj=None):
+        if self.is_active and self.is_superuser:
+            return super().get_all_permissions(obj=obj)
+        perms = super().get_all_permissions(obj=obj)
+        denied = self._get_denied_permission_set()
+        return {perm for perm in perms if perm not in denied}
 
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = []

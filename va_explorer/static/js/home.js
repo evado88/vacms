@@ -12,6 +12,8 @@ let vaStatsInitialized = false;
 let trendsInitialized = false;
 let homeDataPromise = null;
 let homeDataCache = null;
+let homeDataPromiseBySection = {};
+let homeDataCacheBySection = {};
 let firstRenderMeasured = false;
 const tabWarmCache = new Set();
 let homeOverviewMapController = null;
@@ -33,10 +35,12 @@ const perfLog = (name, startMs, meta) => {
 
 const getDashboardLoader = () => window.DashboardLoader || null;
 const hasJqueryAjax = () => typeof window !== "undefined" && window.$ && typeof window.$.ajax === "function";
-const getHomeTrendsEndpoint = () => {
+const getHomeTrendsEndpoint = (section = "all") => {
   const shell = document.querySelector(".dashboard-shell[data-shell='home']");
   const endpoint = shell?.dataset?.trendsEndpoint || "";
-  return endpoint || "/trends/";
+  const base = endpoint || "/trends/";
+  const separator = base.includes("?") ? "&" : "?";
+  return `${base}${separator}section=${encodeURIComponent(section)}`;
 };
 
 const fetchSlotHtmlFallback = async (slot) => {
@@ -98,6 +102,8 @@ const invalidateScope = (scopeKey) => {
 const clearHomeTrendsCache = () => {
   homeDataCache = null;
   homeDataPromise = null;
+  homeDataPromiseBySection = {};
+  homeDataCacheBySection = {};
 }
 
 const setHtmlIfPresent = (id, value) => {
@@ -201,14 +207,45 @@ const setVAChart = (x, y, canvas) => {
   chartInstances.set(canvas, chart);
 }
 
+const toNumericSeries = (values) => {
+  if (!Array.isArray(values)) return [];
+  return values.map((value) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : 0;
+  });
+}
+
+const ensureCumulativeNonDecreasing = (values) => {
+  const numericValues = toNumericSeries(values);
+  let hasDip = false;
+  for (let index = 1; index < numericValues.length; index += 1) {
+    if (numericValues[index] < numericValues[index - 1]) {
+      hasDip = true;
+      break;
+    }
+  }
+  if (!hasDip) return numericValues;
+
+  // Backward-compatibility guard: if stale monthly values are returned,
+  // convert them to cumulative for display.
+  let runningTotal = 0;
+  return numericValues.map((value) => {
+    runningTotal += value;
+    return runningTotal;
+  });
+}
+
 const setVACharts = (graphData) => {
   const interviewedCanvas = document.getElementById("interviewedChart");
   const codedCanvas = document.getElementById("codedChart");
   const notYetCodedCanvas = document.getElementById("notYetCodedChart");
   if (!interviewedCanvas || !codedCanvas || !notYetCodedCanvas) return;
-  setVAChart(graphData.collected.x, graphData.collected.y, interviewedCanvas);
-  setVAChart(graphData.coded.x, graphData.coded.y, codedCanvas);
-  setVAChart(graphData.uncoded.x, graphData.uncoded.y, notYetCodedCanvas);
+  const collected = graphData?.collected || { x: [], y: [] };
+  const coded = graphData?.coded || { x: [], y: [] };
+  const uncoded = graphData?.uncoded || { x: [], y: [] };
+  setVAChart(collected.x || [], ensureCumulativeNonDecreasing(collected.y || []), interviewedCanvas);
+  setVAChart(coded.x || [], ensureCumulativeNonDecreasing(coded.y || []), codedCanvas);
+  setVAChart(uncoded.x || [], ensureCumulativeNonDecreasing(uncoded.y || []), notYetCodedCanvas);
 }
 
 const selectedNovPreset = () => {
@@ -520,7 +557,7 @@ const setSingleMetricTrendChart = (canvasId, trendGraphs) => {
   const canvas = document.getElementById(canvasId);
   if (!canvas || !trendGraphs || !trendGraphs.recorded) return;
   const x = trendGraphs.recorded.x || [];
-  const y = trendGraphs.recorded.y || [];
+  const y = ensureCumulativeNonDecreasing(trendGraphs.recorded.y || []);
   setVAChart(x, y, canvas);
 }
 
@@ -594,30 +631,37 @@ const applyTrendsPayload = (jsonResponse) => {
   perfLog("render.trends.components", started);
 }
 
-const fetchHomeTrendsPayload = () => {
-  if (homeDataCache) return Promise.resolve(homeDataCache);
-  if (homeDataPromise) return homeDataPromise;
+const fetchHomeTrendsPayload = (section = "all") => {
+  if (homeDataCacheBySection[section]) return Promise.resolve(homeDataCacheBySection[section]);
+  if (homeDataPromiseBySection[section]) return homeDataPromiseBySection[section];
+
+  // Backward compatibility for any all-sections callers.
+  if (section === "all" && homeDataCache) return Promise.resolve(homeDataCache);
+  if (section === "all" && homeDataPromise) return homeDataPromise;
 
   if (hasJqueryAjax()) {
-    homeDataPromise = new Promise((resolve, reject) => {
+    homeDataPromiseBySection[section] = new Promise((resolve, reject) => {
       $.ajax({
-        url: getHomeTrendsEndpoint(),
+        url: getHomeTrendsEndpoint(section),
         type: "GET",
         dataType: "json",
         success: (jsonResponse) => {
-          homeDataCache = jsonResponse;
+          homeDataCacheBySection[section] = jsonResponse;
+          if (section === "all") homeDataCache = jsonResponse;
           resolve(jsonResponse);
         },
         error: () => {
-          homeDataPromise = null;
+          homeDataPromiseBySection[section] = null;
+          if (section === "all") homeDataPromise = null;
           reject(new Error("Failed to fetch chart data from /trends/"));
         },
       });
     });
-    return homeDataPromise;
+    if (section === "all") homeDataPromise = homeDataPromiseBySection[section];
+    return homeDataPromiseBySection[section];
   }
 
-  homeDataPromise = fetch(getHomeTrendsEndpoint(), {
+  homeDataPromiseBySection[section] = fetch(getHomeTrendsEndpoint(section), {
     method: "GET",
     headers: { "X-Requested-With": "XMLHttpRequest" },
     credentials: "same-origin",
@@ -627,14 +671,17 @@ const fetchHomeTrendsPayload = () => {
       return response.json();
     })
     .then((jsonResponse) => {
-      homeDataCache = jsonResponse;
+      homeDataCacheBySection[section] = jsonResponse;
+      if (section === "all") homeDataCache = jsonResponse;
       return jsonResponse;
     })
     .catch((error) => {
-      homeDataPromise = null;
+      homeDataPromiseBySection[section] = null;
+      if (section === "all") homeDataPromise = null;
       throw error;
     });
-  return homeDataPromise;
+  if (section === "all") homeDataPromise = homeDataPromiseBySection[section];
+  return homeDataPromiseBySection[section];
 }
 
 const resizeChartsForTab = (tab) => {
@@ -677,7 +724,7 @@ const initVAStatisticsTab = async () => {
   }
   vaStatsInitialized = true;
   try {
-    const payload = await fetchHomeTrendsPayload();
+    const payload = await fetchHomeTrendsPayload("va");
     applyVAStatisticsPayload(payload);
     resizeChartsForTab("va_statistics");
   } catch (error) {
@@ -694,7 +741,7 @@ const initTrendsTab = async () => {
   }
   trendsInitialized = true;
   try {
-    const payload = await fetchHomeTrendsPayload();
+    const payload = await fetchHomeTrendsPayload("model");
     applyTrendsPayload(payload);
     resizeChartsForTab("trends");
   } catch (error) {
@@ -774,7 +821,7 @@ document.addEventListener("dashboard:component-loaded", (event) => {
   if (!slot || !slot.id) return;
 
   if (slot.id === "homeTrendsComponentSlot" && trendsInitialized) {
-    fetchHomeTrendsPayload()
+    fetchHomeTrendsPayload("model")
       .then((payload) => {
         applyTrendsPayload(payload);
         resizeChartsForTab("trends");
@@ -784,7 +831,7 @@ document.addEventListener("dashboard:component-loaded", (event) => {
   }
 
   if (slot.id === "homeVAStatisticsComponentSlot" && vaStatsInitialized) {
-    fetchHomeTrendsPayload()
+    fetchHomeTrendsPayload("va")
       .then((payload) => {
         applyVAStatisticsPayload(payload);
         resizeChartsForTab("va_statistics");

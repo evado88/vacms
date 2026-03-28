@@ -190,6 +190,20 @@ class Event(models.Model):
         managed = True
         db_table = "cms_events"
 
+    @property
+    def record_province(self):
+        for rel in (self.death, self.pregnancy, self.pregnancy_outcome, self.household):
+            if rel is not None:
+                return rel.province or None
+        return self.province
+
+    @property
+    def record_district(self):
+        for rel in (self.death, self.pregnancy, self.pregnancy_outcome, self.household):
+            if rel is not None:
+                return rel.district or None
+        return self.district
+
     def __str__(self):
         return f"Event: {self.id} - {self.EventType(self.event_type).label}"
 

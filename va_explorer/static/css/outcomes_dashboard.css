@@ -56,10 +56,9 @@
 }
 #pregnancies-pane,
 #pregnancy-outcomes-pane,
-#deaths-pane,
 #verbal-autopsies-pane {
   background: #f3f4f6;
-  border: 1px solid #e5e7eb;
+  border: none;
   border-radius: 14px;
   width: 100%;
   max-width: 100%;
@@ -88,174 +87,489 @@
   grid-template-rows: max-content auto auto auto auto auto;
 }
 #deathsDashboardApp {
-  /* Let deaths sections grow to fit chart content instead of fixed fractional rows. */
-  grid-template-rows: max-content auto auto auto auto auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--od-gap);
+}
+#deathsTrendSection,
+#deathsDemographicsSection,
+#deathsPlaceSection,
+#deathsTimelinessSection,
+#deathsMapSection {
+  padding: 7.5px 0 0 0 !important;
+  border: none !important;
+  box-shadow: none !important;
+  background: white !important;
+}
+#deathsTrendSection .chart-canvas-wrap,
+#deathsDemographicsSection .chart-canvas-wrap,
+#deathsPlaceSection .chart-canvas-wrap {
+  height: 195px;
+}
+#deathsTimelinessSection .chart-canvas-wrap {
+  height: 165px;
+}
+#deathsTrendSection h2,
+#deathsDemographicsSection h2,
+#deathsPlaceSection h2,
+#deathsTimelinessSection h2,
+#deathsMapSection h2 {
+  margin-bottom: 0 !important;
+  padding-bottom: 5px !important;
+  text-align: center;
+}
+#deathsDemographicsSection .chart-mode-toggle,
+#deathsPlaceSection .chart-mode-toggle {
+  justify-content: center;
+}
+#deathsTrendSection:hover,
+#deathsDemographicsSection:hover,
+#deathsPlaceSection:hover,
+#deathsTimelinessSection:hover,
+#deathsMapSection:hover {
+  box-shadow: none !important;
+}
+.deaths-top-row {
+  width: 100%;
+}
+.deaths-top-row #deathsPanelSection {
+  width: 100%;
+  box-sizing: border-box;
+}
+.deaths-filters-row {
+  width: 100%;
+}
+.deaths-filters-row #deathsFiltersSection {
+  width: 100%;
+  box-sizing: border-box;
+}
+.deaths-content-row {
+  width: 100%;
+  display: flex;
+  gap: var(--od-gap);
+  align-items: stretch;
+}
+.deaths-col-left {
+  flex: 4.5;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.deaths-col-right {
+  flex: 5.5;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.deaths-col-left .sectionContainer,
+.deaths-col-right .sectionContainer {
+  flex: 1;
+}
+.deaths-inner-row {
+  display: flex;
+  gap: var(--od-gap);
+  margin-top: var(--od-gap);
+}
+.deaths-inner-col {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.deaths-inner-col .sectionContainer {
+  flex: 1;
+}
+#deathsTimelinessSection {
+  margin-top: 10px;
+}
+#deathsFiltersReset {
+  background-color: #6b7280;
+  border-color: #6b7280;
+  color: #fff;
+}
+#deathsFiltersReset:hover,
+#deathsFiltersReset:focus {
+  background-color: #4b5563;
+  border-color: #4b5563;
+  color: #fff;
+}
+#deathsMapSection {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+#deathsMapContainer {
+  flex: 1 1 0;
+  min-height: 350px;
+  width: 100%;
+}
+@media (max-width: 767px) {
+  .deaths-content-row {
+    flex-direction: column;
+  }
+  .deaths-inner-row {
+    flex-direction: column;
+  }
+}
+@media (max-width: 995px) {
+  #deathsFiltersForm .filtersRow {
+    flex-wrap: wrap;
+    overflow-x: hidden;
+    white-space: normal;
+    align-items: flex-start;
+  }
+  #deathsFiltersForm .filtersRow .mainFiltersContainer,
+  #deathsFiltersForm .filtersRow .betweenDatesContainer {
+    flex: 0 0 100%;
+    min-width: 0;
+    flex-wrap: wrap;
+    white-space: normal;
+  }
+  #deathsFiltersForm .filtersRow .mainFiltersContainer label,
+  #deathsFiltersForm .filtersRow .mainFiltersContainer select,
+  #deathsFiltersForm .filtersRow .mainFiltersContainer input,
+  #deathsFiltersForm .filtersRow .betweenDatesContainer span,
+  #deathsFiltersForm .filtersRow .betweenDatesContainer input,
+  #deathsFiltersForm .filtersRow .betweenDatesContainer button {
+    flex-shrink: 0;
+  }
 }
 #dashboardApp {
-  display: block;
-}
-#dashboardApp .va-dashboard-columns {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: var(--od-gap);
-  align-items: start;
-}
-#dashboardApp .va-dashboard-column {
   display: flex;
   flex-direction: column;
   gap: var(--od-gap);
-  min-width: 0;
 }
-#dashboardApp .va-dashboard-column .sectionContainer {
-  margin-bottom: 0 !important;
+.va-top-row {
+  width: 100%;
 }
-#dashboardApp .va-right-top-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+.va-top-row #vaPanelSection {
+  width: 100%;
+  box-sizing: border-box;
+}
+.va-filters-row {
+  width: 100%;
+}
+.va-filters-row #vaFiltersSection {
+  width: 100%;
+  box-sizing: border-box;
+}
+.va-content-row {
+  width: 100%;
+  display: flex;
   gap: var(--od-gap);
   align-items: stretch;
 }
-#dashboardApp .va-right-top-row > .sectionContainer {
-  width: 100%;
-  max-width: 100%;
+.va-col-left {
+  flex: 4.5;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
-#dashboardApp .va-right-top-row > #vaCodSection {
-  height: 100%;
+.va-col-right {
+  flex: 5.5;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--od-gap);
 }
-#dashboardApp .va-dashboard-column #vaPanelSection,
-#dashboardApp .va-dashboard-column #vaMapSection,
-#dashboardApp .va-dashboard-column #vaDemographicSection,
-#dashboardApp .va-dashboard-column #vaTrendSection,
-#dashboardApp .va-dashboard-column #vaCodSection,
-#dashboardApp .va-dashboard-column #vaRegionalComparisonSection {
-  grid-column: auto;
-  grid-row: auto;
-  width: 100%;
-  max-width: 100%;
-  justify-self: auto;
+.va-col-left .sectionContainer,
+.va-col-right > .sectionContainer {
+  flex: 1;
+}
+.va-inner-row {
+  display: flex;
+  gap: var(--od-gap);
+}
+.va-inner-col {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.va-inner-col .sectionContainer {
+  flex: 1;
+}
+/* VA section styling — mirrors deaths tab */
+#vaTrendSection,
+#vaCodSection,
+#vaDemographicSection,
+#vaRegionalComparisonSection,
+#vaMapSection {
+  padding: 7.5px 0 0 0 !important;
+  border: none !important;
+  box-shadow: none !important;
+  background: white !important;
+}
+#vaTrendSection:hover,
+#vaCodSection:hover,
+#vaDemographicSection:hover,
+#vaRegionalComparisonSection:hover,
+#vaMapSection:hover {
+  box-shadow: none !important;
+}
+#vaTrendSection h2,
+#vaCodSection h2,
+#vaDemographicSection h2,
+#vaRegionalComparisonSection h2,
+#vaMapSection h2 {
+  margin-bottom: 0 !important;
+  padding-bottom: 5px !important;
+  text-align: center;
+}
+#vaCodSection .chart-mode-toggle {
+  justify-content: center;
+}
+#vaCodSection .dashboard-section-head,
+#vaTrendSection .dashboard-section-head,
+#vaRegionalComparisonSection .dashboard-section-head {
+  flex-direction: column;
+  align-items: center;
+}
+/* VA chart heights — mirrors deaths tab (195px / 165px) */
+#vaTrendSection .chart-canvas-wrap {
+  height: 195px;
+}
+#vaDemographicSection .chart-canvas-wrap {
+  height: 195px;
+}
+#vaRegionalComparisonSection .chart-canvas-wrap {
+  height: 165px;
+}
+/* VA map container — mirrors deaths map */
+#vaMapSection {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+#map {
+  flex: 1 1 0 !important;
+  min-height: 350px !important;
+  height: auto !important;
+  max-height: none !important;
+  margin: 0 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  width: 100% !important;
+}
+/* VA compare-by filter spacing */
+.va-compare-filter {
+  margin-bottom: 0.4rem;
 }
 #outcomesDashboardApp {
-  display: block;
+  display: flex;
+  flex-direction: column;
+  gap: var(--od-gap);
 }
-#outcomesDashboardApp .po-dashboard-columns {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+.po-top-row {
+  width: 100%;
+}
+.po-top-row #poPanelSection {
+  width: 100%;
+  box-sizing: border-box;
+}
+.po-filters-row {
+  width: 100%;
+}
+.po-filters-row #poFiltersSection {
+  width: 100%;
+  box-sizing: border-box;
+}
+.po-content-row {
+  width: 100%;
+  display: flex;
   gap: var(--od-gap);
   align-items: stretch;
 }
-#outcomesDashboardApp .po-dashboard-column {
+.po-col-left {
+  flex: 4.5;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.po-col-right {
+  flex: 5.5;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: var(--od-gap);
+}
+.po-col-left .sectionContainer,
+.po-col-right > .sectionContainer {
+  flex: 1;
+}
+.po-inner-row {
+  display: flex;
+  gap: var(--od-gap);
+}
+.po-inner-col {
+  flex: 1;
   min-width: 0;
-  min-height: 0;
-  align-self: stretch;
-  height: 100%;
+  display: flex;
+  flex-direction: column;
 }
-#outcomesDashboardApp .po-dashboard-column--left {
-  min-height: 0;
+.po-inner-col .sectionContainer {
+  flex: 1;
 }
-#outcomesDashboardApp .po-dashboard-column .sectionContainer {
+/* PO section styling — mirrors deaths tab */
+#poTrendSection,
+#poBirthOutcomesSection,
+#poPlaceOfBirthSection,
+#poGestationalAgeSection,
+#poAncVisitsSection,
+#poMapSection {
+  padding: 7.5px 0 0 0 !important;
+  border: none !important;
+  box-shadow: none !important;
+  background: white !important;
+}
+#poTrendSection:hover,
+#poBirthOutcomesSection:hover,
+#poPlaceOfBirthSection:hover,
+#poGestationalAgeSection:hover,
+#poAncVisitsSection:hover,
+#poMapSection:hover {
+  box-shadow: none !important;
+}
+#poTrendSection h2,
+#poBirthOutcomesSection h2,
+#poPlaceOfBirthSection h2,
+#poGestationalAgeSection h2,
+#poAncVisitsSection h2,
+#poMapSection h2 {
   margin-bottom: 0 !important;
+  padding-bottom: 5px !important;
+  text-align: center;
 }
-#outcomesDashboardApp .po-dashboard-column #poPanelSection,
-#outcomesDashboardApp .po-dashboard-column #poMapSection,
-#outcomesDashboardApp .po-dashboard-column #poTrendSection,
-#outcomesDashboardApp .po-dashboard-column #poBirthOutcomesSection,
-#outcomesDashboardApp .po-dashboard-column #poPlaceOfBirthSection,
-#outcomesDashboardApp .po-dashboard-column #poGestationalAgeSection,
-#outcomesDashboardApp .po-dashboard-column #poAncVisitsSection {
-  grid-column: auto;
-  grid-row: auto;
-  width: 100%;
-  max-width: 100%;
-  justify-self: auto;
+#poBirthOutcomesSection .chart-mode-toggle,
+#poPlaceOfBirthSection .chart-mode-toggle {
+  justify-content: center;
 }
-#outcomesDashboardApp .po-dashboard-column #poMapSection {
+/* PO chart heights — mirrors deaths tab (195px / 165px) */
+#poTrendSection .chart-canvas-wrap,
+#poBirthOutcomesSection .chart-canvas-wrap,
+#poPlaceOfBirthSection .chart-canvas-wrap {
+  height: 195px;
+}
+#poGestationalAgeSection .chart-canvas-wrap,
+#poAncVisitsSection .chart-canvas-wrap {
+  height: 165px;
+}
+/* PO map container — mirrors deaths map */
+#poMapSection {
   display: flex;
   flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+#poMapContainer {
   flex: 1 1 0;
-  min-width: 0;
-  min-height: 0;
-}
-#outcomesDashboardApp .po-dashboard-column #poMapContainer {
-  flex: 1 1 auto;
-  height: 100%;
-  min-height: 0;
-}
-#outcomesDashboardApp .po-dashboard-column--left #poPanelSection {
-  height: auto;
-  flex: 0 0 auto;
-  align-self: stretch;
-}
-#outcomesDashboardApp .po-right-middle-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: var(--od-gap);
-  align-items: start;
-}
-#outcomesDashboardApp .po-right-middle-row > .sectionContainer {
+  min-height: 350px;
   width: 100%;
-  max-width: 100%;
 }
-#vaTrendSection {
-  grid-column: 4/7;
-  grid-row: 1/3;
+#poFiltersReset {
+  background-color: #6b7280;
+  border-color: #6b7280;
+  color: #fff;
 }
-#vaDemographicSection {
-  grid-column: 4/7;
-  grid-row: 3/5;
-}
-#vaCodSection {
-  grid-column: 4/7;
-  grid-row: 5/7;
-}
-#vaRegionalComparisonSection {
-  grid-column: 4/7;
-  grid-row: 7/9;
-  justify-self: start;
+#poFiltersReset:hover,
+#poFiltersReset:focus {
+  background-color: #4b5563;
+  border-color: #4b5563;
+  color: #fff;
 }
 #pregnancyDashboardApp {
-  display: block;
-}
-#pregnancyDashboardApp #pePanelSection {
   display: flex;
   flex-direction: column;
   gap: var(--od-gap);
 }
-#pregnancyDashboardApp #pePanelSection .pe-panel-columns {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+.pe-top-row {
+  width: 100%;
+}
+.pe-top-row #pePanelSection {
+  width: 100%;
+  box-sizing: border-box;
+}
+.pe-filters-row {
+  width: 100%;
+}
+.pe-filters-row #peFiltersSection {
+  width: 100%;
+  box-sizing: border-box;
+}
+.pe-content-row {
+  width: 100%;
+  display: flex;
   gap: var(--od-gap);
   align-items: stretch;
 }
-#pregnancyDashboardApp #pePanelSection .pe-panel-column {
+.pe-col-left {
+  flex: 4.5;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.pe-col-right {
+  flex: 5.5;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: var(--od-gap);
-  min-width: 0;
-  min-height: 0;
 }
-#pregnancyDashboardApp #pePanelSection .pe-panel-column .sectionContainer {
-  margin-bottom: 0 !important;
+.pe-col-left .sectionContainer,
+.pe-col-right > .sectionContainer {
+  flex: 1;
 }
-#pregnancyDashboardApp #pePanelSection #peMapSection,
-#pregnancyDashboardApp #pePanelSection #peTrendSection,
-#pregnancyDashboardApp #pePanelSection #peGestationalAgeSection,
-#pregnancyDashboardApp #pePanelSection #peAncVisitsSection {
+.pe-chart-row {
   width: 100%;
-  max-width: 100%;
+}
+.pe-chart-row .sectionContainer {
+  flex: 1;
+}
+/* PE section styling — mirrors PO tab */
+#peTrendSection,
+#peGestationalAgeSection,
+#peAncVisitsSection,
+#peMapSection {
+  padding: 7.5px 0 0 0 !important;
+  border: none !important;
+  box-shadow: none !important;
+  background: white !important;
+}
+#peTrendSection:hover,
+#peGestationalAgeSection:hover,
+#peAncVisitsSection:hover,
+#peMapSection:hover {
+  box-shadow: none !important;
+}
+#peTrendSection h2,
+#peGestationalAgeSection h2,
+#peAncVisitsSection h2,
+#peMapSection h2 {
+  margin-bottom: 0 !important;
+  padding-bottom: 5px !important;
+  text-align: center;
+}
+/* PE chart heights */
+#peTrendSection .chart-canvas-wrap {
+  height: 195px;
+}
+#peGestationalAgeSection .chart-canvas-wrap,
+#peAncVisitsSection .chart-canvas-wrap {
+  height: 165px;
+}
+/* PE map container — mirrors PO map */
+#peMapSection {
   display: flex;
   flex-direction: column;
-}
-#pregnancyDashboardApp #pePanelSection #peMapContainer {
-  flex: 1 1 auto;
+  flex: 1;
   min-height: 0;
-  height: 100%;
 }
-#pregnancyDashboardApp #pePanelSection .pe-panel-column--left #peMapSection {
+#peMapContainer {
   flex: 1 1 0;
-  min-height: 0;
+  min-height: 350px;
+  width: 100%;
 }
 .outcomes-dashboard-root .sectionContainer {
   background: var(--od-card);
@@ -273,12 +587,6 @@
 .outcomes-dashboard-root .panelView {
   height: auto;
   align-self: start;
-}
-#poPanelSection {
-  /* Match the visual height of the top-right trend panel row. */
-  min-height: calc(190px + var(--h2height) + 1rem);
-  height: 100%;
-  align-self: stretch;
 }
 .outcomes-dashboard-root .sectionContainer:hover {
   box-shadow: var(--od-shadow-hover);
@@ -476,7 +784,6 @@
 }
 #peFiltersForm .filtersRow button,
 #poFiltersForm .filtersRow button,
-#deathsFiltersForm .filtersRow button,
 #vaFiltersForm .filtersRow button {
   height: 2.25rem;
   max-height: 2.25rem;
@@ -502,6 +809,15 @@
   width: 8.5rem;
   max-width: 8.5rem;
 }
+@media (min-width: 993px) {
+  #peFilterStartDatetime,
+  #peFilterEndDatetime,
+  #poFilterStartDatetime,
+  #poFilterEndDatetime {
+    width: 11rem;
+    max-width: 11rem;
+  }
+}
 #peFiltersForm label[for="peFilterTimePreset"] {
   display: inline-block;
   max-width: 16.4ch;
@@ -510,34 +826,28 @@
 }
 /* Icon-only mode for narrow date fields */
 #peFiltersForm input[type="date"].is-icon-only,
-#poFiltersForm input[type="date"].is-icon-only,
-#deathsFiltersForm input[type="date"].is-icon-only {
+#poFiltersForm input[type="date"].is-icon-only {
   caret-color: transparent;
   color: transparent;
   -webkit-text-fill-color: transparent;
   text-shadow: none;
 }
 #peFiltersForm input[type="date"].is-icon-only::-webkit-datetime-edit,
-#poFiltersForm input[type="date"].is-icon-only::-webkit-datetime-edit,
-#deathsFiltersForm input[type="date"].is-icon-only::-webkit-datetime-edit {
+#poFiltersForm input[type="date"].is-icon-only::-webkit-datetime-edit {
   color: transparent;
 }
 #peFiltersForm input[type="date"].is-icon-only::-webkit-datetime-edit-fields-wrapper,
-#poFiltersForm input[type="date"].is-icon-only::-webkit-datetime-edit-fields-wrapper,
-#deathsFiltersForm input[type="date"].is-icon-only::-webkit-datetime-edit-fields-wrapper {
+#poFiltersForm input[type="date"].is-icon-only::-webkit-datetime-edit-fields-wrapper {
   display: none;
 }
 #peFiltersForm input[type="date"].is-icon-only::-webkit-clear-button,
 #poFiltersForm input[type="date"].is-icon-only::-webkit-clear-button,
-#deathsFiltersForm input[type="date"].is-icon-only::-webkit-clear-button,
 #peFiltersForm input[type="date"].is-icon-only::-webkit-inner-spin-button,
-#poFiltersForm input[type="date"].is-icon-only::-webkit-inner-spin-button,
-#deathsFiltersForm input[type="date"].is-icon-only::-webkit-inner-spin-button {
+#poFiltersForm input[type="date"].is-icon-only::-webkit-inner-spin-button {
   display: none;
 }
 #peFiltersForm input[type="date"].is-icon-only::-webkit-calendar-picker-indicator,
-#poFiltersForm input[type="date"].is-icon-only::-webkit-calendar-picker-indicator,
-#deathsFiltersForm input[type="date"].is-icon-only::-webkit-calendar-picker-indicator {
+#poFiltersForm input[type="date"].is-icon-only::-webkit-calendar-picker-indicator {
   opacity: 1;
   cursor: pointer;
 }
@@ -564,43 +874,6 @@
 .outcomes-dashboard-root .chart-canvas-wrap-short {
   height: 190px;
 }
-#deathsTimelinessSection .chart-canvas-wrap.compact {
-  height: 260px;
-  margin-bottom: 0;
-}
-.outcomes-dashboard-root .po-split-row {
-  display: flex;
-  align-items: stretch;
-  gap: var(--od-gap);
-  width: 100%;
-  grid-column: 4/7;
-  grid-row: 2/3;
-  align-self: start;
-  height: auto;
-  margin-bottom: 0;
-}
-.outcomes-dashboard-root .po-split-row > #poBirthOutcomesSection,
-.outcomes-dashboard-root .po-split-row > #poPlaceOfBirthSection,
-.outcomes-dashboard-root .po-split-row > #deathsDemographicsSection,
-.outcomes-dashboard-root .po-split-row > #deathsPlaceSection {
-  width: calc(50% - (var(--od-gap) / 2));
-  max-width: calc(50% - (var(--od-gap) / 2));
-  flex: 0 0 calc(50% - (var(--od-gap) / 2));
-  margin-bottom: 0;
-}
-@media (max-width: 992px) {
-  .outcomes-dashboard-root .po-split-row {
-    flex-direction: column;
-  }
-  .outcomes-dashboard-root .po-split-row > #poBirthOutcomesSection,
-  .outcomes-dashboard-root .po-split-row > #poPlaceOfBirthSection,
-  .outcomes-dashboard-root .po-split-row > #deathsDemographicsSection,
-  .outcomes-dashboard-root .po-split-row > #deathsPlaceSection {
-    width: 100%;
-    max-width: 100%;
-    flex: 1 1 auto;
-  }
-}
 .outcomes-dashboard-root .section-title-spaced {
   margin-top: 10px;
 }
@@ -608,12 +881,6 @@
   width: 90%;
   margin: 0 auto;
   height: 260px;
-}
-#poMapContainer {
-  flex: 1;
-  margin-top: 0;
-  padding-top: 0;
-  border-radius: 0 0 5px 5px;
 }
 .map-breadcrumbs {
   display: flex;
@@ -650,89 +917,9 @@
 .map-breadcrumb-sep {
   color: #64748b;
 }
-#poMapSection h2,
-#peMapSection h2,
-#deathsMapSection h2 {
+#peMapSection h2 {
   margin-bottom: 0;
   padding-bottom: 0;
-}
-#poTrendSection {
-  grid-column: 4/7;
-  grid-row: 1/2;
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  max-width: 100%;
-  justify-self: start;
-  align-self: start;
-  height: auto;
-}
-#poTrendSection,
-#poBirthOutcomesSection,
-#poPlaceOfBirthSection {
-  padding-bottom: 0;
-  align-self: start;
-  height: auto;
-}
-#poTrendSection .chartsContainer,
-#poBirthOutcomesSection .chartsContainer,
-#poPlaceOfBirthSection .chartsContainer {
-  margin-bottom: 0;
-  padding-bottom: 0;
-}
-#poGestationalAgeSection {
-  grid-column: 4/7;
-  grid-row: 4/5;
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  max-width: 100%;
-  justify-self: start;
-  align-self: stretch;
-  margin-top: 0;
-  min-height: 0;
-}
-#poAncVisitsSection {
-  grid-column: 4/7;
-  grid-row: 5/7;
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  max-width: 100%;
-  justify-self: start;
-  align-self: stretch;
-  margin-top: 0;
-  min-height: 0;
-}
-#poGestationalAgeSection .chartsContainer,
-#poAncVisitsSection .chartsContainer {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-}
-#poGestationalAgeSection .chartsContainer > div,
-#poAncVisitsSection .chartsContainer > div {
-  flex: 1;
-  height: 100% !important;
-  min-height: 0;
-}
-#poPlaceOfBirthSection {
-  grid-column: 6/7;
-  grid-row: 5/6;
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  max-width: 100%;
-  justify-self: start;
-}
-#poKpisSection {
-  grid-column: 6/7;
-  grid-row: 6/7;
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  max-width: 100%;
-  justify-self: start;
 }
 #peMapContainer {
   flex: 1;
@@ -740,114 +927,18 @@
   padding-top: 0;
   border-radius: 0 0 5px 5px;
 }
-#peTrendSection {
-  grid-column: 4/7;
-  grid-row: 1/3;
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  max-width: 100%;
-  justify-self: start;
-}
-#peGestationalAgeSection {
-  grid-column: 4/7;
-  grid-row: 3/5;
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  max-width: 100%;
-  justify-self: start;
-}
+#peTrendSection,
+#peGestationalAgeSection,
 #peAncVisitsSection {
-  grid-column: 4/7;
-  grid-row: 5/7;
   display: flex;
   flex-direction: column;
   width: 100%;
   max-width: 100%;
-  justify-self: start;
-}
-#deathsMapContainer {
-  flex: 1;
-  margin-top: 0;
-  padding-top: 0;
-  border-radius: 0 0 5px 5px;
-  min-height: 320px;
-}
-#deathsTrendSection {
-  grid-column: 4/7;
-  grid-row: 1/2;
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  max-width: 100%;
-  justify-self: start;
-}
-#deathsTrendSection,
-#deathsTrendSection h2,
-#deathsTrendSection .chartsContainer,
-#deathsTrendSection .topCauseLineChartContainer,
-#deathsTrendSection .chart-canvas-wrap,
-#deathsTrendSection #deathsTrendChart,
-#deathsTrendSection #deathsTrendEmpty {
-  margin-bottom: 0;
-  padding-bottom: 0;
-}
-#deathsTrendSection .chartsContainer {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-}
-#deathsTrendSection .topCauseLineChartContainer,
-#deathsTrendSection .chart-canvas-wrap {
-  height: 100%;
-  min-height: 0;
-}
-#deathsCauseSection {
-  grid-column: 4/7;
-  grid-row: auto;
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  max-width: 100%;
-  justify-self: start;
-  height: auto;
-  min-height: fit-content;
-}
-#deathsCauseSection .po-split-row {
-  display: flex;
-  align-items: stretch;
-  gap: var(--od-gap);
-  width: 100%;
-  height: auto;
-  min-height: fit-content;
-  margin-bottom: 0;
-}
-#deathsCauseSection #deathsPlaceSection,
-#deathsCauseSection #deathsDemographicsSection,
-#deathsCauseSection #deathsTopCausesSection {
-  flex: 1 1 50%;
-  min-width: 0;
-}
-#deathsCauseSection #deathsCauseTrendSection {
-  margin-top: var(--od-gap);
 }
 #vaCodSection,
 #vaDemographicSection {
   display: flex;
   flex-direction: column;
-  width: 100%;
-  max-width: 100%;
-  justify-self: start;
-  height: auto;
-  min-height: fit-content;
-}
-#vaCodSection .dashboard-card-body,
-#vaDemographicSection .dashboard-card-body {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
 }
 #vaCodSection .chartsContainer,
 #vaDemographicSection .chartsContainer {
@@ -857,32 +948,8 @@
 }
 #vaCodSection .topCausesContainer {
   flex: 1;
-}
-#deathsTimelinessSection {
-  grid-column: 4/7;
-  grid-row: auto;
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  max-width: 100%;
-  justify-self: start;
-  margin-top: 30px;
-  padding-bottom: 0 !important;
-}
-#deathsCauseSection + #deathsTimelinessSection {
-  margin-top: 30px;
-}
-#deathsTimelinessSection .chartsContainer {
-  margin-bottom: 0;
-  padding-bottom: 0;
-}
-#deathsTimelinessSection .chart-canvas-wrap.compact {
-  margin: 0;
-  padding: 0;
-  line-height: 0;
-}
-#deathsTimelinessSection #deathsTimelinessChart {
-  display: block;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 .outcomesBottomKpis {
   margin-top: 0.5rem;
@@ -900,164 +967,26 @@
   color: var(--od-muted);
   text-align: left;
 }
-#deathsFiltersForm .mainFiltersContainer {
-  justify-content: flex-start;
-  flex-wrap: nowrap;
-  min-width: 0;
-  gap: 0.35rem;
-}
-#deathsFiltersForm .betweenDatesContainer {
-  align-items: center;
-  gap: 0.35rem;
-  flex-wrap: nowrap;
-  min-width: 0;
-}
-#deathsFiltersForm .filtersRow {
-  flex-wrap: nowrap;
-  overflow-x: hidden;
-  overflow-y: hidden;
-  white-space: nowrap;
-  align-items: center;
-  gap: 0.35rem;
-}
-#deathsFiltersForm label,
-#deathsFiltersForm span {
-  white-space: nowrap;
-}
-#deathsFiltersForm :is(select, input[type="date"], button) {
-  min-width: 0;
-}
-#deathsMapViewSelect {
-  width: 9ch;
-  max-width: 9ch;
-}
-#deathsFilterTimePreset {
-  width: 12ch;
-  max-width: 12ch;
-}
-#deathsFilterSex {
-  width: 6ch;
-  max-width: 6ch;
-}
-#deathsFilterAgeGroup {
-  width: 7ch;
-  max-width: 7ch;
-}
-#deathsFilterStartDatetime,
-#deathsFilterEndDatetime {
-  width: 8.5rem;
-  max-width: 8.5rem;
-}
-#deathsSignalsPanel .highlight h3 {
-  font-size: 0.82rem;
-}
-#deathsSignalsPanel .highlight p {
-  font-size: 0.9rem;
-  font-weight: 600;
-}
-#signalAll7d,
-#signalU57d,
-#signalAll30d,
-#signalU530d {
-  font-weight: 400 !important;
-  white-space: nowrap;
-}
-.deaths-summary-cards .deaths-signal-card {
-  flex: 1.35;
-  min-width: 19rem;
-}
-.deaths-summary-cards {
-  flex-wrap: wrap;
-  align-items: stretch;
-}
-.deaths-summary-cards .highlight {
-  flex: 1 1 14rem;
-}
-@media (min-width: 1500px) {
-  #deathsSummaryCards.deaths-summary-cards {
-    display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-    gap: var(--od-gap);
-    flex-wrap: nowrap;
-  }
-  #deathsSummaryCards.deaths-summary-cards .highlight {
-    min-width: 0;
-    width: 100%;
-  }
-}
-.deaths-summary-cards-secondary .deaths-signal-card {
-  flex: 1 1 22rem;
-}
-.deaths-summary-cards.deaths-summary-cards-secondary {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: var(--od-gap);
-  flex-wrap: nowrap;
-}
-.deaths-summary-cards.deaths-summary-cards-secondary .deaths-signal-card {
-  min-width: 0;
-  width: 100%;
-}
-.deaths-summary-cards.deaths-summary-cards-secondary .deaths-signal-card h3,
-.deaths-summary-cards.deaths-summary-cards-secondary .deaths-signal-card p {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.deaths-signal-card-30d h3,
-.deaths-signal-card-30d p {
-  font-weight: 400 !important;
-}
-#deathsSummaryCards .deaths-signal-card-30d > h3,
-#deathsSummaryCards .deaths-signal-card-30d > p,
-.deaths-summary-cards-secondary .deaths-signal-card-30d > h3,
-.deaths-summary-cards-secondary .deaths-signal-card-30d > p {
-  font-weight: 400 !important;
-}
 
 /* Keep chart sections in normal document flow and allow graceful stacking. */
-#poTrendSection,
-#poBirthOutcomesSection,
-#poPlaceOfBirthSection,
-#poGestationalAgeSection,
-#poAncVisitsSection,
 #peTrendSection,
 #peGestationalAgeSection,
-#peAncVisitsSection,
-#deathsTrendSection,
-#deathsCauseSection,
-#deathsTimelinessSection,
-#deathsPlaceSection,
-#deathsTopCausesSection,
-#deathsCauseTrendSection {
+#peAncVisitsSection {
   position: relative;
 }
 
 /* When space is constrained, let charts flow down in order instead of fixed grid slots. */
 @media (max-width: 1400px) {
-  #outcomesDashboardApp .po-split-row {
-    grid-column: 1 / -1;
-    grid-row: auto;
-    flex-direction: column;
-  }
-  #poTrendSection,
-  #poGestationalAgeSection,
-  #poAncVisitsSection,
-  #poPlaceOfBirthSection,
   #peTrendSection,
   #peGestationalAgeSection,
   #peAncVisitsSection,
-  #deathsTrendSection,
-  #deathsCauseSection,
-  #deathsTimelinessSection,
   #vaMapSection,
   #vaDemographicSection,
   #vaCodSection,
   #vaTrendSection,
   #vaRegionalComparisonSection {
-    grid-column: 1 / -1;
-    grid-row: auto;
-    margin-top: 0;
+    width: 100%;
+    max-width: 100%;
   }
 }
 
@@ -1074,23 +1003,20 @@
   color: #000 !important;
 }
 @media (max-width: 992px) {
-  #deathsCauseSection .po-split-row {
+  .pe-content-row {
     flex-direction: column;
   }
-  #pregnancyDashboardApp #pePanelSection .pe-panel-columns {
-    grid-template-columns: minmax(0, 1fr);
+  .va-content-row {
+    flex-direction: column;
   }
-  #dashboardApp .va-dashboard-columns {
-    grid-template-columns: minmax(0, 1fr);
+  .va-inner-row {
+    flex-direction: column;
   }
-  #dashboardApp .va-right-top-row {
-    grid-template-columns: minmax(0, 1fr);
+  .po-content-row {
+    flex-direction: column;
   }
-  #outcomesDashboardApp .po-dashboard-columns {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  #outcomesDashboardApp .po-right-middle-row {
-    grid-template-columns: minmax(0, 1fr);
+  .po-inner-row {
+    flex-direction: column;
   }
   #pregnancies-pane,
   #pregnancy-outcomes-pane,
@@ -1104,12 +1030,7 @@
   }
   #peTrendSection,
   #peGestationalAgeSection,
-  #peAncVisitsSection,
-  #vaMapSection,
-  #vaDemographicSection,
-  #vaCodSection,
-  #vaTrendSection,
-  #vaRegionalComparisonSection {
+  #peAncVisitsSection {
     width: 100%;
     max-width: 100%;
   }

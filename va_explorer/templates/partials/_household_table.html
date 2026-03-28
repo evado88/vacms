@@ -2,14 +2,15 @@
 
 <table class="table table-sm">
   <thead>
+    {% with ob=request.GET.order_by %}
     <tr>
-      <th><a href="?{% sort_url 'id' direction='-' %}">ID</a></th>
-      <th><a href="?{% sort_url 'enumerator' direction='-' %}">Enumerator</a></th>
-      <th><a href="?{% sort_url 'province' direction='-' %}">Province</a></th>
-      <th><a href="?{% sort_url 'district' direction='-' %}">District</a></th>
-      <th><a href="?{% sort_url 'ward' direction='-' %}">Ward</a></th>
-      <th><a href="?{% sort_url 'locality_name' direction='-' %}">Locality Name</a></th>
-      <th><a href="?{% sort_url 'respondent' direction='-' %}">Respondent</a></th>
+      <th><a href="?{% sort_url 'id' direction='-' %}">ID</a>{% if ob == 'id' %}▲{% elif ob == '-id' %}▼{% endif %}</th>
+      <th><a href="?{% sort_url 'enumerator' direction='-' %}">Enumerator</a>{% if ob == 'enumerator' %}▲{% elif ob == '-enumerator' %}▼{% endif %}</th>
+      <th><a href="?{% sort_url 'province' direction='-' %}">Province</a>{% if ob == 'province' %}▲{% elif ob == '-province' %}▼{% endif %}</th>
+      <th><a href="?{% sort_url 'district' direction='-' %}">District</a>{% if ob == 'district' %}▲{% elif ob == '-district' %}▼{% endif %}</th>
+      <th><a href="?{% sort_url 'ward' direction='-' %}">Ward</a>{% if ob == 'ward' %}▲{% elif ob == '-ward' %}▼{% endif %}</th>
+      <th><a href="?{% sort_url 'locality_name' direction='-' %}">Locality Name</a>{% if ob == 'locality_name' %}▲{% elif ob == '-locality_name' %}▼{% endif %}</th>
+      <th><a href="?{% sort_url 'respondent' direction='-' %}">Respondent</a>{% if ob == 'respondent' %}▲{% elif ob == '-respondent' %}▼{% endif %}</th>
       <th></th>
       {% if va_data_cleanup and perms.va_data_cleanup.download %}
         <th>Download</th>
@@ -18,6 +19,7 @@
         <th>Delete</th>
       {% endif %}
     </tr>
+    {% endwith %}
   </thead>
   <tbody>
     {% if object_list|length != 0 %}

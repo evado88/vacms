@@ -91,6 +91,17 @@ class PregnancyDashboardDataTests(TestCase):
         self.assertEqual(payload["x_min"], 1)
         self.assertEqual(payload["x_max"], 40)
 
+    def test_ga_anc_points_caps_anc_visits_at_fifteen(self):
+        self._create_pregnancy(
+            "preg-ga-anc-cap",
+            PE_09A="2026-01-01",
+            submissiondate="2026-01-29",  # 28 days => 4 weeks
+            PE_22=24,
+        )
+
+        payload = _build_pregnancy_ga_anc_points(Pregnancy.objects.all())
+        self.assertIn({"x": 4, "y": 15}, payload["points"])
+
     def test_pregnancy_trend_hard_starts_at_september_2024(self):
         self._create_pregnancy("preg-legacy", PE_09A="2024-08-20")
         self._create_pregnancy("preg-start", PE_09A="2024-09-05")

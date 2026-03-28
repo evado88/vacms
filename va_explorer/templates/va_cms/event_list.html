@@ -3,8 +3,12 @@
 {% block heading %} Scheduled Verbal Autopsies {% endblock %}
 {% block content %}
 
-  {% include "partials/filter_bar.html" with note="Filter scheduled verbal autopsies by assignment and interview status." fields_template="va_cms/partials/_event_list_filter_fields.html" actions_template="va_cms/partials/_event_list_filter_actions.html" class_name="ou-mb-3" %}
+  {% include "partials/filter_bar.html" with note="Filter scheduled verbal autopsies by province, district, interviewer assignment, and interview status." fields_template="va_cms/partials/_event_list_filter_fields.html" actions_template="va_cms/partials/_event_list_filter_actions.html" class_name="ou-mb-3" %}
 
   {% include "partials/card.html" with title="Scheduled Events" body_template="va_cms/partials/_event_list_card_body.html" class_name="ou-mb-3" body_class="p-0" %}
+
+  {% if page_obj.has_other_pages %}
+    {% include "partials/_pagination.html" %}
+  {% endif %}
 
 {% endblock %}

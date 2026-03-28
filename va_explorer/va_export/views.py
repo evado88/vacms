@@ -80,6 +80,31 @@ def _build_geo_filter_from_srs(loc_query, field_mapping):
     return geo_filter
 
 
+def _get_selected_srs_descendants(loc_query):
+    if not loc_query:
+        return SRSClusterLocation.objects.none()
+
+    id_list = [int(pk) for pk in str(loc_query).split(",") if pk]
+    if not id_list:
+        return SRSClusterLocation.objects.none()
+
+    selected = SRSClusterLocation.objects.filter(pk__in=id_list)
+    descendants = selected
+    for node in selected:
+        descendants = descendants | node.get_descendants()
+    return descendants.distinct()
+
+
+def _first_non_empty(*values):
+    for value in values:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return ""
+
+
 def _apply_date_filter(qs, start_date, end_date, date_field):
     if start_date:
         qs = qs.filter(**{f"{date_field}__gte": start_date})
@@ -161,13 +186,14 @@ class VaApi(CustomAuthMixin, View):
         matching_vas = (
             request.user.verbal_autopsies()
             .exclude(Id10023="dk")
-            .exclude(location__isnull=True)
             .select_related("location")
             .annotate(
                 date=F("Id10023"),
                 cause=F("causes__cause"),
                 loc_id=F("location__id"),
                 loc_name=F("location__name"),
+                cluster_id=F("cluster__id"),
+                cluster_name=F("cluster__name"),
             )
         )
 
@@ -193,12 +219,29 @@ class VaApi(CustomAuthMixin, View):
             # if location query, filter down VAs within chosen location's jurisdiction
             loc_query = params.get("locations", None)
             if loc_query:
-                id_list = [int(pk) for pk in loc_query.split(",") if pk]
-                clusters = SRSClusterLocation.objects.filter(pk__in=id_list)
+                clusters = _get_selected_srs_descendants(loc_query)
                 location_qs = map_srs_clusters_to_locations(clusters)
+                va_geo_filter = _build_geo_filter_from_srs(
+                    loc_query,
+                    {
+                        "province": "province",
+                        "district": "district",
+                        "constituency": "constituency",
+                        "ward": "ward",
+                        "ea": "ea",
+                    },
+                )
 
+                location_filter = Q()
+                if clusters.exists():
+                    location_filter |= Q(cluster__in=clusters)
                 if location_qs.exists():
-                    matching_vas = matching_vas.filter(location__in=location_qs)
+                    location_filter |= Q(location__in=location_qs)
+                if getattr(va_geo_filter, "children", None):
+                    location_filter |= va_geo_filter
+
+                if location_filter.children:
+                    matching_vas = matching_vas.filter(location_filter)
                 else:
                     matching_vas = matching_vas.none()
 
@@ -243,16 +286,44 @@ class VaApi(CustomAuthMixin, View):
                 location.id: location.get_ancestors()
                 for location in Location.objects.filter(location_type="facility")
             }
+            cluster_ancestors = {
+                cluster.id: list(cluster.get_ancestors()) + [cluster]
+                for cluster in SRSClusterLocation.objects.filter(
+                    location_type__in=[
+                        "province",
+                        "district",
+                        "constituency",
+                        "ward",
+                        "ea",
+                    ]
+                )
+            }
 
             # extract COD and location-based fields for each va object and
             # convert to dicts
             for va in matching_vas:
-                for ancestor in location_ancestors[va["loc_id"]]:
-                    va[ancestor.location_type] = ancestor.name
+                if va.get("loc_id") in location_ancestors:
+                    for ancestor in location_ancestors[va["loc_id"]]:
+                        va[ancestor.location_type] = ancestor.name
+
+                if va.get("cluster_id") in cluster_ancestors:
+                    for ancestor in cluster_ancestors[va["cluster_id"]]:
+                        loc_type = str(ancestor.location_type or "").lower()
+                        if loc_type in {"province", "district", "constituency", "ward", "ea"}:
+                            va[loc_type] = _first_non_empty(
+                                va.get(loc_type),
+                                ancestor.name,
+                            )
+
+                va["province"] = _first_non_empty(va.get("province"))
+                va["district"] = _first_non_empty(va.get("district"))
+                va["constituency"] = _first_non_empty(va.get("constituency"))
+                va["ward"] = _first_non_empty(va.get("ward"))
+                va["ea"] = _first_non_empty(va.get("ea"))
 
                 # Clean up location fields.
-                va["location"] = va["loc_name"]
-                del (va["loc_name"], va["loc_id"])
+                va["location"] = _first_non_empty(va.get("loc_name"), va.get("cluster_name"))
+                del (va["loc_name"], va["loc_id"], va["cluster_name"], va["cluster_id"])
 
             # convert results to dataframe
             va_df = pd.DataFrame.from_records(matching_vas)

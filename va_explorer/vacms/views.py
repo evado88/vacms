@@ -71,28 +71,31 @@ def user_can_access_admin_panel(user):
 class EventListView(ListView):
     model = Event
     template_name = "va_cms/event_list.html"
+    paginate_by = 25
+
+    _SORT_FIELDS = {
+        "id": "id",
+        "province": "province",
+        "district": "district",
+        "va_interview_status": "va_interview_status",
+        "interview_scheduled_date": "interview_scheduled_date",
+        "interviewer": "va_interview_staff__id",
+    }
 
     def get_queryset(self):
-        queryset = super().get_queryset()
+        queryset = super().get_queryset().select_related(
+            "death", "pregnancy", "pregnancy_outcome", "household", "va_interview_staff"
+        )
         queryset = self._apply_filters(queryset)
-        return queryset.order_by("interview_scheduled_date", "id")
-        status_priority = Case(
-            When(va_interview_status=Event.VAInterviewStatus.SCHEDULED, then=Value(0)),
-            When(va_interview_status=Event.VAInterviewStatus.POSTPONED, then=Value(1)),
-            When(va_interview_status=Event.VAInterviewStatus.NOT_DONE, then=Value(2)),
-            When(va_interview_status=Event.VAInterviewStatus.COMPLETED, then=Value(3)),
-            default=Value(4),
-            output_field=IntegerField(),
-        )
-        return (
-            queryset.annotate(_va_status_priority=status_priority)
-            .order_by("_va_status_priority", "interview_scheduled_date", "id")
-        )
+        order_by_raw = self.request.GET.get("order_by", "interview_scheduled_date")
+        direction = "-" if order_by_raw.startswith("-") else ""
+        db_field = self._SORT_FIELDS.get(order_by_raw.lstrip("-"), "interview_scheduled_date")
+        return queryset.order_by(direction + db_field, "id")
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context["filters"] = self._filters_context
-        base_queryset = context["object_list"]
+        base_queryset = self.object_list
         context["scheduled_events"] = base_queryset.filter(
             va_interview_status__in=(
                 Event.VAInterviewStatus.SCHEDULED,
@@ -110,17 +113,33 @@ class EventListView(ListView):
     def _apply_filters(self, queryset):
         params = self.request.GET
         filters = {
+            "province": params.get("province", "").strip(),
             "district": params.get("district", "").strip(),
             "interview_status": params.get("interview_status", "").strip(),
             "interviewer": params.get("interviewer", "").strip(),
         }
 
+        if filters["province"]:
+            queryset = queryset.filter(
+                Q(death__province__icontains=filters["province"]) |
+                Q(pregnancy__province__icontains=filters["province"]) |
+                Q(pregnancy_outcome__province__icontains=filters["province"]) |
+                Q(household__province__icontains=filters["province"])
+            )
         if filters["district"]:
-            queryset = queryset.filter(district__icontains=filters["district"])
+            queryset = queryset.filter(
+                Q(death__district__icontains=filters["district"]) |
+                Q(pregnancy__district__icontains=filters["district"]) |
+                Q(pregnancy_outcome__district__icontains=filters["district"]) |
+                Q(household__district__icontains=filters["district"])
+            )
         if filters["interview_status"]:
             queryset = queryset.filter(va_interview_status=filters["interview_status"])
         if filters["interviewer"]:
-            queryset = queryset.filter(va_interview_staff__full_name__icontains=filters["interviewer"])
+            queryset = queryset.filter(
+                Q(va_interview_staff__name__icontains=filters["interviewer"]) |
+                Q(va_interview_staff__email__icontains=filters["interviewer"])
+            )
 
         self._filters_context = filters
         return queryset

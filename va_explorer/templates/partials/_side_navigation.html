@@ -4,23 +4,27 @@
 
 <!-- Sidebar -->
 <div class="sidebar-container" id="sidebar">
-  <!-- Toggle Button for Mobile -->
-  <button class="sidebar-toggle" id="sidebarToggle" aria-label="Toggle sidebar">
-    <i class="fas fa-bars"></i>
-  </button>
 
   <!-- Main Navigation -->
   <nav class="sidebar-nav" id="sidebarNav">
     <ul class="nav flex-column">
+      <!-- Toggle button sits above Home so it's always in the collapsed sidebar -->
+      <li class="nav-item d-none">
+        <button class="sidebar-toggle" id="sidebarToggle" aria-label="Toggle sidebar">
+          <i class="fas fa-bars nav-icon"></i>
+          <span class="nav-label">Menu</span>
+        </button>
+      </li>
+
       <!-- Core Navigation (not collapsible) -->
       <li class="nav-item">
         <a
           class="nav-link {% if request.resolver_match.url_name == 'index' and request.resolver_match.namespace == 'home' %}active{% endif %}"
           href="{% url 'home:index' %}"
-          data-tooltip="Home"
+          data-tooltip="Operational Dashboard"
         >
-          <i class="fas fa-home nav-icon"></i>
-          <span class="nav-label">Home</span>
+          <i class="fas fa-chart-area nav-icon"></i>
+          <span class="nav-label">Operational Dashboard</span>
         </a>
       </li>
       {% if perms.va_analytics.view_dashboard %}
@@ -45,7 +49,7 @@
             <a
               class="nav-link {% if request.resolver_match.url_name == 'cms-event-list' or request.resolver_match.url_name == 'cms-event-detail' %}active{% endif %}"
               href="{% url 'cms-event-list' %}"
-              data-tooltip="Events"
+              data-tooltip="Scheduled Verbal Autopsies"
             >
               <i class="fas fa-calendar nav-icon"></i>
               <span class="nav-label">Scheduled VAs</span>
@@ -62,7 +66,7 @@
               href="{% url 'va_data_management:households' %}"
               data-tooltip="Households"
             >
-              <i class="fas fa-home nav-icon"></i>
+              <i class="fas fa-house-user nav-icon"></i>
               <span class="nav-label">Households</span>
             </a>
           </li>
@@ -108,9 +112,9 @@
             <a
               class="nav-link {% if request.resolver_match.url_name == 'show' or request.resolver_match.url_name == 'index' and request.resolver_match.namespace == 'va_data_management' %}active{% endif %}"
               href="{% url 'va_data_management:index' %}"
-              data-tooltip="Data Management"
+              data-tooltip="Verbal Autopsies"
             >
-              <i class="fas fa-notes-medical nav-icon"></i>
+              <i class="fas fa-file-medical nav-icon"></i>
               <span class="nav-label">Verbal<br>Autopsies</span>
             </a>
           </li>
@@ -166,6 +170,8 @@ document.addEventListener("DOMContentLoaded", function () {
   const sidebarOverlay = document.getElementById("sidebarOverlay");
   const headers = document.querySelectorAll(".collapsible-header");
   const desktopBreakpoint = 995;
+  // Key for persisting the user's explicit collapse preference across pages
+  const STORAGE_KEY = "sidebar_collapsed";
 
   // --- Initialize collapsible sections with saved state ---
   headers.forEach(header => {
@@ -202,14 +208,15 @@ document.addEventListener("DOMContentLoaded", function () {
 
   function setCollapsed(isCollapsed) {
     sidebar.classList.toggle("collapsed", isCollapsed);
-    const width = isCollapsed
-      ? "var(--sidebar-collapsed-width)"
-      : "var(--sidebar-width)";
-    document.documentElement.style.setProperty("--sidebar-current-width", width);
+    document.documentElement.style.setProperty(
+      "--sidebar-current-width",
+      isCollapsed ? "var(--sidebar-collapsed-width)" : "var(--sidebar-width)"
+    );
   }
 
+  // Sidebar is always collapsed on desktop — toggle is disabled.
   function applyDesktopState() {
-    setCollapsed(false);
+    setCollapsed(true);
   }
 
   function applyMobileState() {
@@ -233,7 +240,7 @@ document.addEventListener("DOMContentLoaded", function () {
         icon.classList.add("fa-bars");
       }
     } else {
-      // desktop: show X when expanded (not collapsed), bars when collapsed
+      // desktop: show bars when collapsed (icon-only), X when expanded
       if (sidebar.classList.contains("collapsed")) {
         icon.classList.remove("fa-times");
         icon.classList.add("fa-bars");
@@ -245,23 +252,55 @@ document.addEventListener("DOMContentLoaded", function () {
   }
 
   // --- Toggle behavior ---
-  sidebarToggle.addEventListener("click", function () {
-    if (!isDesktop()) {
-      // Mobile: open/close the off-canvas sidebar (don't change collapsed state)
-      const isNowOpen = sidebar.classList.toggle("open");
-      sidebarOverlay.classList.toggle("active", isNowOpen);
-    } else {
-      // Desktop: collapse/expand (icon-only)
-      const isCollapsed = sidebar.classList.toggle("collapsed");
+  function toggleMobileSidebar() {
+    const isNowOpen = sidebar.classList.toggle("open");
+    sidebarOverlay.classList.toggle("active", isNowOpen);
+    // Update the mobile top bar button icon
+    const mobileToggle = document.getElementById("mobileSidebarToggle");
+    if (mobileToggle) {
+      const icon = mobileToggle.querySelector("i");
+      if (icon) {
+        icon.classList.toggle("fa-bars", !isNowOpen);
+        icon.classList.toggle("fa-times", isNowOpen);
+      }
     }
     updateToggleIcon();
+  }
+
+  sidebarToggle.addEventListener("click", function () {
+    if (!isDesktop()) {
+      toggleMobileSidebar();
+    }
+    // Desktop: toggle disabled — sidebar stays collapsed permanently.
   });
+
+  // Mobile top bar hamburger button
+  const mobileSidebarToggle = document.getElementById("mobileSidebarToggle");
+  if (mobileSidebarToggle) {
+    mobileSidebarToggle.addEventListener("click", function () {
+      if (!isDesktop()) {
+        toggleMobileSidebar();
+      }
+    });
+  }
+
+  function resetMobileToggleIcon() {
+    const mobileToggle = document.getElementById("mobileSidebarToggle");
+    if (mobileToggle) {
+      const icon = mobileToggle.querySelector("i");
+      if (icon) {
+        icon.classList.remove("fa-times");
+        icon.classList.add("fa-bars");
+      }
+    }
+  }
 
   // Clicking overlay closes the sidebar
   sidebarOverlay.addEventListener("click", function () {
     if (!isDesktop()) {
       sidebar.classList.remove("open");
       this.classList.remove("active");
+      resetMobileToggleIcon();
     }
     updateToggleIcon();
   });
@@ -271,6 +310,7 @@ document.addEventListener("DOMContentLoaded", function () {
     if (!isDesktop() && sidebar.classList.contains("open")) {
       sidebar.classList.remove("open");
       sidebarOverlay.classList.remove("active");
+      resetMobileToggleIcon();
       updateToggleIcon();
       return;
     }
@@ -279,7 +319,7 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   });
 
-  // Update state on resize
+  // Restore correct state when resizing across the mobile/desktop breakpoint
   window.addEventListener("resize", function () {
     if (isDesktop()) {
       sidebar.classList.remove("open");
@@ -291,11 +331,50 @@ document.addEventListener("DOMContentLoaded", function () {
     updateToggleIcon();
   });
 
+  // Initial state
   if (isDesktop()) {
     applyDesktopState();
   } else {
     applyMobileState();
   }
   updateToggleIcon();
+
+  // --- Sidebar tooltips ---
+  // Appended to <body> so it escapes the sidebar-nav overflow clipping context.
+  const tooltip = document.createElement("div");
+  tooltip.id = "sidebar-tooltip";
+  document.body.appendChild(tooltip);
+
+  function showTooltip(el) {
+    if (!sidebar.classList.contains("collapsed")) return;
+    const label = el.getAttribute("data-tooltip");
+    if (!label) return;
+
+    // Set text and position before making visible to avoid a flash at wrong coords.
+    tooltip.textContent = label;
+    tooltip.style.transition = "none";
+    tooltip.style.opacity = "0";
+
+    const rect = el.getBoundingClientRect();
+    tooltip.style.top  = (rect.top + rect.height / 2) + "px";
+    tooltip.style.left = "78px"; // --sidebar-collapsed-width(70) + 8px gap
+    tooltip.style.transform = "translateY(-50%)";
+
+    // Force a reflow so the transition fires on the next frame.
+    tooltip.getBoundingClientRect();
+    tooltip.style.transition = "";
+    tooltip.style.opacity = "1";
+  }
+
+  function hideTooltip() {
+    tooltip.style.opacity = "0";
+  }
+
+  document.querySelectorAll(".sidebar-nav [data-tooltip]").forEach(function (el) {
+    el.addEventListener("mouseenter", function () { showTooltip(el); });
+    el.addEventListener("mouseleave", hideTooltip);
+    el.addEventListener("focus",      function () { showTooltip(el); });
+    el.addEventListener("blur",       hideTooltip);
+  });
 });
 </script>

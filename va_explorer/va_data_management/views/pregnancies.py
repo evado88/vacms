@@ -38,30 +38,30 @@ class Pregnancies(CustomAuthMixin, PermissionRequiredMixin, FilterView):
     paginate_by = 15
     model = Pregnancy
 
-    def get_queryset(self):
-        queryset = Pregnancy.objects.all()
-        queryset = restrict_queryset_to_user_locations(
-            queryset,
-            self.request.user,
-        ).order_by("-created", "-id")
+    _SORT_FIELDS = {
+        "id": "id",
+        "enumerator": "enumerator",
+        "province": "province",
+        "district": "district",
+        "ward": "ward",
+        "pregnant_woman": "PE_06",
+        "dob": "PE_07",
+    }
 
-        if self.request.GET.get("id"):
-            queryset = queryset.filter(district__icontains=self.request.GET["id"])
-        if self.request.GET.get("district"):
-            queryset = queryset.filter(district__icontains=self.request.GET["district"])
-        if self.request.GET.get("respondent"):
-            queryset = queryset.filter(district__icontains=self.request.GET["respondent"])
-        if self.request.GET.get("pregnant_woman"):
-            queryset = queryset.filter(district__icontains=self.request.GET["pregnant_woman"])
-        if self.request.GET.get("created"):
-            queryset = queryset.filter(district__icontains=self.request.GET["created"])
-       
+    def get_queryset(self):
+        queryset = restrict_queryset_to_user_locations(
+            Pregnancy.objects.all(),
+            self.request.user,
+        )
         self.filterset = PregnancyFilter(self.request.GET, queryset=queryset)
-        return self.filterset.qs.order_by("-created", "-id")
+        order_by_raw = self.request.GET.get("order_by", "-id")
+        direction = "-" if order_by_raw.startswith("-") else ""
+        db_field = self._SORT_FIELDS.get(order_by_raw.lstrip("-"), "id")
+        return self.filterset.qs.order_by(direction + db_field)
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context['filterset'] = self.filterset
+        context["filter"] = self.filterset
         return context
 
 

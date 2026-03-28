@@ -541,7 +541,27 @@ def build_pregnancy_outcomes_qs(request):
 
     pregnancy_outcome = filter_state["pregnancy_outcome"]
     if pregnancy_outcome:
-        qs = qs.filter(po_group=pregnancy_outcome)
+        _po_lower = pregnancy_outcome.lower()
+        if _po_lower in ("live birth", "born alive"):
+            qs = qs.filter(
+                Q(PO_46__icontains="live")
+                | Q(PO_46__icontains="born alive")
+                | (
+                    (Q(PO_46__isnull=True) | Q(PO_46=""))
+                    & (Q(po_group__icontains="live") | Q(po_group__icontains="born alive"))
+                )
+            )
+        elif _po_lower in ("stillbirth", "still birth", "born dead"):
+            qs = qs.filter(
+                Q(PO_46__icontains="still")
+                | Q(PO_46__icontains="born dead")
+                | (
+                    (Q(PO_46__isnull=True) | Q(PO_46=""))
+                    & (Q(po_group__icontains="still") | Q(po_group__icontains="born dead"))
+                )
+            )
+        else:
+            qs = qs.filter(po_group__iexact=pregnancy_outcome)
     qs = _apply_geography_filter(qs, filter_state)
 
     time_preset = filter_state["time_preset"]
@@ -576,10 +596,10 @@ def build_pregnancy_outcomes_qs(request):
                 start_filter |= Q(**{f"{field_name}__gte": start_token})
             qs = qs.filter(start_filter)
         if end_dt:
-            end_token = end_dt.strftime("%Y-%m-%d")
+            end_token = (end_dt + timedelta(days=1)).strftime("%Y-%m-%d")
             end_filter = Q()
             for field_name in date_fields:
-                end_filter |= Q(**{f"{field_name}__lte": end_token})
+                end_filter |= Q(**{f"{field_name}__lt": end_token})
             qs = qs.filter(end_filter)
 
     return qs
@@ -623,8 +643,8 @@ def build_pregnancy_qs(request):
             start_token = start_dt.strftime("%Y-%m-%d")
             qs = qs.filter(PE_09A__gte=start_token)
         if end_dt:
-            end_token = end_dt.strftime("%Y-%m-%d")
-            qs = qs.filter(PE_09A__lte=end_token)
+            end_token = (end_dt + timedelta(days=1)).strftime("%Y-%m-%d")
+            qs = qs.filter(PE_09A__lt=end_token)
 
     return qs
 
@@ -755,7 +775,7 @@ def build_deaths_qs(request, *, apply_time_filter=True):
             if start_dt:
                 qs = qs.filter(DE_06__gte=start_dt.strftime("%Y-%m-%d"))
             if end_dt:
-                qs = qs.filter(DE_06__lte=end_dt.strftime("%Y-%m-%d"))
+                qs = qs.filter(DE_06__lt=(end_dt + timedelta(days=1)).strftime("%Y-%m-%d"))
 
     age_group = filter_state["age_group"]
     if age_group in {"neonate", "child", "adult"}:
@@ -927,6 +947,7 @@ def _build_pregnancy_trend_series(filtered_qs):
 
 
 def _build_pregnancy_ga_anc_points(filtered_qs):
+    max_anc_visits = 15
     points = []
     for row in filtered_qs.values("PE_09A", "submissiondate", "today", "start", "PE_22").iterator():
         lmp_dt = _parse_outcome_datetime(row.get("PE_09A"))
@@ -941,6 +962,8 @@ def _build_pregnancy_ga_anc_points(filtered_qs):
             continue
         if anc_visits < 0:
             continue
+        if anc_visits > max_anc_visits:
+            anc_visits = max_anc_visits
 
         ga_weeks = int((detection_dt - lmp_dt).days / 7)
         if ga_weeks < 1:
@@ -1114,7 +1137,7 @@ class OutcomesDashboardView(CustomAuthMixin, PermissionRequiredMixin, TemplateVi
         active_tab = tab_aliases.get(raw_tab, "pregnancies")
 
         with timed_block("outcomes.page.outcome_options", request=request):
-            outcome_options = (
+            _db_options = list(
                 restrict_queryset_to_user_locations(
                     PregnancyOutcome.objects.all(), request.user
                 )
@@ -1122,8 +1145,8 @@ class OutcomesDashboardView(CustomAuthMixin, PermissionRequiredMixin, TemplateVi
                 .exclude(po_group="")
                 .values_list("po_group", flat=True)
                 .distinct()
-                .order_by("po_group")
             )
+            outcome_options = sorted(set(_db_options) | {"Live Birth", "Still Birth"})
         with timed_block("outcomes.page.filtered_qs", request=request):
             filtered_qs = build_pregnancy_outcomes_qs(request)
         with timed_block("outcomes.page.summary_cards", request=request):

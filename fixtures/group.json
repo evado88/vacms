@@ -1,9 +1,9 @@
 [
    {
-      "model":"auth.group",
-      "fields":{
-         "name":"Admins",
-         "permissions":[
+      "model": "auth.group",
+      "fields": {
+         "name": "Admins",
+         "permissions": [
             [
                "add_user",
                "users",
@@ -53,27 +53,82 @@
                "view_verbalautopsy",
                "va_data_management",
                "verbalautopsy"
+            ],
+            [
+               "delete_verbalautopsy",
+               "va_data_management",
+               "verbalautopsy"
+            ],
+            [
+               "bulk_delete",
+               "va_data_management",
+               "verbalautopsy"
+            ],
+            [
+               "view_household",
+               "va_data_management",
+               "household"
+            ],
+            [
+               "change_household",
+               "va_data_management",
+               "household"
+            ],
+            [
+               "view_pregnancy",
+               "va_data_management",
+               "pregnancy"
+            ],
+            [
+               "change_pregnancy",
+               "va_data_management",
+               "pregnancy"
+            ],
+            [
+               "view_pregnancyoutcome",
+               "va_data_management",
+               "pregnancyoutcome"
+            ],
+            [
+               "change_pregnancyoutcome",
+               "va_data_management",
+               "pregnancyoutcome"
+            ],
+            [
+               "view_death",
+               "va_data_management",
+               "death"
+            ],
+            [
+               "change_death",
+               "va_data_management",
+               "death"
+            ],
+            [
+               "view_datacleanup",
+               "va_data_cleanup",
+               "datacleanup"
+            ],
+            [
+               "download",
+               "va_data_cleanup",
+               "datacleanup"
+            ],
+            [
+               "bulk_download",
+               "va_data_cleanup",
+               "datacleanup"
             ]
          ]
       }
    },
    {
-      "model":"auth.group",
-      "fields":{
-         "name":"Data Managers",
-         "permissions":[
-            [
-               "view_user",
-               "users",
-               "user"
-            ],
+      "model": "auth.group",
+      "fields": {
+         "name": "Data Managers",
+         "permissions": [
             [
                "view_dashboard",
-               "va_analytics",
-               "dashboard"
-            ],
-            [
-               "download_data",
                "va_analytics",
                "dashboard"
             ],
@@ -96,15 +151,126 @@
                "view_verbalautopsy",
                "va_data_management",
                "verbalautopsy"
+            ],
+            [
+               "view_household",
+               "va_data_management",
+               "household"
+            ],
+            [
+               "change_household",
+               "va_data_management",
+               "household"
+            ],
+            [
+               "view_pregnancy",
+               "va_data_management",
+               "pregnancy"
+            ],
+            [
+               "change_pregnancy",
+               "va_data_management",
+               "pregnancy"
+            ],
+            [
+               "view_pregnancyoutcome",
+               "va_data_management",
+               "pregnancyoutcome"
+            ],
+            [
+               "change_pregnancyoutcome",
+               "va_data_management",
+               "pregnancyoutcome"
+            ],
+            [
+               "view_death",
+               "va_data_management",
+               "death"
+            ],
+            [
+               "change_death",
+               "va_data_management",
+               "death"
+            ],
+            [
+               "view_datacleanup",
+               "va_data_cleanup",
+               "datacleanup"
+            ],
+            [
+               "download",
+               "va_data_cleanup",
+               "datacleanup"
+            ],
+            [
+               "bulk_download",
+               "va_data_cleanup",
+               "datacleanup"
             ]
          ]
       }
    },
    {
-      "model":"auth.group",
-      "fields":{
-         "name":"Data Viewers",
-         "permissions":[
+      "model": "auth.group",
+      "fields": {
+         "name": "Data Viewers",
+         "permissions": [
+            [
+               "view_dashboard",
+               "va_analytics",
+               "dashboard"
+            ],
+            [
+               "view_verbalautopsy",
+               "va_data_management",
+               "verbalautopsy"
+            ],
+            [
+               "view_household",
+               "va_data_management",
+               "household"
+            ],
+            [
+               "view_pregnancy",
+               "va_data_management",
+               "pregnancy"
+            ],
+            [
+               "view_pregnancyoutcome",
+               "va_data_management",
+               "pregnancyoutcome"
+            ],
+            [
+               "view_death",
+               "va_data_management",
+               "death"
+            ]
+         ]
+      }
+   },
+   {
+      "model": "auth.group",
+      "fields": {
+         "name": "Senior Management",
+         "permissions": [
+            [
+               "view_dashboard",
+               "va_analytics",
+               "dashboard"
+            ],
+            [
+               "supervise_users",
+               "va_analytics",
+               "dashboard"
+            ]
+         ]
+      }
+   },
+   {
+      "model": "auth.group",
+      "fields": {
+         "name": "Field Workers",
+         "permissions": [
             [
                "view_dashboard",
                "va_analytics",
@@ -119,19 +285,167 @@
       }
    },
    {
-      "model":"auth.group",
-      "fields":{
-         "name":"Field Workers",
-         "permissions":[
+      "model": "auth.group",
+      "fields": {
+         "name": "Mortality Surveillance Officer",
+         "permissions": [
             [
                "view_dashboard",
                "va_analytics",
                "dashboard"
             ],
             [
+               "view_pii",
+               "va_analytics",
+               "dashboard"
+            ],
+            [
+               "supervise_users",
+               "va_analytics",
+               "dashboard"
+            ],
+            [
+               "add_user",
+               "users",
+               "user"
+            ],
+            [
+               "change_user",
+               "users",
+               "user"
+            ],
+            [
+               "view_user",
+               "users",
+               "user"
+            ],
+            [
+               "change_verbalautopsy",
+               "va_data_management",
+               "verbalautopsy"
+            ],
+            [
                "view_verbalautopsy",
                "va_data_management",
                "verbalautopsy"
+            ],
+            [
+               "view_household",
+               "va_data_management",
+               "household"
+            ],
+            [
+               "view_pregnancy",
+               "va_data_management",
+               "pregnancy"
+            ],
+            [
+               "view_pregnancyoutcome",
+               "va_data_management",
+               "pregnancyoutcome"
+            ],
+            [
+               "view_death",
+               "va_data_management",
+               "death"
+            ],
+            [
+               "view_datacleanup",
+               "va_data_cleanup",
+               "datacleanup"
+            ],
+            [
+               "download",
+               "va_data_cleanup",
+               "datacleanup"
+            ],
+            [
+               "bulk_download",
+               "va_data_cleanup",
+               "datacleanup"
+            ]
+         ]
+      }
+   },
+   {
+      "model": "auth.group",
+      "fields": {
+         "name": "Community Surveillance Officer",
+         "permissions": [
+            [
+               "view_dashboard",
+               "va_analytics",
+               "dashboard"
+            ],
+            [
+               "view_pii",
+               "va_analytics",
+               "dashboard"
+            ],
+            [
+               "supervise_users",
+               "va_analytics",
+               "dashboard"
+            ],
+            [
+               "add_user",
+               "users",
+               "user"
+            ],
+            [
+               "change_user",
+               "users",
+               "user"
+            ],
+            [
+               "view_user",
+               "users",
+               "user"
+            ],
+            [
+               "change_verbalautopsy",
+               "va_data_management",
+               "verbalautopsy"
+            ],
+            [
+               "view_verbalautopsy",
+               "va_data_management",
+               "verbalautopsy"
+            ],
+            [
+               "view_household",
+               "va_data_management",
+               "household"
+            ],
+            [
+               "view_pregnancy",
+               "va_data_management",
+               "pregnancy"
+            ],
+            [
+               "view_pregnancyoutcome",
+               "va_data_management",
+               "pregnancyoutcome"
+            ],
+            [
+               "view_death",
+               "va_data_management",
+               "death"
+            ],
+            [
+               "view_datacleanup",
+               "va_data_cleanup",
+               "datacleanup"
+            ],
+            [
+               "download",
+               "va_data_cleanup",
+               "datacleanup"
+            ],
+            [
+               "bulk_download",
+               "va_data_cleanup",
+               "datacleanup"
             ]
          ]
       }

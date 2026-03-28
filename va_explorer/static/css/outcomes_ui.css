@@ -26,9 +26,14 @@
 
 .dashboard-shell .dashboard-tab-panel {
   background: var(--ou-dashboard-surface);
-  border: 1px solid var(--ou-border);
+  border: none;
   border-radius: 14px;
   box-shadow: var(--ou-shadow);
+  padding: 0;
+}
+
+.dashboard-shell .dashboard-tab-panel > * {
+  margin: 0;
 }
 
 .ou-page-header {
@@ -146,6 +151,30 @@
   flex-wrap: wrap;
   align-items: flex-end;
   gap: var(--ou-gap-1);
+}
+
+.ou-va-filter-row {
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: flex-end;
+}
+
+.ou-va-filter-row > .form-group {
+  flex: 0 0 auto;
+  margin-bottom: 0;
+  min-width: 0;
+}
+
+.ou-va-filter-row .form-group :is(input, select, .form-control, .custom-select) {
+  width: auto;
+  min-width: 8rem;
+  max-width: 11rem;
+}
+
+.ou-va-filter-actions {
+  flex: 0 0 auto;
+  margin-left: auto;
+  margin-bottom: 0;
 }
 
 .ou-filter-actions {

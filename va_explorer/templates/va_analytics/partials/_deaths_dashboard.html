@@ -10,8 +10,8 @@
   data-signals-endpoint="{% url 'va_analytics:outcomes-deaths-signals-api' %}"
   data-timeliness-endpoint="{% url 'va_analytics:outcomes-deaths-timeliness-api' %}"
 >
+  <div class="deaths-top-row">
   <section class="sectionContainer panelView" id="deathsPanelSection" data-component="panel">
-    <h2>Summaries and Control Panel</h2>
     <div class="highlightsContainer deaths-summary-cards" id="deathsSummaryCards" data-component="summary">
       <div class="highlight"><h3>Last Data Update</h3><p id="deathsCardLastDataUpdate">{{ death_card_last_data_update }}</p></div>
       <div class="highlight"><h3>Total Death Events</h3><p id="deathsCardTotalEvents">{{ death_card_total_events }}</p></div>
@@ -25,118 +25,128 @@
       <div class="highlight deaths-signal-card deaths-signal-card-30d"><h3>All Deaths: 30d vs prev 30d</h3><p id="signalAll30d">Diff: -- | Change: --</p></div>
       <div class="highlight deaths-signal-card deaths-signal-card-30d"><h3>Under-5: 30d vs prev 30d</h3><p id="signalU530d">Diff: -- | Change: --</p></div>
     </div>
-    <form id="deathsFiltersForm" class="controls" method="get" action="" data-component="filters">
-      <small class="dashboard-note">Filters update mortality trend and map.</small>
-      <div class="filtersRow">
-        <div class="mainFiltersContainer">
-          <label for="deathsMapViewSelect">Map:</label>
-          <select id="deathsMapViewSelect" class="select" name="map_view">
-            <option value="Province" {% if filter_map_view == "Province" %}selected{% endif %}>Province</option>
-            <option value="District" {% if filter_map_view == "District" %}selected{% endif %}>District</option>
-            <option value="Constituency" {% if filter_map_view == "Constituency" %}selected{% endif %}>Constituency</option>
-            <option value="Ward" {% if filter_map_view == "Ward" %}selected{% endif %}>Ward</option>
-            <option value="EA" {% if filter_map_view == "EA" %}selected{% endif %}>EA</option>
-          </select>
-
-          <label for="deathsFilterTimePreset">DOD:</label>
-          <select id="deathsFilterTimePreset" class="select" name="time_preset">
-            <option value="all_time">All time</option>
-            <option value="last_30_days">Last 30 days</option>
-            <option value="last_7_days">Last 7 days</option>
-            <option value="last_24_hours">Last 24 hours</option>
-            <option value="custom">Custom</option>
-          </select>
-
-          <label for="deathsFilterSex">Sex:</label>
-          <select id="deathsFilterSex" class="select" name="sex">
-            <option value="">All</option>
-            <option value="Male">Male</option>
-            <option value="Female">Female</option>
-          </select>
-
-          <label for="deathsFilterAgeGroup">Age:</label>
-          <select id="deathsFilterAgeGroup" class="select" name="age_group">
-            <option value="">All</option>
-            <option value="neonate">Neonate</option>
-            <option value="child">Child</option>
-            <option value="adult">Adult</option>
-          </select>
-
-          <label for="deathsFilterCodedOnly">Coded only:</label>
-          <input id="deathsFilterCodedOnly" type="checkbox" name="coded_only" value="1">
-        </div>
-        <div class="betweenDatesContainer">
-          <span>Between</span>
-          <input id="deathsFilterStartDatetime" class="input" type="date" name="start_datetime">
-          <span>and</span>
-          <input id="deathsFilterEndDatetime" class="input" type="date" name="end_datetime">
-          <button id="deathsFiltersReset" type="button" class="button resetBtn">Reset</button>
-        </div>
-      </div>
-    </form>
   </section>
+  </div>
 
-  <section class="sectionContainer mapView" id="deathsMapSection" data-component="map">
-    <h2>Geographic Distribution</h2>
-    <div id="deathsMapBreadcrumb" class="map-breadcrumbs"></div>
-    <div id="deathsMapContainer">
-      <div id="deathsMapLegend" class="legend"></div>
-    </div>
-    <p id="deathsMapEmpty" class="po-empty-state" hidden>No geographic mortality data available for the selected filters.</p>
-  </section>
-  <section class="sectionContainer trendView" id="deathsTrendSection" data-component="trend">
-    <h2>Mortality Trend</h2>
-    <div class="chartsContainer">
-      <div class="topCauseLineChartContainer chart-canvas-wrap">
-        <canvas id="deathsTrendChart" data-component="trend-chart"></canvas>
-      </div>
-    </div>
-    <p id="deathsTrendEmpty" class="po-empty-state" hidden>No mortality trend data available for the selected filters.</p>
-  </section>
+  <div class="deaths-filters-row">
+    <section class="sectionContainer" id="deathsFiltersSection" data-component="filters">
+      <form id="deathsFiltersForm" class="controls" method="get" action="">
+        <small class="dashboard-note">Filters update graphs and map.</small>
+        <div class="filtersRow">
+          <div class="mainFiltersContainer">
+            <label for="deathsMapViewSelect">Map:</label>
+            <select id="deathsMapViewSelect" class="select" name="map_view">
+              <option value="Province" {% if filter_map_view == "Province" %}selected{% endif %}>Province</option>
+              <option value="District" {% if filter_map_view == "District" %}selected{% endif %}>District</option>
+              <option value="Constituency" {% if filter_map_view == "Constituency" %}selected{% endif %}>Constituency</option>
+              <option value="Ward" {% if filter_map_view == "Ward" %}selected{% endif %}>Ward</option>
+              <option value="EA" {% if filter_map_view == "EA" %}selected{% endif %}>EA</option>
+            </select>
 
-  <section class="sectionContainer" id="deathsCauseSection" data-component="causes-and-place">
-    <div class="po-split-row">
-      <section class="sectionContainer" id="deathsDemographicsSection" data-component="demographics">
-        <h2>All Cause Demographics</h2>
-        <div class="chart-mode-toggle">
-          <input id="deathsAgeSexModeCount" type="radio" value="count" name="deaths_age_sex_mode" checked>
-          <label for="deathsAgeSexModeCount">Count</label>
-          <input id="deathsAgeSexModePercentage" type="radio" value="percentage" name="deaths_age_sex_mode">
-          <label for="deathsAgeSexModePercentage">Percentage</label>
-        </div>
-        <div class="chartsContainer">
-          <div class="chart-canvas-wrap">
-            <canvas id="deathsAgeSexChart" data-component="age-sex-chart"></canvas>
+            <label for="deathsFilterTimePreset">DOD:</label>
+            <select id="deathsFilterTimePreset" class="select" name="time_preset">
+              <option value="all_time">All time</option>
+              <option value="last_30_days">Last 30 days</option>
+              <option value="last_7_days">Last 7 days</option>
+              <option value="last_24_hours">Last 24 hours</option>
+              <option value="custom">Custom</option>
+            </select>
+
+            <label for="deathsFilterSex">Sex:</label>
+            <select id="deathsFilterSex" class="select" name="sex">
+              <option value="">All</option>
+              <option value="Male">Male</option>
+              <option value="Female">Female</option>
+            </select>
+
+            <label for="deathsFilterAgeGroup">Age:</label>
+            <select id="deathsFilterAgeGroup" class="select" name="age_group">
+              <option value="">All</option>
+              <option value="neonate">Neonate</option>
+              <option value="child">Child</option>
+              <option value="adult">Adult</option>
+            </select>
+          </div>
+          <div class="betweenDatesContainer">
+            <span>Between</span>
+            <input id="deathsFilterStartDatetime" class="input" type="date" name="start_datetime">
+            <span>and</span>
+            <input id="deathsFilterEndDatetime" class="input" type="date" name="end_datetime">
+            <button id="deathsFiltersReset" type="button" class="button resetBtn">Reset</button>
           </div>
         </div>
-        <p id="deathsAgeSexEmpty" class="po-empty-state" hidden>No age-sex mortality data available for the selected filters.</p>
-      </section>
+      </form>
+    </section>
+  </div>
 
-      <section class="sectionContainer" id="deathsPlaceSection">
-        <h2>Place of Death Distribution</h2>
-        <div class="chart-mode-toggle">
-          <input id="deathsPlaceModeCount" type="radio" value="count" name="deaths_place_mode" checked>
-          <label for="deathsPlaceModeCount">Count</label>
-          <input id="deathsPlaceModePercentage" type="radio" value="percentage" name="deaths_place_mode">
-          <label for="deathsPlaceModePercentage">Percentage</label>
+  <div class="deaths-content-row">
+    <div class="deaths-col-left">
+      <section class="sectionContainer mapView" id="deathsMapSection" data-component="map">
+        <h2>Geographic Distribution</h2>
+        <div id="deathsMapBreadcrumb" class="map-breadcrumbs"></div>
+        <div id="deathsMapContainer">
+          <div id="deathsMapLegend" class="legend"></div>
         </div>
+        <p id="deathsMapEmpty" class="po-empty-state" hidden>No geographic mortality data available for the selected filters.</p>
+      </section>
+    </div>
+    <div class="deaths-col-right">
+      <section class="sectionContainer trendView" id="deathsTrendSection" data-component="trend">
+        <h2>Mortality Trend</h2>
         <div class="chartsContainer">
-          <div class="chart-canvas-wrap">
-            <canvas id="deathsPlaceChart" data-component="place-chart"></canvas>
+          <div class="topCauseLineChartContainer chart-canvas-wrap">
+            <canvas id="deathsTrendChart" data-component="trend-chart"></canvas>
           </div>
         </div>
-        <p id="deathsPlaceEmpty" class="po-empty-state" hidden>No place-of-death data available for the selected filters.</p>
+        <p id="deathsTrendEmpty" class="po-empty-state" hidden>No mortality trend data available for the selected filters.</p>
+      </section>
+
+      <div class="deaths-inner-row">
+        <div class="deaths-inner-col">
+          <section class="sectionContainer" id="deathsDemographicsSection" data-component="demographics">
+            <h2>All Cause Demographics</h2>
+            <div class="chart-mode-toggle">
+              <input id="deathsAgeSexModeCount" type="radio" value="count" name="deaths_age_sex_mode" checked>
+              <label for="deathsAgeSexModeCount">Count</label>
+              <input id="deathsAgeSexModePercentage" type="radio" value="percentage" name="deaths_age_sex_mode">
+              <label for="deathsAgeSexModePercentage">Percentage</label>
+            </div>
+            <div class="chartsContainer">
+              <div class="chart-canvas-wrap">
+                <canvas id="deathsAgeSexChart" data-component="age-sex-chart"></canvas>
+              </div>
+            </div>
+            <p id="deathsAgeSexEmpty" class="po-empty-state" hidden>No age-sex mortality data available for the selected filters.</p>
+          </section>
+        </div>
+        <div class="deaths-inner-col">
+          <section class="sectionContainer" id="deathsPlaceSection">
+            <h2>Place of Death Distribution</h2>
+            <div class="chart-mode-toggle">
+              <input id="deathsPlaceModeCount" type="radio" value="count" name="deaths_place_mode" checked>
+              <label for="deathsPlaceModeCount">Count</label>
+              <input id="deathsPlaceModePercentage" type="radio" value="percentage" name="deaths_place_mode">
+              <label for="deathsPlaceModePercentage">Percentage</label>
+            </div>
+            <div class="chartsContainer">
+              <div class="chart-canvas-wrap">
+                <canvas id="deathsPlaceChart" data-component="place-chart"></canvas>
+              </div>
+            </div>
+            <p id="deathsPlaceEmpty" class="po-empty-state" hidden>No place-of-death data available for the selected filters.</p>
+          </section>
+        </div>
+      </div>
+
+      <section class="sectionContainer" id="deathsTimelinessSection" data-component="timeliness">
+        <h2>Reporting Timeliness</h2>
+        <div class="chartsContainer">
+          <div class="chart-canvas-wrap compact">
+            <canvas id="deathsTimelinessChart" data-component="timeliness-chart"></canvas>
+          </div>
+        </div>
+        <p id="deathsTimelinessEmpty" class="po-empty-state" hidden>No reporting timeliness data available for the selected filters.</p>
       </section>
     </div>
-  </section>
-
-  <section class="sectionContainer" id="deathsTimelinessSection" data-component="timeliness">
-    <h2>Reporting Timeliness</h2>
-    <div class="chartsContainer">
-      <div class="chart-canvas-wrap compact">
-        <canvas id="deathsTimelinessChart" data-component="timeliness-chart"></canvas>
-      </div>
-    </div>
-    <p id="deathsTimelinessEmpty" class="po-empty-state" hidden>No reporting timeliness data available for the selected filters.</p>
-  </section>
+  </div>
 </main>

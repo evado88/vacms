@@ -350,6 +350,85 @@ class TestAPIView:
             zipped_file.close()
             f.close()
 
+    def test_location_filtering_includes_cluster_community_vas(self, user: User):
+        test_data = build_test_db()
+        srs_constituency = test_data["srs_district1"].add_child(
+            name="Constituency 1", location_type="constituency"
+        )
+        srs_ward = srs_constituency.add_child(name="Ward 1", location_type="ward")
+        srs_ea = srs_ward.add_child(name="EA 1001", location_type="ea")
+
+        community_va = VerbalAutopsyFactory.create(
+            location=None,
+            cluster=srs_ea,
+            community_va="yes",
+            province=test_data["province"].name,
+            district="District1",
+            constituency="Constituency 1",
+            ward="Ward 1",
+            ea="EA 1001",
+            Id10023="2020-06-01",
+        )
+        CauseOfDeath.objects.create(
+            cause="cod_a", settings={}, verbalautopsy=community_va
+        )
+
+        c = Client()
+        c.force_login(user=user)
+
+        response = c.post(
+            POST_URL,
+            data={"format": "csv", "locations": test_data["srs_district1"].pk},
+        )
+        assert response.status_code == 200
+
+        try:
+            f = io.BytesIO(response.content)
+            zipped_file = zipfile.ZipFile(f, "r")
+            # District1 contains 2 facility VAs in fixtures plus 1 community VA.
+            assert len(zipped_file.open(CSV_FILE_NAME).readlines()) == 4
+        finally:
+            zipped_file.close()
+            f.close()
+
+    def test_id_filter_includes_community_va_without_facility_location(self, user: User):
+        test_data = build_test_db()
+        srs_constituency = test_data["srs_district1"].add_child(
+            name="Constituency 2", location_type="constituency"
+        )
+        srs_ward = srs_constituency.add_child(name="Ward 2", location_type="ward")
+        srs_ea = srs_ward.add_child(name="EA 2002", location_type="ea")
+
+        community_va = VerbalAutopsyFactory.create(
+            location=None,
+            cluster=srs_ea,
+            community_va="yes",
+            province=test_data["province"].name,
+            district="District1",
+            constituency="Constituency 2",
+            ward="Ward 2",
+            ea="EA 2002",
+            Id10023="2020-07-01",
+        )
+        CauseOfDeath.objects.create(
+            cause="cod_a", settings={}, verbalautopsy=community_va
+        )
+
+        c = Client()
+        c.force_login(user=user)
+
+        response = c.post(POST_URL, data={"format": "csv", "ids": str(community_va.pk)})
+        assert response.status_code == 200
+
+        try:
+            f = io.BytesIO(response.content)
+            zipped_file = zipfile.ZipFile(f, "r")
+            # Header + one explicitly selected VA.
+            assert len(zipped_file.open(CSV_FILE_NAME).readlines()) == 2
+        finally:
+            zipped_file.close()
+            f.close()
+
     def test_cod_filtering(self, user: User):
         build_test_db()
         # only download data from location a

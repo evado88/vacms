@@ -1,3 +1,5 @@
+import json
+
 from django.contrib import messages
 from django.contrib.auth import get_user_model, update_session_auth_hash
 from django.contrib.auth.decorators import login_required, permission_required
@@ -19,6 +21,7 @@ from django.views.generic import (
 )
 
 from ..utils.mixins import CustomAuthMixin, UserDetailViewMixin
+from .constants import PERM_FIELD_MAP
 from .utils.user_form_backend import parse_users_from_file, save_users_from_data
 from .forms import (
     ExtendedUserCreationForm,
@@ -33,6 +36,16 @@ from .forms import (
 from .models import Feedback
 
 User = get_user_model()
+
+
+def get_group_permissions_json():
+    from django.contrib.auth.models import Group
+
+    group_permissions = {
+        group.name: list(group.permissions.values_list("codename", flat=True))
+        for group in Group.objects.prefetch_related("permissions").all()
+    }
+    return json.dumps(group_permissions)
 
 
 def user_is_system_admin(user):
@@ -72,6 +85,12 @@ class UserCreateView(
         kw = super().get_form_kwargs()
         kw["request"] = self.request  # the trick!
         return kw
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["group_permissions_json"] = get_group_permissions_json()
+        context["apply_role_defaults_on_load"] = self.request.method == "GET"
+        return context
 
     def form_valid(self, form):
         return super().form_valid(form)
@@ -275,7 +294,17 @@ class UserUpdateView(
         initial["download_data"] = self.get_object().can_download_data
         initial["is_superuser"] = self.get_object().is_superuser
 
+        user = self.get_object()
+        for field_name, (app_label, codename) in PERM_FIELD_MAP.items():
+            initial[field_name] = user.has_perm(f"{app_label}.{codename}")
+
         return initial
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["group_permissions_json"] = get_group_permissions_json()
+        context["apply_role_defaults_on_load"] = False
+        return context
 
     # TODO: Remove if we do not require email confirmation; we will no longer
     # need the lines below

@@ -1,4 +1,5 @@
 import pytest
+from django.contrib.auth.models import Permission
 from django.test import RequestFactory
 
 from va_explorer.tests.factories import (
@@ -16,6 +17,7 @@ from va_explorer.users.forms import (
     UserChangePasswordForm,
     UserSetPasswordForm,
     UserUpdateForm,
+    process_user_data,
 )
 
 pytestmark = pytest.mark.django_db
@@ -299,6 +301,78 @@ class TestUserUpdateForm:
         assert not form.is_valid()
         assert len(form.errors) == 1
         assert "group" in form.errors
+
+
+class TestPerUserPermissionOverrides:
+    def test_can_revoke_role_default_permission_for_a_user(self):
+        view_dashboard = Permission.objects.get(
+            content_type__app_label="va_analytics",
+            codename="view_dashboard",
+        )
+        group = GroupFactory.create(permissions=[view_dashboard])
+        user = UserFactory.create(groups=[group])
+
+        process_user_data(
+            user,
+            {
+                "group": group,
+                "location_restrictions": [],
+                "facility_restrictions": [],
+                "perm_view_dashboard": False,
+            },
+        )
+
+        user.refresh_from_db()
+        assert "va_analytics.view_dashboard" in user.denied_permissions
+        assert not user.has_perm("va_analytics.view_dashboard")
+
+    def test_can_grant_permission_not_in_role(self):
+        group = GroupFactory.create(permissions=[])
+        user = UserFactory.create(groups=[group])
+        change_death = Permission.objects.get(
+            content_type__app_label="va_data_management",
+            codename="change_death",
+        )
+
+        process_user_data(
+            user,
+            {
+                "group": group,
+                "location_restrictions": [],
+                "facility_restrictions": [],
+                "perm_change_death": True,
+            },
+        )
+
+        user.refresh_from_db()
+        assert "va_data_management.change_death" not in user.denied_permissions
+        assert user.user_permissions.filter(pk=change_death.pk).exists()
+        assert user.has_perm("va_data_management.change_death")
+
+    def test_rechecking_permission_clears_user_deny(self):
+        view_dashboard = Permission.objects.get(
+            content_type__app_label="va_analytics",
+            codename="view_dashboard",
+        )
+        group = GroupFactory.create(permissions=[view_dashboard])
+        user = UserFactory.create(
+            groups=[group],
+            denied_permissions=["va_analytics.view_dashboard"],
+        )
+
+        process_user_data(
+            user,
+            {
+                "group": group,
+                "location_restrictions": [],
+                "facility_restrictions": [],
+                "perm_view_dashboard": True,
+            },
+        )
+
+        user.refresh_from_db()
+        assert "va_analytics.view_dashboard" not in user.denied_permissions
+        assert user.has_perm("va_analytics.view_dashboard")
 
 
 class TestUserSetPasswordForm:

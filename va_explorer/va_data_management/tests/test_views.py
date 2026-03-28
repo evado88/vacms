@@ -1,6 +1,8 @@
 import pytest
-from django.contrib.auth.models import Permission
+from django.contrib.auth.models import Group, Permission
+from django.contrib.contenttypes.models import ContentType
 from django.test import Client
+from django.urls import reverse
 
 from va_explorer.tests.factories import (
     FieldWorkerFactory,
@@ -10,11 +12,25 @@ from va_explorer.tests.factories import (
     UserFactory,
     VerbalAutopsyFactory,
 )
+from va_explorer.users.management.commands.initialize_groups import GROUPS_PERMISSIONS
 from va_explorer.users.models import User
 from va_explorer.va_data_management.constants import REDACTED_STRING
-from va_explorer.va_data_management.models import VerbalAutopsy
+from va_explorer.va_data_management.models import Death, Household, Pregnancy, PregnancyOutcome, VerbalAutopsy
 
 pytestmark = pytest.mark.django_db
+
+
+def seeded_group(name):
+    group, _ = Group.objects.get_or_create(name=name)
+    group.permissions.clear()
+    for model_class, codenames in GROUPS_PERMISSIONS[name].items():
+        content_type = ContentType.objects.get_for_model(model_class)
+        permissions = Permission.objects.filter(
+            content_type=content_type,
+            codename__in=codenames,
+        )
+        group.permissions.add(*permissions)
+    return group
 
 
 @pytest.fixture
@@ -568,3 +584,124 @@ def test_field_worker_access_control():
 
     response = client.get(f"/va_data_management/show/{va3.id}")
     assert response.status_code == 404
+
+
+def test_data_manager_can_access_non_user_data_views():
+    user = UserFactory.create(groups=[seeded_group("Data Managers")])
+    client = Client()
+    client.force_login(user=user)
+
+    urls = [
+        reverse("va_data_management:households"),
+        reverse("va_data_management:pregnancies"),
+        reverse("va_data_management:pregnancy_outcomes"),
+        reverse("va_data_management:deaths"),
+        reverse("va_data_management:index"),
+    ]
+
+    for url in urls:
+        response = client.get(url)
+        assert response.status_code == 200
+
+
+def test_data_viewer_can_access_default_data_views():
+    user = UserFactory.create(groups=[seeded_group("Data Viewers")])
+    client = Client()
+    client.force_login(user=user)
+
+    urls = [
+        reverse("va_data_management:households"),
+        reverse("va_data_management:pregnancies"),
+        reverse("va_data_management:pregnancy_outcomes"),
+        reverse("va_data_management:deaths"),
+        reverse("va_data_management:index"),
+    ]
+
+    for url in urls:
+        response = client.get(url)
+        assert response.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "url_name",
+    [
+        "va_data_management:households",
+        "va_data_management:pregnancies",
+        "va_data_management:pregnancy_outcomes",
+        "va_data_management:deaths",
+    ],
+)
+def test_non_privileged_user_cannot_access_restricted_data_views(url_name):
+    user = UserFactory.create(groups=[GroupFactory.create(permissions=[])])
+    client = Client()
+    client.force_login(user=user)
+
+    response = client.get(reverse(url_name))
+
+    assert response.status_code == 403
+
+
+def test_data_manager_verbal_autopsies_are_scoped_to_assigned_location():
+    province = LocationFactory.create(name="Scoped Province")
+    allowed_district = province.add_child(name="Allowed District", location_type="district")
+    blocked_district = province.add_child(name="Blocked District", location_type="district")
+    allowed_facility = allowed_district.add_child(name="Allowed Facility", location_type="facility")
+    blocked_facility = blocked_district.add_child(name="Blocked Facility", location_type="facility")
+
+    user = UserFactory.create(
+        groups=[seeded_group("Data Managers")],
+        location_restrictions=[allowed_district],
+    )
+    client = Client()
+    client.force_login(user=user)
+
+    allowed_va = VerbalAutopsyFactory.create(
+        location=allowed_facility,
+        Id10017="Allowed Person",
+        Id10010="Allowed Interviewer",
+    )
+    blocked_va = VerbalAutopsyFactory.create(
+        location=blocked_facility,
+        Id10017="Blocked Person",
+        Id10010="Blocked Interviewer",
+    )
+
+    response = client.get(reverse("va_data_management:index"))
+
+    assert response.status_code == 200
+    assert bytes(allowed_va.Id10010, "utf-8") in response.content
+    assert bytes(blocked_va.Id10010, "utf-8") not in response.content
+
+
+def test_data_manager_households_are_scoped_to_assigned_location():
+    province = LocationFactory.create(name="Province Scope")
+    allowed_district = province.add_child(name="Allowed Household District", location_type="district")
+    province.add_child(name="Blocked Household District", location_type="district")
+
+    user = UserFactory.create(
+        groups=[seeded_group("Data Managers")],
+        location_restrictions=[allowed_district],
+    )
+    client = Client()
+    client.force_login(user=user)
+
+    Household.objects.create(
+        key="allowed-household",
+        province="Province Scope",
+        district="Allowed Household District",
+        respondent="Allowed Respondent",
+        HH_22="Piped water",
+    )
+    Household.objects.create(
+        key="blocked-household",
+        province="Province Scope",
+        district="Blocked Household District",
+        respondent="Blocked Respondent",
+        HH_22="Piped water",
+    )
+
+    response = client.get(reverse("va_data_management:households"))
+
+    assert response.status_code == 200
+    assert b"Allowed Respondent" in response.content
+    assert b"Blocked Respondent" not in response.content

@@ -29,14 +29,24 @@ class Deaths(CustomAuthMixin, PermissionRequiredMixin, ListView):
     template_name = "va_data_management/deaths.html"
     paginate_by = 15
 
+    _SORT_FIELDS = {
+        "id": "id",
+        "enumerator": "enumerator",
+        "province": "province",
+        "district": "district",
+        "ward": "ward",
+        "DE_03": "DE_03",
+        "DE_06": "DE_06",
+    }
+
     def get_queryset(self):
         queryset = Death.objects.filter(eventid__isnull=True)
-        queryset = restrict_queryset_to_user_locations(
-            queryset,
-            self.request.user,
-        ).order_by("DE_06", "-id")
+        queryset = restrict_queryset_to_user_locations(queryset, self.request.user)
         self.filter = DeathFilter(self.request.GET, queryset=queryset)
-        return self.filter.qs
+        order_by_raw = self.request.GET.get("order_by", "-id")
+        direction = "-" if order_by_raw.startswith("-") else ""
+        db_field = self._SORT_FIELDS.get(order_by_raw.lstrip("-"), "id")
+        return self.filter.qs.order_by(direction + db_field)
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -69,6 +79,11 @@ class DeathEdit(CustomAuthMixin, PermissionRequiredMixin, DeathAccessMixin, Succ
 
     def get_success_url(self):
         return reverse("va_data_management:death_detail", kwargs={"id": self.object.id})
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["id"] = self.object.id
+        return context
 
 
 class DeathDelete(CustomAuthMixin, PermissionRequiredMixin, DeleteView):

@@ -19,31 +19,10 @@
 
   const getEl = (id) => document.getElementById(id);
   const syncPeMapSectionHeight = () => {
+    // In the pe-content-row flex layout, CSS align-items:stretch handles
+    // equal column heights automatically — no JS height calculation needed.
     const mapSection = getEl("peMapSection");
-    if (!mapSection) return;
-
-    if (window.matchMedia("(max-width: 992px)").matches) {
-      mapSection.style.removeProperty("height");
-      return;
-    }
-
-    const columns = app.querySelector("#pePanelSection .pe-panel-columns");
-    const leftCol = app.querySelector("#pePanelSection .pe-panel-column--left");
-    const rightCol = app.querySelector("#pePanelSection .pe-panel-column--right");
-    const filters = getEl("peFiltersForm");
-    if (!columns || !leftCol || !rightCol || !filters) return;
-
-    const rightHeight = rightCol.getBoundingClientRect().height;
-    const filtersHeight = filters.getBoundingClientRect().height;
-    const computedLeft = window.getComputedStyle(leftCol);
-    const gap = parseFloat(computedLeft.rowGap || computedLeft.gap || "0") || 0;
-    const available = Math.floor(rightHeight - filtersHeight - gap);
-
-    if (available > 0) {
-      mapSection.style.height = `${available}px`;
-    } else {
-      mapSection.style.removeProperty("height");
-    }
+    if (mapSection) mapSection.style.removeProperty("height");
   };
 
   const filterElements = {
@@ -307,6 +286,7 @@
           },
           y: {
             beginAtZero: true,
+            max: 15,
             ticks: { precision: 0 },
             title: { display: true, text: "ANC visit count" },
             grid: { display: true, color: "rgba(148,163,184,0.35)" },
@@ -414,6 +394,9 @@
 
   const init = async () => {
     setupDateInputs([filterElements.start, filterElements.end]);
+    const today = new Date().toISOString().slice(0, 10);
+    if (filterElements.start && !filterElements.start.value) filterElements.start.value = today;
+    if (filterElements.end && !filterElements.end.value) filterElements.end.value = today;
     bindEvents();
     await refreshAll();
     requestAnimationFrame(() => {

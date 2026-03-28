@@ -26,29 +26,30 @@ class PregnancyOutcomes(CustomAuthMixin, PermissionRequiredMixin, ListView):
     paginate_by = 15
     model = PregnancyOutcome
 
+    _SORT_FIELDS = {
+        "id": "id",
+        "enumerator": "enumerator",
+        "province": "province",
+        "district": "district",
+        "ward": "ward",
+        "PO_41": "PO_41",
+        "PO_46": "PO_46",
+    }
+
     def get_queryset(self):
-        queryset = PregnancyOutcome.objects.all()
         queryset = restrict_queryset_to_user_locations(
-            queryset,
+            PregnancyOutcome.objects.all(),
             self.request.user,
-        ).order_by("-id")
-        # Filtering example: by district
-        if self.request.GET.get("id"):
-            queryset = queryset.filter(district__icontains=self.request.GET["id"])
-        if self.request.GET.get("mother"):
-            queryset = queryset.filter(district__icontains=self.request.GET["mother"])
-        if self.request.GET.get("respondent"):
-            queryset = queryset.filter(district__icontains=self.request.GET["respondent"])
-        if self.request.GET.get("district"):
-            queryset = queryset.filter(district__icontains=self.request.GET["district"])
-        if self.request.GET.get("date_of_delivery"):
-            queryset = queryset.filter(district__icontains=self.request.GET["date_of_delivery"])
+        )
         self.filterset = PregnancyOutcomeFilter(self.request.GET, queryset=queryset)
-        return self.filterset.qs.order_by("-id")
+        order_by_raw = self.request.GET.get("order_by", "-id")
+        direction = "-" if order_by_raw.startswith("-") else ""
+        db_field = self._SORT_FIELDS.get(order_by_raw.lstrip("-"), "id")
+        return self.filterset.qs.order_by(direction + db_field)
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context['filterset'] = self.filterset        
+        context["filter"] = self.filterset
         return context
 
 class PregnancyOutcomeAccessMixin(SingleObjectMixin):
@@ -127,7 +128,7 @@ class PregnancyOutcomeDeleteAll(CustomAuthMixin, PermissionRequiredMixin, Templa
     model = PregnancyOutcome
     success_url = reverse_lazy("va_data_management:pregnancy_outcomes")
     success_message = "All Pregnancy Outcomes successfully deleted!"
-    template_name = "va_data_management/pregnancyoutcome_confirm_delete_all.html"
+    template_name = "va_data_management/pregnancy_outcome_confirm_delete_all.html"
 
     def post(self, request, *args, **kwargs):
         PregnancyOutcome.objects.all().delete()

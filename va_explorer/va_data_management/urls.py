@@ -32,11 +32,13 @@ urlpatterns = [
     path("pregnancy/<int:id>", view=views.PregnancyDetail.as_view(), name="pregnancy_detail",),
     path("pregnancy/edit/<int:id>",view=views.PregnancyEdit.as_view(), name="pregnancy_edit",),
     path("pregnancy/delete/<int:pk>", view=views.PregnancyDelete.as_view(), name="pregnancy_delete",),
+    path("pregnancy/delete_all", view=views.PregnancyDeleteAll.as_view(), name="pregnancy_delete_all",),
 
     path("pregnancy-outcomes", view=views.PregnancyOutcomes.as_view(), name="pregnancy_outcomes"),
     path("pregnancy-outcomes/detail/<int:id>", view=views.PregnancyOutcomeDetail.as_view(), name="pregnancy_outcome_detail",),
     path("pregnancy-outcomes/edit/<int:id>",view=views.PregnancyOutcomeEdit.as_view(), name="pregnancy_outcome_edit",),
     path("pregnancy-outcomes/delete/<int:pk>", view=views.PregnancyOutcomeDelete.as_view(), name="pregnancy_outcome_delete",),
+    path("pregnancy-outcomes/delete_all", view=views.PregnancyOutcomeDeleteAll.as_view(), name="pregnancy_outcome_delete_all",),
 
     # Deaths
     path("deaths", view=views.Deaths.as_view(), name="deaths"),

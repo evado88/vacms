@@ -8,31 +8,37 @@
   data-anc-visits-endpoint="{% url 'va_analytics:pregnancy-ga-anc-api' %}"
   data-map-endpoint="{% url 'va_analytics:pregnancy-map-api' %}"
 >
-  <section class="sectionContainer panelView" id="pePanelSection" data-component="panel">
-    <div class="highlightsContainer" id="peSummaryCards" data-component="summary">
-      <div class="highlight">
-        <h3>Last Data Update</h3>
-        <p id="peCardLastDataUpdate">{{ card_last_data_update }}</p>
+  <!-- Row 1: KPIs -->
+  <div class="pe-top-row">
+    <section class="sectionContainer panelView" id="pePanelSection" data-component="panel">
+      <div class="highlightsContainer" id="peSummaryCards" data-component="summary">
+        <div class="highlight">
+          <h3>Last Data Update</h3>
+          <p id="peCardLastDataUpdate">{{ card_last_data_update }}</p>
+        </div>
+        <div class="highlight">
+          <h3>Number of Events</h3>
+          <p id="peCardNumberOfEvents">{{ card_number_of_events }}</p>
+        </div>
+        <div class="highlight">
+          <h3>Mean Age</h3>
+          <p id="peCardMeanAge">{{ card_mean_age }}</p>
+        </div>
       </div>
-      <div class="highlight">
-        <h3>Number of Events</h3>
-        <p id="peCardNumberOfEvents">{{ card_number_of_events }}</p>
-      </div>
-      <div class="highlight">
-        <h3>Mean Age</h3>
-        <p id="peCardMeanAge">{{ card_mean_age }}</p>
-      </div>
-    </div>
-    <p id="peSummaryEmpty" class="po-empty-state" hidden>No pregnancy data available for the selected filters.</p>
+      <p id="peSummaryEmpty" class="po-empty-state" hidden>No pregnancy data available for the selected filters.</p>
+    </section>
+  </div>
 
-    <div class="pe-panel-columns">
-      <div class="pe-panel-column pe-panel-column--left">
-        <form id="peFiltersForm" class="controls" data-component="filters" method="get" action="{% url 'va_analytics:pregnancy_dashboard' %}">
-          <small class="dashboard-note">
-            Note: this dashboard visualizes pregnancy events and all charts sum to the filtered total above.
-          </small>
+  <!-- Row 2: Filters -->
+  <div class="pe-filters-row">
+    <section class="sectionContainer" id="peFiltersSection" data-component="filters">
+      <form id="peFiltersForm" class="controls" data-component="filters" method="get" action="{% url 'va_analytics:pregnancy_dashboard' %}">
+        <small class="dashboard-note">
+          Note: this dashboard visualizes pregnancy events and all charts sum to the filtered total above.
+        </small>
 
-          <div class="filtersRow">
+        <div class="filtersRow">
+          <div class="mainFiltersContainer">
             <label for="peMapViewSelect">Map:</label>
             <select id="peMapViewSelect" class="select">
               <option value="Province" {% if filter_map_view == "Province" %}selected{% endif %}>Province</option>
@@ -42,54 +48,59 @@
               <option value="EA" {% if filter_map_view == "EA" %}selected{% endif %}>EA</option>
             </select>
 
-            <div class="betweenDatesContainer">
-              <label for="peFilterTimePreset">Date of Last Menstrual Period:</label>
-              <select id="peFilterTimePreset" class="select" name="time_preset">
-                <option value="all_time" {% if filter_time_preset == "all_time" %}selected{% endif %}>All time</option>
-                <option value="last_30_days" {% if filter_time_preset == "last_30_days" %}selected{% endif %}>Last 30 days</option>
-                <option value="last_7_days" {% if filter_time_preset == "last_7_days" %}selected{% endif %}>Last 7 days</option>
-                <option value="last_24_hours" {% if filter_time_preset == "last_24_hours" %}selected{% endif %}>Last 24 hours</option>
-                <option value="custom" {% if filter_time_preset == "custom" %}selected{% endif %}>Custom</option>
-              </select>
-
-              <div class="customDatesContainer">
-                <span>Between</span>
-                <label for="peFilterStartDatetime" class="sr-only">Start Date</label>
-                <input id="peFilterStartDatetime" class="input" type="date" name="start_datetime" value="{{ filter_start_datetime }}">
-                <span>and</span>
-                <label for="peFilterEndDatetime" class="sr-only">End Date</label>
-                <input id="peFilterEndDatetime" class="input" type="date" name="end_datetime" value="{{ filter_end_datetime }}">
-              </div>
-            </div>
-
-            <div class="formBtnsContainer">
-              <button id="peFiltersReset" type="button" class="button resetBtn">Reset</button>
-            </div>
+            <label for="peFilterTimePreset">Date of Last Menstrual Period:</label>
+            <select id="peFilterTimePreset" class="select" name="time_preset">
+              <option value="all_time" {% if filter_time_preset == "all_time" %}selected{% endif %}>All time</option>
+              <option value="last_30_days" {% if filter_time_preset == "last_30_days" %}selected{% endif %}>Last 30 days</option>
+              <option value="last_7_days" {% if filter_time_preset == "last_7_days" %}selected{% endif %}>Last 7 days</option>
+              <option value="last_24_hours" {% if filter_time_preset == "last_24_hours" %}selected{% endif %}>Last 24 hours</option>
+              <option value="custom" {% if filter_time_preset == "custom" %}selected{% endif %}>Custom</option>
+            </select>
           </div>
-          <input type="hidden" id="peFilterMapView" name="map_view" value="{{ filter_map_view }}">
-        </form>
 
-        <section class="sectionContainer mapView" id="peMapSection" data-component="map">
-          <h2>Geographic Distribution</h2>
-          <div id="peMapBreadcrumb" class="map-breadcrumbs"></div>
-          <div id="peMapContainer">
-            <div id="peMapLegend" class="legend"></div>
+          <div class="betweenDatesContainer customDatesContainer">
+            <span>Between</span>
+            <label for="peFilterStartDatetime" class="sr-only">Start Date</label>
+            <input id="peFilterStartDatetime" class="input" type="date" name="start_datetime" value="{{ filter_start_datetime }}">
+            <span>and</span>
+            <label for="peFilterEndDatetime" class="sr-only">End Date</label>
+            <input id="peFilterEndDatetime" class="input" type="date" name="end_datetime" value="{{ filter_end_datetime }}">
           </div>
-          <p id="peMapEmpty" class="po-empty-state" hidden>No geographic data available for the selected filters.</p>
-        </section>
-      </div>
 
-      <div class="pe-panel-column pe-panel-column--right">
-        <section class="sectionContainer trendView" id="peTrendSection" data-component="trend">
-          <h2>National Pregnancy Event Trend</h2>
-          <div class="chartsContainer">
-            <div class="topCauseLineChartContainer chart-canvas-wrap">
-              <canvas id="peTrendChart" data-component="trend-chart"></canvas>
-            </div>
+          <div class="formBtnsContainer">
+            <button id="peFiltersReset" type="button" class="button resetBtn">Reset</button>
           </div>
-          <p id="peTrendEmpty" class="po-empty-state" hidden>No trend data available for the selected filters.</p>
-        </section>
+        </div>
+        <input type="hidden" id="peFilterMapView" name="map_view" value="{{ filter_map_view }}">
+      </form>
+    </section>
+  </div>
 
+  <!-- Row 3: Map (left) + Charts (right) -->
+  <div class="pe-content-row">
+    <div class="pe-col-left">
+      <section class="sectionContainer mapView" id="peMapSection" data-component="map">
+        <h2>Geographic Distribution</h2>
+        <div id="peMapBreadcrumb" class="map-breadcrumbs"></div>
+        <div id="peMapContainer">
+          <div id="peMapLegend" class="legend"></div>
+        </div>
+        <p id="peMapEmpty" class="po-empty-state" hidden>No geographic data available for the selected filters.</p>
+      </section>
+    </div>
+
+    <div class="pe-col-right">
+      <section class="sectionContainer trendView" id="peTrendSection" data-component="trend">
+        <h2>National Pregnancy Event Trend</h2>
+        <div class="chartsContainer">
+          <div class="topCauseLineChartContainer chart-canvas-wrap">
+            <canvas id="peTrendChart" data-component="trend-chart"></canvas>
+          </div>
+        </div>
+        <p id="peTrendEmpty" class="po-empty-state" hidden>No trend data available for the selected filters.</p>
+      </section>
+
+      <div class="pe-chart-row">
         <section class="sectionContainer" id="peGestationalAgeSection" data-component="ga-detection">
           <h2>Gestational Age at Pregnancy Detection</h2>
           <div class="chartsContainer">
@@ -99,7 +110,9 @@
           </div>
           <p id="peGestationalAgeEmpty" class="po-empty-state" hidden>No gestational age data available for the selected filters.</p>
         </section>
+      </div>
 
+      <div class="pe-chart-row">
         <section class="sectionContainer" id="peAncVisitsSection" data-component="ga-anc">
           <h2>Gestational Age and Antenatal Care Visits</h2>
           <div class="chartsContainer">
@@ -111,5 +124,5 @@
         </section>
       </div>
     </div>
-  </section>
+  </div>
 </main>
