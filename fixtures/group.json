@@ -65,6 +65,46 @@
                "verbalautopsy"
             ],
             [
+               "view_household",
+               "va_data_management",
+               "household"
+            ],
+            [
+               "change_household",
+               "va_data_management",
+               "household"
+            ],
+            [
+               "view_pregnancy",
+               "va_data_management",
+               "pregnancy"
+            ],
+            [
+               "change_pregnancy",
+               "va_data_management",
+               "pregnancy"
+            ],
+            [
+               "view_pregnancyoutcome",
+               "va_data_management",
+               "pregnancyoutcome"
+            ],
+            [
+               "change_pregnancyoutcome",
+               "va_data_management",
+               "pregnancyoutcome"
+            ],
+            [
+               "view_death",
+               "va_data_management",
+               "death"
+            ],
+            [
+               "change_death",
+               "va_data_management",
+               "death"
+            ],
+            [
                "view_datacleanup",
                "va_data_cleanup",
                "datacleanup"
@@ -93,11 +133,6 @@
                "dashboard"
             ],
             [
-               "download_data",
-               "va_analytics",
-               "dashboard"
-            ],
-            [
                "view_pii",
                "va_analytics",
                "dashboard"
@@ -114,11 +149,6 @@
             ],
             [
                "view_verbalautopsy",
-               "va_data_management",
-               "verbalautopsy"
-            ],
-            [
-               "delete_verbalautopsy",
                "va_data_management",
                "verbalautopsy"
             ],
@@ -194,6 +224,26 @@
                "view_verbalautopsy",
                "va_data_management",
                "verbalautopsy"
+            ],
+            [
+               "view_household",
+               "va_data_management",
+               "household"
+            ],
+            [
+               "view_pregnancy",
+               "va_data_management",
+               "pregnancy"
+            ],
+            [
+               "view_pregnancyoutcome",
+               "va_data_management",
+               "pregnancyoutcome"
+            ],
+            [
+               "view_death",
+               "va_data_management",
+               "death"
             ]
          ]
       }
@@ -205,6 +255,11 @@
          "permissions": [
             [
                "view_dashboard",
+               "va_analytics",
+               "dashboard"
+            ],
+            [
+               "supervise_users",
                "va_analytics",
                "dashboard"
             ]
@@ -240,11 +295,6 @@
                "dashboard"
             ],
             [
-               "download_data",
-               "va_analytics",
-               "dashboard"
-            ],
-            [
                "view_pii",
                "va_analytics",
                "dashboard"
@@ -265,11 +315,6 @@
                "user"
             ],
             [
-               "delete_user",
-               "users",
-               "user"
-            ],
-            [
                "view_user",
                "users",
                "user"
@@ -281,16 +326,6 @@
             ],
             [
                "view_verbalautopsy",
-               "va_data_management",
-               "verbalautopsy"
-            ],
-            [
-               "delete_verbalautopsy",
-               "va_data_management",
-               "verbalautopsy"
-            ],
-            [
-               "bulk_delete",
                "va_data_management",
                "verbalautopsy"
             ],
@@ -343,11 +378,6 @@
                "dashboard"
             ],
             [
-               "download_data",
-               "va_analytics",
-               "dashboard"
-            ],
-            [
                "view_pii",
                "va_analytics",
                "dashboard"
@@ -368,11 +398,6 @@
                "user"
             ],
             [
-               "delete_user",
-               "users",
-               "user"
-            ],
-            [
                "view_user",
                "users",
                "user"
@@ -388,14 +413,24 @@
                "verbalautopsy"
             ],
             [
-               "delete_verbalautopsy",
+               "view_household",
                "va_data_management",
-               "verbalautopsy"
+               "household"
             ],
             [
-               "bulk_delete",
+               "view_pregnancy",
                "va_data_management",
-               "verbalautopsy"
+               "pregnancy"
+            ],
+            [
+               "view_pregnancyoutcome",
+               "va_data_management",
+               "pregnancyoutcome"
+            ],
+            [
+               "view_death",
+               "va_data_management",
+               "death"
             ],
             [
                "view_datacleanup",

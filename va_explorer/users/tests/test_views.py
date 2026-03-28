@@ -196,6 +196,24 @@ class TestUserCreateView:
         assert response.status_code == 403
 
 
+def test_data_viewers_group_includes_default_data_view_permissions():
+    group = seeded_group("Data Viewers")
+
+    actual_permissions = set(
+        group.permissions.filter(content_type__app_label="va_data_management").values_list(
+            "codename", flat=True
+        )
+    )
+
+    assert {
+        "view_verbalautopsy",
+        "view_household",
+        "view_pregnancy",
+        "view_pregnancyoutcome",
+        "view_death",
+    }.issubset(actual_permissions)
+
+
 class TestUserUpdateView:
     def test_get_success_url(self, user: User, rf: RequestFactory):
         view = UserUpdateView()
@@ -214,6 +232,26 @@ class TestUserUpdateView:
         view.setup(request, pk=user.id)
 
         assert view.get_object() == user
+
+    def test_get_context_data_includes_group_permissions_json(
+        self, user: User, rf: RequestFactory
+    ):
+        admin_group = seeded_group("Admins")
+        user.groups.set([admin_group])
+
+        target_user = UserFactory.create(groups=[admin_group])
+
+        view = UserUpdateView()
+        request = rf.get(f"/users/update/{target_user.id}/")
+        request.user = user
+
+        view.setup(request, pk=target_user.id)
+        view.object = target_user
+
+        context = view.get_context_data()
+
+        assert "group_permissions_json" in context
+        assert '"Admins"' in context["group_permissions_json"]
 
 
 class TestUserSetPasswordView:

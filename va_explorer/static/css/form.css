@@ -1,3 +1,72 @@
+/* Module permission groups — border with group name vertically bisected by the top border */
+.perm-group {
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+  padding: 1.5rem 1rem 0.75rem;
+  margin-bottom: 1rem;
+  position: relative;
+}
+
+.perm-group-legend {
+  position: absolute;
+  top: 0;
+  left: 1rem;
+  transform: translateY(-50%);
+  background: #fff;
+  padding: 0 0.4rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #495057;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.perm-group .form-check-label {
+  font-size: 0.8125rem;
+  word-break: break-word;
+  white-space: normal;
+}
+
+/* Geographic access controls — disabled state before a role is selected */
+#geo-access-controls.geo-access-disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+/* Individual field — disabled state when not applicable to selected role */
+.field-disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+/* Two-column label/control layout: labels left, controls right, same row */
+.two-col-form .form-group {
+  display: grid;
+  grid-template-columns: 35% 1fr;
+  column-gap: 0.75rem;
+  align-items: start;
+  margin-bottom: 0.75rem;
+}
+
+.two-col-form .form-group > label {
+  grid-column: 1;
+  grid-row: 1;
+  padding-top: 0.4rem;
+  margin-bottom: 0;
+  font-weight: 500;
+}
+
+/* All non-label direct children (input, select, small, errorlist, radio divs) go to column 2 */
+.two-col-form .form-group > *:not(label) {
+  grid-column: 2;
+}
+
+/* Permission group — disabled state */
+.perm-group.perm-group-disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
 ul.va-check {
   position: relative;
   display: block;

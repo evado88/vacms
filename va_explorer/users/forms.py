@@ -7,7 +7,7 @@ from allauth.account.forms import (
 from django import forms
 from django.contrib.auth import get_user_model, password_validation
 from django.contrib.auth.forms import UserCreationForm
-from django.contrib.auth.models import Group
+from django.contrib.auth.models import Group, Permission
 from django.forms import (
     ModelChoiceField,
     ModelMultipleChoiceField,
@@ -19,7 +19,7 @@ from django.utils.crypto import get_random_string
 from va_explorer.users.utils.location_mapping import map_srs_clusters_to_locations
 from va_explorer.va_data_management.models import Location, SRSClusterLocation
 
-from .constants import FEEDBACK_MODULE_FEATURES
+from .constants import FEEDBACK_MODULE_FEATURES, PERM_FIELD_MAP
 from .models import Feedback
 
 # from allauth.account.utils import send_email_confirmation, setup_user_email
@@ -95,16 +95,45 @@ def process_user_data(user, cleaned_data):
         user.is_superuser = bool(cleaned_data["is_superuser"])
         user.is_staff = user.is_superuser
 
-    # if View PII permission specified in form, override user group's default permission
-    if "view_pii" in cleaned_data:
-        user.can_view_pii = cleaned_data["view_pii"]
+    denied_permissions = set(user.denied_permissions or [])
+    group_permissions = {
+        f"{app_label}.{codename}"
+        for app_label, codename in group.permissions.values_list(
+            "content_type__app_label", "codename"
+        )
+    }
 
-    # if download data permission specified in form, override user group's
-    # default permission
-    if "download_data" in cleaned_data:
-        user.can_download_data = cleaned_data["download_data"]
+    # Handle individual permission checkboxes as per-user overrides:
+    # - checked: ensure user effectively has permission
+    # - unchecked: ensure user effectively does not have permission
+    for field_name, (app_label, codename) in PERM_FIELD_MAP.items():
+        if field_name not in cleaned_data:
+            continue
+
+        perm_name = f"{app_label}.{codename}"
+        perm = Permission.objects.filter(
+            content_type__app_label=app_label, codename=codename
+        ).first()
+        if not perm:
+            continue
+
+        if cleaned_data[field_name]:
+            denied_permissions.discard(perm_name)
+            # Keep user_permissions minimal: only persist explicit grants
+            # when the assigned role does not already include this permission.
+            if perm_name in group_permissions:
+                user.user_permissions.remove(perm)
+            else:
+                user.user_permissions.add(perm)
+        else:
+            denied_permissions.add(perm_name)
+            user.user_permissions.remove(perm)
+
+    user.denied_permissions = sorted(denied_permissions)
 
     user.save()
+    for cache_name in ("_perm_cache", "_user_perm_cache", "_group_perm_cache"):
+        user.__dict__.pop(cache_name, None)
     return user
 
 
@@ -151,7 +180,7 @@ class GroupSelect(forms.Select):
 class UserCommonFields(forms.ModelForm):
     name = forms.CharField(required=True, max_length=100)
     group = ModelChoiceField(
-        queryset=Group.objects.all(), required=True, widget=GroupSelect
+        queryset=Group.objects.exclude(name="tmp_va_dbg_grp"), required=True, widget=GroupSelect
     )
     location_restrictions = ModelMultipleChoiceField(
         # Don't include 'Unknown' or Root/Country node in options
@@ -177,17 +206,36 @@ class UserCommonFields(forms.ModelForm):
         required=True,
     )
     view_pii = forms.BooleanField(
-        label="Can View PII",
-        help_text="Determines whether user can view PII. Only applies if group \
-                   does not already grant access to view PII.",
+        label="View PII",
         required=False,
     )
     download_data = forms.BooleanField(
-        label="Can Download Data",
-        help_text="Determines whether user can download data. Only applies if \
-                   group does not already grant access to download data.",
+        label="Download Data",
         required=False,
     )
+
+    # Individual module permission fields
+    perm_view_dashboard          = forms.BooleanField(label="View Dashboard", required=False)
+    perm_supervise_users         = forms.BooleanField(label="Supervise Users", required=False)
+    perm_add_user                = forms.BooleanField(label="Add User", required=False)
+    perm_view_user               = forms.BooleanField(label="View Users", required=False)
+    perm_change_user             = forms.BooleanField(label="Edit User", required=False)
+    perm_delete_user             = forms.BooleanField(label="Delete User", required=False)
+    perm_view_verbalautopsy      = forms.BooleanField(label="View Verbal Autopsy", required=False)
+    perm_change_verbalautopsy    = forms.BooleanField(label="Edit Verbal Autopsy", required=False)
+    perm_delete_verbalautopsy    = forms.BooleanField(label="Delete Verbal Autopsy", required=False)
+    perm_bulk_delete             = forms.BooleanField(label="Bulk Delete", required=False)
+    perm_view_household          = forms.BooleanField(label="View Household", required=False)
+    perm_change_household        = forms.BooleanField(label="Edit Household", required=False)
+    perm_view_pregnancy          = forms.BooleanField(label="View Pregnancy", required=False)
+    perm_change_pregnancy        = forms.BooleanField(label="Edit Pregnancy", required=False)
+    perm_view_pregnancyoutcome   = forms.BooleanField(label="View Pregnancy Outcome", required=False)
+    perm_change_pregnancyoutcome = forms.BooleanField(label="Edit Pregnancy Outcome", required=False)
+    perm_view_death              = forms.BooleanField(label="View Death", required=False)
+    perm_change_death            = forms.BooleanField(label="Edit Death", required=False)
+    perm_view_datacleanup        = forms.BooleanField(label="View Data Cleanup", required=False)
+    perm_download_datacleanup    = forms.BooleanField(label="Download", required=False)
+    perm_bulk_download           = forms.BooleanField(label="Bulk Download", required=False)
 
 
 class ExtendedUserCreationForm(UserCommonFields, UserCreationForm):

@@ -178,53 +178,124 @@ $(document).ready(function() {
 
 
   /**
-   * Summary. Hides/shows the form locations controls based on the role selected. The controls include:
+   * Summary. Disables all geographic access controls and marks the wrapper visually.
+   *          Used when no role is selected — controls remain visible but inactive.
+   */
+  function disableGeoControls() {
+    $('input[name="geographic_access"]').prop('disabled', true);
+    $('#id_location_restrictions').prop('disabled', true).trigger('change');
+    $('#id_facility_restrictions').prop('disabled', true).trigger('change');
+    // Ensure all three remain visible in the disabled state
+    $('#' + geographicAccessID).show();
+    $('#' + locationRestrictionsID).show();
+    $('#' + facilityRestrictionsID).show();
+    $('#geo-access-controls').addClass('geo-access-disabled');
+  }
+
+  /**
+   * Summary. Enables the geographic access radio controls and removes the disabled wrapper style.
+   *          Called when a role is selected; role-specific logic then enables/disables
+   *          location_restrictions and facility_restrictions individually.
+   */
+  function enableGeoControls() {
+    $('input[name="geographic_access"]').prop('disabled', false);
+    $('#geo-access-controls').removeClass('geo-access-disabled');
+    $('#' + geographicAccessID).removeClass('field-disabled');
+  }
+
+  /**
+   * Summary. Disables the location restrictions field and dims it visually.
+   */
+  function disableLocationRestrictions() {
+    $('#id_location_restrictions').prop('disabled', true).trigger('change');
+    $('#' + locationRestrictionsID).addClass('field-disabled');
+  }
+
+  /**
+   * Summary. Enables the location restrictions field and removes the disabled visual style.
+   */
+  function enableLocationRestrictions() {
+    $('#id_location_restrictions').prop('disabled', false).trigger('change');
+    $('#' + locationRestrictionsID).removeClass('field-disabled');
+  }
+
+  /**
+   * Summary. Disables the facility restrictions field and dims it visually.
+   */
+  function disableFacilityRestrictions() {
+    $('#id_facility_restrictions').prop('disabled', true).trigger('change');
+    $('#' + facilityRestrictionsID).addClass('field-disabled');
+  }
+
+  /**
+   * Summary. Enables the facility restrictions field and removes the disabled visual style.
+   */
+  function enableFacilityRestrictions() {
+    $('#id_facility_restrictions').prop('disabled', false).trigger('change');
+    $('#' + facilityRestrictionsID).removeClass('field-disabled');
+  }
+
+  /**
+   * Summary. Updates the form location controls based on the role selected. The controls include:
    *  1. the geographic access radio button
-   *  2. the location restrictions select2 dropdown
-   *  3. the facility restrictions select2 dropdown (visible for Field Worker role only)
+   *  2. the location restrictions select2 dropdown (always visible; enabled/disabled by role)
+   *  3. the facility restrictions select2 dropdown (always visible; enabled only for Field Workers)
    */
   function updateFormForRoleSelected() {
-    let elemToHide = [];
-    let elemToShow = [];
     let select2ToClear = [];
     let fieldToClear = [];
 
-    // No Role selected (dropdown is blank or undefined)
+    // No Role selected — keep all controls visible but disabled
     if(!$('#id_group option:selected').val()) {
-      elemToHide.push(
-          geographicAccessID,
-          locationRestrictionsID,
-          facilityRestrictionsID
-      );
+      disableGeoControls();
       select2ToClear.push(locationRestrictionsClass, facilityRestrictionsClass);
     }
 
     // Role selected is Field Worker
     else if($('#id_group option:selected').text() === "Field Workers") {
-      elemToHide.push(geographicAccessID, locationRestrictionsID);
-      elemToShow.push(facilityRestrictionsID);
+      enableGeoControls();
+      // Field Workers use facility restrictions, not location restrictions
+      disableLocationRestrictions();
+      enableFacilityRestrictions();
       select2ToClear.push(locationRestrictionsClass);
+
+      // Show geographic access but disable it (Field Workers are always location-specific)
+      $('#' + geographicAccessID).show();
+      $('input[name="geographic_access"]').prop('disabled', true);
+      $('#' + geographicAccessID).addClass('field-disabled');
+      $('#' + locationRestrictionsID).show();
+      $('#' + facilityRestrictionsID).show();
 
       // Add asterisk to facility restrictions select2 indicating it is required
       addRequiredAsterisk();
 
-      // Check the location-specific radio to true, which has been hidden
+      // Set to location-specific (locked for Field Workers)
       $("input[name=geographic_access]").val(["location-specific"]);
     }
 
-    // Role selected is not Field Worker (Admin, Data Manager, Data Viewer)
+    // Role selected is not Field Worker (Admin, Data Manager, Data Viewer, etc.)
     else {
-      elemToHide.push(facilityRestrictionsID);
-      elemToShow.push(geographicAccessID);
+      enableGeoControls();
+      // Facility restrictions do not apply to this role
+      disableFacilityRestrictions();
       select2ToClear.push(facilityRestrictionsClass);
 
-      // This method will determine if the locationRestrictions select2 should be shown/hidden
+      $('#' + geographicAccessID).show();
+      $('#' + locationRestrictionsID).show();
+      $('#' + facilityRestrictionsID).show();
+
+      // Admins and Senior Management default to national; all other roles default to location-specific
+      const NATIONAL_ACCESS_ROLES = ["Senior Management", "Admins"];
+      const role = $('#id_group option:selected').text();
+      if (NATIONAL_ACCESS_ROLES.includes(role)) {
+        $("input[name=geographic_access]").val(["national"]);
+      } else {
+        $("input[name=geographic_access]").val(["location-specific"]);
+      }
+
+      // This method will determine if locationRestrictions should be enabled/disabled
       updateFormForGeographicAccess();
     }
-
-    // Show/hide the appropriate elements
-    elemToHide.forEach(elem => $('#' + elem).hide());
-    elemToShow.forEach(elem =>$('#' + elem).show());
 
     // Clear the appropriate elements
     select2ToClear.forEach(select2 => $('.' + select2).val(null).trigger('change'));
@@ -249,16 +320,17 @@ $(document).ready(function() {
   }
 
   /**
-   * Summary. Hides/shows the location select2 dropdown depending on the
-   *          value of the geographic_access radio button
+   * Summary. Enables/disables the location select2 dropdown depending on the
+   *          value of the geographic_access radio button. The field is always
+   *          visible but disabled when national access is selected.
    */
   function updateFormForGeographicAccess() {
     if($('input[name="geographic_access"]:checked').val() === "national") {
-      $('#' + locationRestrictionsID).hide();
+      disableLocationRestrictions();
       $('.' + locationRestrictionsClass).val(null).trigger('change');
     }
     else{
-      $('#' + locationRestrictionsID).show();
+      enableLocationRestrictions();
     }
   }
 

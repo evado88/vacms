@@ -128,7 +128,7 @@ class PregnancyOutcomeDeleteAll(CustomAuthMixin, PermissionRequiredMixin, Templa
     model = PregnancyOutcome
     success_url = reverse_lazy("va_data_management:pregnancy_outcomes")
     success_message = "All Pregnancy Outcomes successfully deleted!"
-    template_name = "va_data_management/pregnancyoutcome_confirm_delete_all.html"
+    template_name = "va_data_management/pregnancy_outcome_confirm_delete_all.html"
 
     def post(self, request, *args, **kwargs):
         PregnancyOutcome.objects.all().delete()

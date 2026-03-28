@@ -604,6 +604,43 @@ def test_data_manager_can_access_non_user_data_views():
         assert response.status_code == 200
 
 
+def test_data_viewer_can_access_default_data_views():
+    user = UserFactory.create(groups=[seeded_group("Data Viewers")])
+    client = Client()
+    client.force_login(user=user)
+
+    urls = [
+        reverse("va_data_management:households"),
+        reverse("va_data_management:pregnancies"),
+        reverse("va_data_management:pregnancy_outcomes"),
+        reverse("va_data_management:deaths"),
+        reverse("va_data_management:index"),
+    ]
+
+    for url in urls:
+        response = client.get(url)
+        assert response.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "url_name",
+    [
+        "va_data_management:households",
+        "va_data_management:pregnancies",
+        "va_data_management:pregnancy_outcomes",
+        "va_data_management:deaths",
+    ],
+)
+def test_non_privileged_user_cannot_access_restricted_data_views(url_name):
+    user = UserFactory.create(groups=[GroupFactory.create(permissions=[])])
+    client = Client()
+    client.force_login(user=user)
+
+    response = client.get(reverse(url_name))
+
+    assert response.status_code == 403
+
+
 def test_data_manager_verbal_autopsies_are_scoped_to_assigned_location():
     province = LocationFactory.create(name="Scoped Province")
     allowed_district = province.add_child(name="Allowed District", location_type="district")

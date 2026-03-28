@@ -108,6 +108,7 @@ class User(AbstractUser):
     location_restrictions = ManyToManyField(
         Location, related_name="users", db_table="users_user_location_restrictions"
     )
+    denied_permissions = models.JSONField(blank=True, default=list)
 
     # The query set of verbal autopsies that this user has access to, based on
     # location restrictions
@@ -168,6 +169,26 @@ class User(AbstractUser):
             self.user_permissions.add(permission)
         else:
             self.user_permissions.remove(permission)
+
+    def _get_denied_permission_set(self):
+        denied = self.denied_permissions or []
+        if not isinstance(denied, list):
+            return set()
+        return {str(perm) for perm in denied if isinstance(perm, str) and "." in perm}
+
+    def has_perm(self, perm, obj=None):
+        if self.is_active and self.is_superuser:
+            return True
+        if perm in self._get_denied_permission_set():
+            return False
+        return super().has_perm(perm, obj=obj)
+
+    def get_all_permissions(self, obj=None):
+        if self.is_active and self.is_superuser:
+            return super().get_all_permissions(obj=obj)
+        perms = super().get_all_permissions(obj=obj)
+        denied = self._get_denied_permission_set()
+        return {perm for perm in perms if perm not in denied}
 
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = []
