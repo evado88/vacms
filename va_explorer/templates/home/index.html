@@ -35,8 +35,13 @@
         </a>
       </li>
       <li class="nav-item" role="presentation">
-        <a class="nav-link {% if home_active_tab == 'operations_supervision' %}active{% endif %}" id="tab-2-tab" data-tab="operations_supervision" href="?tab=operations_supervision" role="tab" aria-controls="tab-2" aria-selected="{% if home_active_tab == 'operations_supervision' %}true{% else %}false{% endif %}">
-          Operations &amp; Supervision
+        <a class="nav-link {% if home_active_tab == 'csa_supervision' or home_active_tab == 'operations_supervision' %}active{% endif %}" id="tab-2-tab" data-tab="csa_supervision" href="?tab=csa_supervision" role="tab" aria-controls="tab-2" aria-selected="{% if home_active_tab == 'csa_supervision' or home_active_tab == 'operations_supervision' %}true{% else %}false{% endif %}">
+          CSA Supervision
+        </a>
+      </li>
+      <li class="nav-item" role="presentation">
+        <a class="nav-link {% if home_active_tab == 'mso_supervision' %}active{% endif %}" id="tab-5-tab" data-tab="mso_supervision" href="?tab=mso_supervision" role="tab" aria-controls="tab-5" aria-selected="{% if home_active_tab == 'mso_supervision' %}true{% else %}false{% endif %}">
+          MSO Supervision
         </a>
       </li>
     </ul>
@@ -149,7 +154,7 @@
           </div>
         </div>
       </div>
-      <div class="tab-pane dashboard-tab-panel fade {% if home_active_tab == 'operations_supervision' %}show active{% endif %}" id="tab-2" data-tab-panel="operations_supervision" role="tabpanel" aria-labelledby="tab-2-tab">
+      <div class="tab-pane dashboard-tab-panel fade {% if home_active_tab == 'csa_supervision' or home_active_tab == 'operations_supervision' %}show active{% endif %}" id="tab-2" data-tab-panel="csa_supervision" role="tabpanel" aria-labelledby="tab-2-tab">
         <section class="regional-ops-layout">
           <div class="regional-ops-divider" aria-hidden="true"></div>
           <div class="regional-ops-panel right-panel">
@@ -178,6 +183,20 @@
                   <div class="home-panel home-panel-placeholder">Loading CSA table...</div>
                 </div>
               </div>
+            </div>
+          </div>
+        </section>
+      </div>
+      <div class="tab-pane dashboard-tab-panel fade {% if home_active_tab == 'mso_supervision' %}show active{% endif %}" id="tab-5" data-tab-panel="mso_supervision" role="tabpanel" aria-labelledby="tab-5-tab">
+        <section class="regional-ops-layout">
+          <div class="regional-ops-divider" aria-hidden="true"></div>
+          <div class="regional-ops-panel right-panel">
+            <div class="right-panel-sections">
+              <div class="right-panel-section filters-section">
+                <div class="filters-bar" id="regionalMsoFiltersComponent" data-component-slot data-component="filters" data-scope="operations" data-endpoint="{% url 'home:regional_operations_filters_component' %}?filter_scope=mso" data-cache-key="home:operations:mso:filters">
+                  <div class="home-panel home-panel-placeholder">Loading filters...</div>
+                </div>
+              </div>
               <div class="right-panel-section mso-section">
                 <div
                   id="regionalMsoComponent"
@@ -195,9 +214,6 @@
         </section>
       </div>
       <div class="tab-pane dashboard-tab-panel fade home-va-tab {% if home_active_tab == 'va_statistics' %}show active{% endif %}" id="tab-3" data-tab-panel="va_statistics" role="tabpanel" aria-labelledby="tab-3-tab">
-        <div class="d-flex justify-content-end mb-3">
-          <button type="button" class="btn btn-sm btn-outline-secondary" data-action="refresh-component" data-target="#homeVAStatisticsComponentSlot">Refresh VA Statistics</button>
-        </div>
         <div id="homeVAStatisticsComponentSlot" data-component-slot data-component="va-statistics" data-scope="va_statistics,trends-data" data-endpoint="{% url 'home:home_va_statistics_component' %}" data-cache-key="home:va_statistics">
           <div class="home-panel home-panel-placeholder">Loading VA statistics...</div>
         </div>

@@ -49,10 +49,12 @@
   border-top-right-radius: 10px;
   background: transparent;
   margin-bottom: -1px;
+  font-weight: 400;
 }
 #outcomesTabs .nav-link.active {
   background: var(--od-card);
   border-color: var(--od-border-strong) var(--od-border-strong) var(--od-card);
+  font-weight: 700;
 }
 #pregnancies-pane,
 #pregnancy-outcomes-pane,
@@ -991,7 +993,7 @@
 }
 
 #outcomesTabs .nav-link {
-  font-weight: bold;
+  font-weight: 400;
   font-size: 0.875rem;
   padding: 0.5rem 1rem;
   line-height: 1.5;
@@ -1001,6 +1003,9 @@
 #outcomesTabs .nav-link:focus,
 #outcomesTabs .nav-link.active {
   color: #000 !important;
+}
+#outcomesTabs .nav-link.active {
+  font-weight: 700;
 }
 @media (max-width: 992px) {
   .pe-content-row {

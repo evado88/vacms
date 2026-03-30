@@ -27,6 +27,7 @@ from va_explorer.va_data_management.models import (
     CSADailyTracker,
     CauseCodingIssue,
     CauseOfDeath,
+    CSASupervisorTargetMap,
     Death,
     Household,
     HouseholdMember,
@@ -37,6 +38,10 @@ from va_explorer.va_data_management.models import (
     VerbalAutopsy,
 )
 from va_explorer.va_data_management.utils.date_parsing import parse_date
+from va_explorer.va_data_management.utils.csa_names import (
+    format_csa_display_name,
+    normalize_csa_name_for_join,
+)
 from va_explorer.va_data_management.utils.location_access import (
     restrict_queryset_to_user_locations,
 )
@@ -1319,6 +1324,9 @@ class RegionalOperationsComponentContextMixin:
             "overdue_without_interview",
             "Pregnancies ≥ 6 mo. Past Due Date Without Interview",
         ),
+        ("supervisor", "Supervisor"),
+        ("csa_target", "CSA Target"),
+        ("coverage_pct", "Coverage %"),
     )
     mso_column_map = (
         ("name", "MSO Name (Search)"),
@@ -1351,7 +1359,6 @@ class RegionalOperationsComponentContextMixin:
         "24": "time24",
     }
     ui_id_to_preset = {v: k for k, v in preset_to_ui_id.items()}
-
     @staticmethod
     def _pick(value, valid_values, default):
         return value if value in valid_values else default
@@ -1436,6 +1443,29 @@ class RegionalOperationsComponentContextMixin:
             return best_match if best_score >= threshold else None
 
     @staticmethod
+    def _build_norm_match_cache(norm_series, candidate_norms, threshold=85):
+        """Return a dict mapping each unique norm value to its (matched, best, score) tuple.
+
+        Deduplicating before fuzzy-matching reduces calls from O(rows × candidates)
+        to O(unique_norms × candidates), which is the main speed-up for the MSO tab.
+        """
+        cache = {}
+        for norm in norm_series.dropna().unique():
+            cache[norm] = RegionalOperationsComponentContextMixin._best_match_name_norm_with_score(
+                norm, candidate_norms, threshold
+            )
+        return cache
+
+    @staticmethod
+    def _apply_norm_match_cache(df, col, cache):
+        """Expand a match cache onto a DataFrame column, returning matched_norm/best_norm/best_score."""
+        def _lookup(value):
+            return pd.Series(cache.get(value, (None, None, 0.0)))
+        return df[col].map(lambda v: _lookup(v)).apply(pd.Series).rename(
+            columns={0: "matched_norm", 1: "best_norm", 2: "best_score"}
+        )
+
+    @staticmethod
     def _best_match_name_norm_with_score(query_norm, candidate_norms, threshold=85):
         query = (query_norm or "").strip()
         if not query or not candidate_norms:
@@ -1463,10 +1493,7 @@ class RegionalOperationsComponentContextMixin:
 
     @staticmethod
     def _format_csa_display_name(raw_name):
-        name = (raw_name or "").strip().replace("_", " ")
-        # Drop any trailing numeric sequence, including digits attached to text.
-        name = re.sub(r"\d+$", "", name).strip()
-        return name or "Unassigned CSA"
+        return format_csa_display_name(raw_name)
 
     @staticmethod
     def _format_mso_display_name(raw_name):
@@ -1477,6 +1504,7 @@ class RegionalOperationsComponentContextMixin:
 
     @staticmethod
     def _normalize_name_search_text(value):
+        # Keep legacy behavior for non-CSA name matching (e.g., MSO token normalization).
         text = (value or "").strip().replace("_", " ")
         text = re.sub(r"\s+\d+$", "", text).strip().lower()
         text = re.sub(r"\s+", " ", text)
@@ -1729,12 +1757,36 @@ class RegionalOperationsComponentContextMixin:
                 )
         return query
 
+    def _province_access_q_with_codes(self, field_name, province_names):
+        """Like _province_access_q but also matches ODK choice codes stored in the field.
+
+        Models such as CSADailyTracker and Pregnancy store province as an ODK choice
+        value (e.g. "5") rather than a human-readable name. Without code-based matching,
+        users with location restrictions get an empty queryset because the name-based
+        iexact filters never match a stored code.
+        """
+        q = self._province_access_q(field_name, province_names)
+        if province_names is None:
+            return q
+
+        choice_map = self._get_choice_label_map("province")  # {code: label}
+        for province_name in province_names:
+            norm_scope = self._normalize_province_name(province_name)
+            for code, label in choice_map.items():
+                if self._normalize_province_name(label) == norm_scope:
+                    q |= Q(**{f"{field_name}__exact": code})
+                    # Normalise leading zeros (e.g. "05" ↔ "5").
+                    norm_code = self._normalize_choice_lookup_value(code)
+                    if norm_code != code:
+                        q |= Q(**{f"{field_name}__exact": norm_code})
+        return q
+
     @staticmethod
     def _sort_rows(rows, sort_key, sort_dir):
         reverse = sort_dir == "desc"
         if sort_key == "name":
             return sorted(rows, key=lambda r: str(r.get("name", "")).lower(), reverse=reverse)
-        if sort_key in {"district", "ward", "province"}:
+        if sort_key in {"district", "ward", "province", "supervisor"}:
             return sorted(rows, key=lambda r: str(r.get(sort_key, "")).lower(), reverse=reverse)
         def numeric_key(row):
             value = row.get(sort_key, 0)
@@ -1771,6 +1823,67 @@ class RegionalOperationsComponentContextMixin:
             "total_count": total,
         }
 
+    @staticmethod
+    def _coverage_band(value):
+        if value is None:
+            return "empty"
+        try:
+            pct = float(value)
+        except (TypeError, ValueError):
+            return "empty"
+        if pct > 100:
+            return "forest"
+        if pct >= 90:
+            return "light-green"
+        if pct >= 75:
+            return "yellow"
+        if pct >= 50:
+            return "amber"
+        return "red"
+
+    def _get_csa_target_supervisor_map(self):
+        cache_attr = "_csa_target_supervisor_map_cache"
+        cache_version = (
+            CSASupervisorTargetMap.objects.order_by("-updated")
+            .values_list("updated", flat=True)
+            .first()
+        )
+        cached = getattr(self.__class__, cache_attr, None)
+        if cached and cached.get("version") == cache_version:
+            return cached.get("data", {})
+
+        mapping = {}
+        for row in CSASupervisorTargetMap.objects.values(
+            "csa_name_normalized",
+            "csa_display_name",
+            "supervisor_name",
+            "csa_target",
+        ):
+            csa_name = self._format_csa_display_name(row.get("csa_display_name"))
+            normalized_key = row.get("csa_name_normalized") or normalize_csa_name_for_join(
+                csa_name
+            )
+            display_key = csa_name.strip().lower()
+            if not normalized_key and not display_key:
+                continue
+
+            target_raw = row.get("csa_target")
+            payload = {
+                "supervisor": (row.get("supervisor_name") or "").strip() or "—",
+                "csa_target": self._to_int(target_raw) if target_raw is not None else 0,
+            }
+            if normalized_key:
+                mapping[normalized_key] = payload
+            if display_key:
+                mapping[display_key] = payload
+
+        setattr(
+            self.__class__,
+            cache_attr,
+            {"version": cache_version, "data": mapping},
+        )
+        return mapping
+
     def _build_csa_rows(self, selected_geo, start_date_str, end_date_str, province_scope):
         counts_by_csa = defaultdict(
             lambda: {
@@ -1784,6 +1897,10 @@ class RegionalOperationsComponentContextMixin:
                 "pregnancies": 0,
                 "pregnancy_outcomes": 0,
                 "overdue_without_interview": 0,
+                "supervisor": "—",
+                "csa_target": 0,
+                "coverage_pct": None,
+                "coverage_band": "empty",
             }
         )
         tracker_enumerator_names = set()
@@ -1828,6 +1945,11 @@ class RegionalOperationsComponentContextMixin:
             entry["pregnancies"] += pregnancies
             entry["pregnancy_outcomes"] += outcomes
             entry["events"] += deaths + pregnancies + outcomes
+
+        # If no tracker records exist there is nothing to display; skip the
+        # Pregnancy query entirely rather than running a second DB query.
+        if not counts_by_csa:
+            return []
 
         overdue_cutoff = datetime.today().date() - timedelta(days=180)
 
@@ -1876,6 +1998,24 @@ class RegionalOperationsComponentContextMixin:
             entry["ward"] = ward
             entry["overdue_without_interview"] += 1
 
+        csa_mapping = self._get_csa_target_supervisor_map()
+
+        for entry in counts_by_csa.values():
+            display_key = str(entry.get("name") or "").strip().lower()
+            normalized_key = normalize_csa_name_for_join(entry.get("name"))
+            mapping_row = csa_mapping.get(normalized_key) or csa_mapping.get(display_key) or {}
+
+            entry["supervisor"] = mapping_row.get("supervisor", "—")
+            entry["csa_target"] = self._to_int(mapping_row.get("csa_target"))
+
+            if entry["csa_target"] > 0:
+                entry["coverage_pct"] = round(
+                    (entry["visits"] / entry["csa_target"]) * 100, 1
+                )
+            else:
+                entry["coverage_pct"] = None
+            entry["coverage_band"] = self._coverage_band(entry["coverage_pct"])
+
         return list(counts_by_csa.values())
 
     def _build_mso_rows(
@@ -1904,15 +2044,20 @@ class RegionalOperationsComponentContextMixin:
             }
         )
 
-        # Base MSO population must come from scoped VA dataset so rows render whenever VAs exist.
+        # Single VA queryset pass: fetch base fields AND duration fields together to
+        # avoid a second full-table VA scan later for duration outlier calculations.
         va_to_mso_name = {}
         base_va_records = []
+        duration_records = []
         for va_row in va_queryset.values(
             "id",
             "Id10010",
             "location__name",
             "province_name",
             "province",
+            "Id10012",   # interview_date (for duration outliers)
+            "Id10011",   # start_time
+            "Id10481",   # end_datetime
         ):
             mso_name = self._mso_name_from_va_row(va_row)
             mso_name_norm = self.normalize_person_name(mso_name)
@@ -1931,6 +2076,15 @@ class RegionalOperationsComponentContextMixin:
                     "va_id": va_row["id"],
                     "location_name": va_row.get("location__name"),
                     "province_name": va_row.get("province_name"),
+                }
+            )
+            duration_records.append(
+                {
+                    "name": mso_name,
+                    "mso_name_norm": mso_name_norm,
+                    "interview_date": va_row.get("Id10012"),
+                    "start_time": va_row.get("Id10011"),
+                    "end_datetime": va_row.get("Id10481"),
                 }
             )
 
@@ -1975,22 +2129,25 @@ class RegionalOperationsComponentContextMixin:
             entry["va_total"] = int(row.get("va_total", 0))
         unmatched_agg_logs = []
 
-        scoped_va_queryset = (
-            va_queryset.select_related("location").prefetch_related("causes", "coding_issues")
+        # Build per-VA cause/error metrics via two focused queries instead of
+        # loading full ORM objects with prefetch_related (much faster at scale).
+        # va_to_mso_name was already populated in the single VA pass above.
+        va_ids = list(va_to_mso_name.keys())
+
+        causes_by_va = defaultdict(list)
+        for row in CauseOfDeath.objects.filter(verbalautopsy_id__in=va_ids).values("verbalautopsy_id", "cause"):
+            causes_by_va[row["verbalautopsy_id"]].append(row["cause"])
+
+        va_ids_with_error = set(
+            CauseCodingIssue.objects.filter(
+                verbalautopsy_id__in=va_ids, severity="error"
+            ).values_list("verbalautopsy_id", flat=True)
         )
+
         va_metric_records = []
-        for va in scoped_va_queryset:
-            mso_name = va_to_mso_name.get(va.id) or self._mso_name_from_va_row(
-                {
-                    "Id10010": getattr(va, "Id10010", None),
-                    "location__name": (
-                        va.location.name
-                        if getattr(va, "location", None) is not None
-                        else None
-                    ),
-                }
-            )
-            causes = [cause.cause for cause in va.causes.all()]
+        for va_id in va_ids:
+            mso_name = va_to_mso_name.get(va_id, "Unassigned MSO")
+            causes = causes_by_va.get(va_id, [])
             valid_cod = int(
                 any(
                     (cause or "").strip()
@@ -2001,9 +2158,7 @@ class RegionalOperationsComponentContextMixin:
             indeterminate = int(
                 any(cause == self.INDETERMINATE_LABEL for cause in causes)
             )
-            error = int(
-                any(issue.severity == "error" for issue in va.coding_issues.all())
-            )
+            error = int(va_id in va_ids_with_error)
             va_metric_records.append(
                 {
                     "name": mso_name,
@@ -2039,30 +2194,67 @@ class RegionalOperationsComponentContextMixin:
                 entry["indeterminate"] = int(row.get("indeterminate", 0))
                 entry["error"] = int(row.get("error", 0))
 
-        death_records = []
         start_date_obj = self._coerce_date(start_date_str)
         end_date_obj = self._coerce_date(end_date_str)
-        death_rows = Event.objects.filter(
-            self._province_access_q("province", province_scope)
-        ).filter(self._province_filter_q("province", selected_geo))
-        death_rows = death_rows.filter(death__isnull=False, va__isnull=False)
-        for death in death_rows.values("death_id", "death__DE_06", "va__Id10010"):
-            death_date = self._coerce_date(death.get("death__DE_06"))
+
+        # Single Event query for all death-type events with province scope.
+        # Previously two separate queries (death_rows + event_rows) hit the same table
+        # with the same province filter — merged here to halve DB round trips.
+        # Date filtering is done in Python so both death-count and scheduling logic
+        # can apply their respective criteria without restricting the result set.
+        all_event_rows = list(
+            Event.objects.filter(
+                self._province_access_q_with_codes("province", province_scope)
+            ).filter(
+                self._province_filter_q("province", selected_geo)
+            ).filter(
+                Q(event_type=Event.EventType.DEATH) | Q(event_type_code__icontains="death")
+            ).values(
+                "event_status",
+                "va_interview_status",
+                "interview_scheduled_date",
+                "interview_complete_date",
+                "submission_date",
+                "va__Id10010",
+                "death_id",
+                "death__DE_06",
+            )
+        )
+
+        # Build one shared fuzzy-match cache over all unique MSO name norms present
+        # in the event rows.  All three downstream datasets (death, scheduling,
+        # mean_days) draw from the same va__Id10010 source, so their unique norms
+        # are identical — computing the cache once avoids triple work.
+        _all_event_name_norms = {
+            self.normalize_person_name(self._format_mso_display_name(raw))
+            for e in all_event_rows
+            if (raw := (e.get("va__Id10010") or "").strip())
+        }
+        shared_norm_cache = self._build_norm_match_cache(
+            pd.Series(sorted(_all_event_name_norms)), mso_name_norms, 85
+        )
+
+        # ── Death event count ─────────────────────────────────────────────────
+        death_records = []
+        for event in all_event_rows:
+            if event.get("death_id") is None:
+                continue
+            death_name_raw = (event.get("va__Id10010") or "").strip()
+            if not death_name_raw:
+                continue
+            death_date = self._coerce_date(event.get("death__DE_06"))
             if not death_date:
                 continue
             if start_date_obj and death_date < start_date_obj:
                 continue
             if end_date_obj and death_date > end_date_obj:
                 continue
-            death_name_raw = (death.get("va__Id10010") or "").strip()
-            if not death_name_raw:
-                continue
             death_name = self._format_mso_display_name(death_name_raw)
             death_records.append(
                 {
                     "agg_name": death_name,
                     "agg_name_norm": self.normalize_person_name(death_name),
-                    "death_id": death.get("death_id"),
+                    "death_id": event.get("death_id"),
                     "death_events": 1,
                 }
             )
@@ -2074,11 +2266,7 @@ class RegionalOperationsComponentContextMixin:
                 df_death = df_death.drop_duplicates(subset=["agg_name", "death_id"])
                 df_death[["matched_norm", "best_norm", "best_score"]] = df_death[
                     "agg_name_norm"
-                ].apply(
-                    lambda value: pd.Series(
-                        self._best_match_name_norm_with_score(value, mso_name_norms, 85)
-                    )
-                )
+                ].apply(lambda v: pd.Series(shared_norm_cache.get(v, (None, None, 0.0))))
                 unmatched_agg_logs.extend(
                     [
                         {
@@ -2093,10 +2281,7 @@ class RegionalOperationsComponentContextMixin:
                 df_death = df_death[df_death["matched_norm"].notna()]
                 df_death["name"] = df_death["matched_norm"].map(mso_name_norm_to_name)
                 df_death = df_death[df_death["name"].notna()]
-                df_death = (
-                    df_death.groupby("name", as_index=False)["death_events"]
-                    .sum()
-                )
+                df_death = df_death.groupby("name", as_index=False)["death_events"].sum()
                 df_mso = df_mso.merge(df_death, on="name", how="left")
                 if "death_events" not in df_mso:
                     df_mso["death_events"] = 0
@@ -2109,28 +2294,8 @@ class RegionalOperationsComponentContextMixin:
                     entry["name"] = mso_name
                     entry["death_events"] = int(row.get("death_events", 0))
 
-        event_rows = Event.objects.filter(
-            self._province_access_q("province", province_scope)
-        ).filter(self._province_filter_q("province", selected_geo))
-        if start_date_str and end_date_str:
-            event_rows = event_rows.filter(
-                Q(interview_complete_date__gte=start_date_str, interview_complete_date__lte=end_date_str)
-                | Q(interview_scheduled_date__gte=start_date_str, interview_scheduled_date__lte=end_date_str)
-                | Q(submission_date__gte=start_date_str, submission_date__lte=end_date_str)
-            )
-        # Death-related events only, without requiring explicit death/VA links.
-        event_rows = event_rows.filter(
-            Q(event_type=Event.EventType.DEATH) | Q(event_type_code__icontains="death")
-        )
-
         scheduling_records = []
-        for event in event_rows.values(
-            "event_status",
-            "va_interview_status",
-            "interview_scheduled_date",
-            "interview_complete_date",
-            "va__Id10010",
-        ):
+        for event in all_event_rows:
             mso_name_raw = (event.get("va__Id10010") or "").strip()
             if not mso_name_raw:
                 continue
@@ -2159,11 +2324,7 @@ class RegionalOperationsComponentContextMixin:
             df_scheduling = pd.DataFrame.from_records(scheduling_records)
             df_scheduling[["matched_norm", "best_norm", "best_score"]] = df_scheduling[
                 "agg_name_norm"
-            ].apply(
-                lambda value: pd.Series(
-                    self._best_match_name_norm_with_score(value, mso_name_norms, 85)
-                )
-            )
+            ].apply(lambda v: pd.Series(shared_norm_cache.get(v, (None, None, 0.0))))
             unmatched_agg_logs.extend(
                 [
                     {
@@ -2199,15 +2360,9 @@ class RegionalOperationsComponentContextMixin:
                 entry["va_not_complete"] = int(row.get("va_not_complete", 0))
 
         mean_days_records = []
-        for event in event_rows.filter(
-            death__isnull=False,
-            interview_complete_date__isnull=False,
-        ).values(
-            "death_id",
-            "death__DE_06",
-            "interview_complete_date",
-            "va__Id10010",
-        ):
+        for event in all_event_rows:
+            if event.get("death_id") is None or event.get("interview_complete_date") is None:
+                continue
             death_date = self._coerce_date(event.get("death__DE_06"))
             complete_date = event.get("interview_complete_date")
             if not death_date or not complete_date:
@@ -2228,11 +2383,7 @@ class RegionalOperationsComponentContextMixin:
             df_mean_days = pd.DataFrame.from_records(mean_days_records)
             df_mean_days[["matched_norm", "best_norm", "best_score"]] = df_mean_days[
                 "agg_name_norm"
-            ].apply(
-                lambda value: pd.Series(
-                    self._best_match_name_norm_with_score(value, mso_name_norms, 85)
-                )
-            )
+            ].apply(lambda v: pd.Series(shared_norm_cache.get(v, (None, None, 0.0))))
             unmatched_agg_logs.extend(
                 [
                     {
@@ -2272,24 +2423,7 @@ class RegionalOperationsComponentContextMixin:
                     "mean_death_to_va_complete", ""
                 )
 
-        duration_records = []
-        for va_row in scoped_va_queryset.values("id", "Id10012", "Id10011", "Id10481", "Id10010", "location__name"):
-            mso_name = va_to_mso_name.get(va_row["id"]) or self._mso_name_from_va_row(
-                {
-                    "Id10010": va_row.get("Id10010"),
-                    "location__name": va_row.get("location__name"),
-                }
-            )
-            duration_records.append(
-                {
-                    "name": mso_name,
-                    "mso_name_norm": self.normalize_person_name(mso_name),
-                    "interview_date": va_row.get("Id10012"),
-                    "start_time": va_row.get("Id10011"),
-                    "end_datetime": va_row.get("Id10481"),
-                }
-            )
-
+        # duration_records was built in the single VA pass at the top of this method.
         if duration_records:
             df_duration = pd.DataFrame.from_records(duration_records)
             start_dt_text = (
@@ -2417,33 +2551,87 @@ class RegionalOperationsComponentContextMixin:
             final_rows.append(row)
         return final_rows
 
-    def get_regional_operations_context(self):
+    def _resolve_regional_params(self):
+        """Resolve all request parameters shared by both CSA and MSO contexts."""
         selected_geo = self._normalized_geo()
         time_window = self._resolve_time_window()
-        selected_time_preset = time_window["selected_time_preset"]
-        selected_mso_source = self._pick(
-            self.request.GET.get("source", "community"),
-            {item["value"] for item in self.mso_source_options},
-            "community",
-        )
+        province_scope = self._allowed_province_names()
+        return {
+            "selected_geo": selected_geo,
+            "time_window": time_window,
+            "province_scope": province_scope,
+        }
+
+    def _get_csa_context(self, params):
+        """Build context for the CSA supervision table only."""
+        selected_geo = params["selected_geo"]
+        time_window = params["time_window"]
+        province_scope = params["province_scope"]
+
         csa_sort = self._pick(
             self.request.GET.get("csa_sort", "visits"),
             {key for key, _ in self.csa_column_map},
             "visits",
         )
-        csa_search = self.request.GET.get("csa_search", "").strip()
-        mso_search = self.request.GET.get("mso_search", "").strip()
         csa_dir = self._pick(self.request.GET.get("csa_dir", "desc"), {"asc", "desc"}, "desc")
+        csa_search = self.request.GET.get("csa_search", "").strip()
+        csa_page = max(1, self._to_int(self.request.GET.get("csa_page", "1")))
+
+        csa_rows = self._build_csa_rows(
+            selected_geo,
+            time_window["start_date_str"],
+            time_window["end_date_str"],
+            province_scope,
+        )
+        if selected_geo and selected_geo != "national":
+            csa_rows = [
+                row for row in csa_rows
+                if self._matches_geo_by_province(row.get("province"), selected_geo)
+            ]
+        if csa_search:
+            csa_rows = [
+                row for row in csa_rows
+                if self._matches_name_search(row.get("name", ""), csa_search)
+            ]
+        csa_rows_sorted = self._sort_rows(csa_rows, csa_sort, csa_dir)
+        csa_pagination = self._paginate_rows(csa_rows_sorted, csa_page)
+
+        return {
+            "csa_stats": csa_pagination["rows"],
+            "csa_rows": csa_pagination["rows"],
+            "csa_sort": csa_sort,
+            "csa_dir": csa_dir,
+            "csa_search": csa_search,
+            "csa_page": csa_pagination["page"],
+            "csa_total_pages": csa_pagination["total_pages"],
+            "csa_has_prev": csa_pagination["has_prev"],
+            "csa_has_next": csa_pagination["has_next"],
+            "csa_prev_page": csa_pagination["prev_page"],
+            "csa_next_page": csa_pagination["next_page"],
+            "csa_visible_count": csa_pagination["visible_count"],
+            "csa_total_count": csa_pagination["total_count"],
+        }
+
+    def _get_mso_context(self, params):
+        """Build context for the MSO supervision table only."""
+        selected_geo = params["selected_geo"]
+        time_window = params["time_window"]
+        province_scope = params["province_scope"]
+
+        selected_mso_source = self._pick(
+            self.request.GET.get("source", "community"),
+            {item["value"] for item in self.mso_source_options},
+            "community",
+        )
         mso_sort = self._pick(
             self.request.GET.get("mso_sort", "death_events"),
             {key for key, _ in self.mso_column_map},
             "death_events",
         )
         mso_dir = self._pick(self.request.GET.get("mso_dir", "desc"), {"asc", "desc"}, "desc")
-        csa_page = max(1, self._to_int(self.request.GET.get("csa_page", "1")))
+        mso_search = self.request.GET.get("mso_search", "").strip()
         mso_page = max(1, self._to_int(self.request.GET.get("mso_page", "1")))
 
-        province_scope = self._allowed_province_names()
         va_queryset = self.request.user.verbal_autopsies().annotate(
             province_name=Subquery(
                 Location.objects.values("name").filter(
@@ -2458,27 +2646,6 @@ class RegionalOperationsComponentContextMixin:
                 Id10012__lte=time_window["end_date_str"],
             )
 
-        csa_rows = self._build_csa_rows(
-                selected_geo,
-                time_window["start_date_str"],
-                time_window["end_date_str"],
-                province_scope,
-            )
-        if selected_geo and selected_geo != "national":
-            csa_rows = [
-                row
-                for row in csa_rows
-                if self._matches_geo_by_province(row.get("province"), selected_geo)
-            ]
-        if csa_search:
-            csa_rows = [
-                row for row in csa_rows if self._matches_name_search(row.get("name", ""), csa_search)
-            ]
-        csa_rows_sorted = self._sort_rows(
-            csa_rows,
-            csa_sort,
-            csa_dir,
-        )
         mso_rows = self._build_mso_rows(
             selected_geo,
             selected_mso_source,
@@ -2489,51 +2656,21 @@ class RegionalOperationsComponentContextMixin:
         )
         if selected_geo and selected_geo != "national":
             mso_rows = [
-                row
-                for row in mso_rows
+                row for row in mso_rows
                 if self._matches_geo_by_province(row.get("province"), selected_geo)
             ]
         if mso_search:
             mso_search_lower = mso_search.lower()
             mso_rows = [
-                row
-                for row in mso_rows
+                row for row in mso_rows
                 if mso_search_lower in str(row.get("name", "")).lower()
             ]
-        mso_rows_sorted = self._sort_rows(
-            mso_rows,
-            mso_sort,
-            mso_dir,
-        )
-        csa_pagination = self._paginate_rows(csa_rows_sorted, csa_page)
+        mso_rows_sorted = self._sort_rows(mso_rows, mso_sort, mso_dir)
         mso_pagination = self._paginate_rows(mso_rows_sorted, mso_page)
 
         return {
-            "geography_options": self.geography_options,
-            "selected_geography": selected_geo,
-            "time_presets": self.time_presets,
-            "selected_time_preset": selected_time_preset,
-            "selected_preset": time_window["selected_preset"],
-            "start_value": time_window["start_value"],
-            "end_value": time_window["end_value"],
-            "time_label": time_window["time_label"],
-            "selected_start_date": time_window["start_value"],
-            "selected_end_date": time_window["end_value"],
             "mso_source_options": self.mso_source_options,
             "selected_mso_source": selected_mso_source,
-            "csa_stats": csa_pagination["rows"],
-            "csa_rows": csa_pagination["rows"],
-            "csa_sort": csa_sort,
-            "csa_dir": csa_dir,
-            "csa_search": csa_search,
-            "csa_page": csa_pagination["page"],
-            "csa_total_pages": csa_pagination["total_pages"],
-            "csa_has_prev": csa_pagination["has_prev"],
-            "csa_has_next": csa_pagination["has_next"],
-            "csa_prev_page": csa_pagination["prev_page"],
-            "csa_next_page": csa_pagination["next_page"],
-            "csa_visible_count": csa_pagination["visible_count"],
-            "csa_total_count": csa_pagination["total_count"],
             "mso_stats": mso_pagination["rows"],
             "mso_rows": mso_pagination["rows"],
             "mso_sort": mso_sort,
@@ -2548,6 +2685,27 @@ class RegionalOperationsComponentContextMixin:
             "mso_visible_count": mso_pagination["visible_count"],
             "mso_total_count": mso_pagination["total_count"],
         }
+
+    def get_regional_operations_context(self):
+        params = self._resolve_regional_params()
+        selected_geo = params["selected_geo"]
+        time_window = params["time_window"]
+        selected_time_preset = time_window["selected_time_preset"]
+        ctx = {
+            "geography_options": self.geography_options,
+            "selected_geography": selected_geo,
+            "time_presets": self.time_presets,
+            "selected_time_preset": selected_time_preset,
+            "selected_preset": time_window["selected_preset"],
+            "start_value": time_window["start_value"],
+            "end_value": time_window["end_value"],
+            "time_label": time_window["time_label"],
+            "selected_start_date": time_window["start_value"],
+            "selected_end_date": time_window["end_value"],
+        }
+        ctx.update(self._get_csa_context(params))
+        ctx.update(self._get_mso_context(params))
+        return ctx
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -2619,14 +2777,35 @@ class RegionalOperationsFiltersComponent(
 ):
     template_name = "home/components/_regional_operations_filters.html"
 
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        filter_scope = (self.request.GET.get("filter_scope") or "").strip().lower()
+        if filter_scope == "mso":
+            context["filter_suffix"] = "_mso"
+        else:
+            context["filter_suffix"] = ""
+        return context
+
 
 class RegionalOperationsCsaComponent(
     RegionalOperationsComponentContextMixin, CustomAuthMixin, TemplateView
 ):
     template_name = "home/components/_regional_operations_csa_table.html"
 
+    def get_context_data(self, **kwargs):
+        context = super(RegionalOperationsComponentContextMixin, self).get_context_data(**kwargs)
+        params = self._resolve_regional_params()
+        context.update(self._get_csa_context(params))
+        return context
+
 
 class RegionalOperationsMsoComponent(
     RegionalOperationsComponentContextMixin, CustomAuthMixin, TemplateView
 ):
     template_name = "home/components/_regional_operations_mso_table.html"
+
+    def get_context_data(self, **kwargs):
+        context = super(RegionalOperationsComponentContextMixin, self).get_context_data(**kwargs)
+        params = self._resolve_regional_params()
+        context.update(self._get_mso_context(params))
+        return context

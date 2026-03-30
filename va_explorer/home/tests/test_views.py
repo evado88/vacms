@@ -20,6 +20,8 @@ from va_explorer.tests.factories import (
     VerbalAutopsyFactory,
 )
 from va_explorer.va_data_management.models import (
+    CSADailyTracker,
+    CSASupervisorTargetMap,
     Death,
     Household,
     Pregnancy,
@@ -563,3 +565,116 @@ def test_about(user: User):
     client.force_login(user=user)
     response = client.get("/about/")
     assert response.status_code == 200
+
+
+@time_machine.travel(dt.datetime(2026, 3, 29, 12, 0, tzinfo=eastern_tz))
+def test_csa_component_enriches_supervisor_target_and_coverage(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    CSASupervisorTargetMap.objects.create(
+        csa_name_raw="Alice_1",
+        csa_display_name="Alice",
+        csa_name_normalized="alice",
+        supervisor_name="Supervisor Alpha",
+        csa_target=10,
+    )
+
+    # CSA numerator for coverage uses the number of tracker visits in the rolling
+    # past 7 days, while the table's Visits column remains the full filtered count.
+    CSADailyTracker.objects.create(
+        key="k1",
+        enumerator="Alice_1",
+        province="Lusaka",
+        district="Lusaka",
+        ward="Ward 1",
+        today="2026-03-28",
+        num_death="1",
+        num_preg="0",
+        num_outcome="0",
+    )
+    CSADailyTracker.objects.create(
+        key="k2",
+        enumerator="Alice_1",
+        province="Lusaka",
+        district="Lusaka",
+        ward="Ward 1",
+        today="2026-03-10",
+        num_death="0",
+        num_preg="1",
+        num_outcome="0",
+    )
+
+    response = client.get("/regional-operations/components/csa/", follow=True)
+    assert response.status_code == 200
+    assert b"Supervisor" in response.content
+    assert b"CSA Target" in response.content
+    assert b"Coverage %" in response.content
+
+    rows = response.context["csa_stats"]
+    alice = next(row for row in rows if row["name"] == "Alice")
+    assert alice["supervisor"] == "Supervisor Alpha"
+    assert alice["csa_target"] == 10
+    assert alice["visits"] == 2
+    assert alice["coverage_pct"] == 10.0
+
+
+def test_csa_component_handles_unmatched_mapping_safely(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    CSADailyTracker.objects.create(
+        key="k3",
+        enumerator="No_Map_CSA_9",
+        province="Lusaka",
+        district="Lusaka",
+        ward="Ward 2",
+        today="2026-03-28",
+        num_death="0",
+        num_preg="1",
+        num_outcome="1",
+    )
+
+    response = client.get("/regional-operations/components/csa/", follow=True)
+    assert response.status_code == 200
+
+    rows = response.context["csa_stats"]
+    row = next(r for r in rows if r["name"] == "No Map CSA")
+    assert row["supervisor"] == "—"
+    assert row["csa_target"] == 0
+    assert row["coverage_pct"] is None
+
+
+@time_machine.travel(dt.datetime(2026, 3, 29, 12, 0, tzinfo=eastern_tz))
+def test_csa_component_matches_mapping_by_display_name_when_normalized_differs(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    CSASupervisorTargetMap.objects.create(
+        csa_name_raw="Alice A",
+        csa_display_name="Alice A",
+        csa_name_normalized="alice-a-custom",
+        supervisor_name="Supervisor Beta",
+        csa_target=8,
+    )
+
+    CSADailyTracker.objects.create(
+        key="k4",
+        enumerator="Alice_A_1",
+        province="Lusaka",
+        district="Lusaka",
+        ward="Ward 1",
+        today="2026-03-28",
+        num_death="0",
+        num_preg="1",
+        num_outcome="0",
+    )
+
+    response = client.get("/regional-operations/components/csa/", follow=True)
+    assert response.status_code == 200
+
+    rows = response.context["csa_stats"]
+    alice = next(row for row in rows if row["name"] == "Alice A")
+    assert alice["supervisor"] == "Supervisor Beta"
+    assert alice["csa_target"] == 8
+    assert alice["coverage_pct"] == 12.5

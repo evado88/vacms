@@ -49,18 +49,3 @@
     </tbody>
   </table>
 </div>
-
-{% if perms.va_data_management.change_verbalautopsy %}
-  <div class="row mt-4">
-    <div class="col">
-      <h2 class="mb-4">Verbal Autopsy Actions</h2>
-      <form method="post" action="{% url 'data_management:run_coding_algorithms' %}">
-        {% csrf_token %}
-        <button class="btn btn-primary" type="submit">
-          <i class="fas fa-file-prescription"></i>
-          &nbsp;Run Coding Algorithms
-        </button>
-      </form>
-    </div>
-  </div>
-{% endif %}

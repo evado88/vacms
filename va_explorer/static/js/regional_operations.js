@@ -65,17 +65,39 @@
     time24: 'Last 24 hours'
   };
 
+  function normalizePresetId(presetId) {
+    return String(presetId || '').replace(/_mso$/, '');
+  }
+
   function getEl(id) {
     return document.getElementById(id);
   }
 
+  function getActiveFilterSuffix() {
+    var activePanel = document.querySelector(".dashboard-shell[data-shell='home'] .dashboard-tab-panel.show.active");
+    var tabKey = activePanel && activePanel.dataset ? activePanel.dataset.tabPanel : "";
+    if (tabKey === "mso_supervision" && getEl('geographyFilterSelect_mso')) {
+      return "_mso";
+    }
+    return "";
+  }
+
+  function getFilterEl(baseId) {
+    var suffix = getActiveFilterSuffix();
+    return getEl(baseId + suffix) || getEl(baseId);
+  }
+
   function getSelectedPreset() {
-    return document.querySelector('input[name="timePreset"]:checked');
+    var suffix = getActiveFilterSuffix();
+    return (
+      document.querySelector('input[name="timePreset' + suffix + '"]:checked')
+      || document.querySelector('input[name="timePreset"]:checked')
+    );
   }
 
   function getDateRange() {
-    var startInput = getEl('timeStartDate');
-    var endInput = getEl('timeEndDate');
+    var startInput = getFilterEl('timeStartDate');
+    var endInput = getFilterEl('timeEndDate');
     var startVal = startInput ? startInput.value : '';
     var endVal = endInput ? endInput.value : '';
     return {start: startVal, end: endVal};
@@ -83,7 +105,7 @@
 
   function getFilterParams() {
     var params = new URLSearchParams();
-    var geoSelect = getEl('geographyFilterSelect');
+    var geoSelect = getFilterEl('geographyFilterSelect');
     var sourceSelect = getEl('msoSourceSelect');
     var csaSearchInput = getEl('csaNameSearch');
     var msoSearchInput = getEl('msoNameSearch');
@@ -92,7 +114,7 @@
 
     if (geoSelect && geoSelect.value) params.set('geo', geoSelect.value);
     if (sourceSelect && sourceSelect.value) params.set('source', sourceSelect.value);
-    if (selectedPreset && selectedPreset.id) params.set('time_preset', selectedPreset.id);
+    if (selectedPreset && selectedPreset.id) params.set('time_preset', normalizePresetId(selectedPreset.id));
     if (range.start) params.set('start_date', range.start);
     if (range.end) params.set('end_date', range.end);
     if (csaSearchInput) tableSortState.csa_search = csaSearchInput.value.trim();
@@ -176,12 +198,13 @@
     }
 
     var selected = getSelectedPreset();
-    if (!selected || !mapping[selected.id]) return;
-    label.textContent = 'Geography: ' + mapping[selected.id];
+    var presetId = normalizePresetId(selected && selected.id);
+    if (!presetId || !mapping[presetId]) return;
+    label.textContent = 'Geography: ' + mapping[presetId];
   }
 
   function getBorderType() {
-    var geoSelect = getEl('geographyFilterSelect');
+    var geoSelect = getFilterEl('geographyFilterSelect');
     if (!geoSelect || !geoSelect.value || geoSelect.value === 'national') {
       return 'Province';
     }
@@ -305,10 +328,11 @@
   }
 
   function resetAllFilters() {
-    var geoSelect = getEl('geographyFilterSelect');
-    var timeAllPreset = getEl('timeAll');
-    var startDateInput = getEl('timeStartDate');
-    var endDateInput = getEl('timeEndDate');
+    var geoSelect = getFilterEl('geographyFilterSelect');
+    var suffix = getActiveFilterSuffix();
+    var timeAllPreset = getEl('timeAll' + suffix) || getEl('timeAll');
+    var startDateInput = getFilterEl('timeStartDate');
+    var endDateInput = getFilterEl('timeEndDate');
     var msoSourceSelect = getEl('msoSourceSelect');
     var csaSearchInput = getEl('csaNameSearch');
     var msoSearchInput = getEl('msoNameSearch');
@@ -367,7 +391,7 @@
     });
 
     document.addEventListener('click', function(event) {
-      if (event.target && event.target.id === 'regionalFiltersReset') {
+      if (event.target && /^regionalFiltersReset/.test(event.target.id || '')) {
         if (csaSearchTimer) clearTimeout(csaSearchTimer);
         if (msoSearchTimer) clearTimeout(msoSearchTimer);
         resetAllFilters();
@@ -408,10 +432,10 @@
       if (!target) return;
 
       var isPrimaryFilter =
-        target.id === 'geographyFilterSelect' ||
-        target.id === 'timeStartDate' ||
-        target.id === 'timeEndDate' ||
-        target.name === 'timePreset';
+        /^geographyFilterSelect/.test(target.id || '') ||
+        /^timeStartDate/.test(target.id || '') ||
+        /^timeEndDate/.test(target.id || '') ||
+        /^timePreset/.test(target.name || '');
 
       if (isPrimaryFilter) {
         tableSortState.csa_page = '1';
@@ -463,4 +487,22 @@
   updateLabel();
   initializeMap();
   wireEvents();
+
+  // Eager-load CSA and MSO supervision components on page load so they are
+  // ready before the user clicks the tab (disables lazy loading for these tabs).
+  refreshDataComponents({csa: true, mso: true}).then(function() {
+    // Mark data slots as loaded so hydratePanelComponents skips a redundant fetch
+    // when the tab is first clicked.
+    var csaSlot = getEl('regionalCsaComponent');
+    var msoSlot = getEl('regionalMsoComponent');
+    if (csaSlot) csaSlot.dataset.loaded = '1';
+    if (msoSlot) msoSlot.dataset.loaded = '1';
+  });
+  var loader = window.DashboardLoader;
+  if (loader && typeof loader.loadComponentOnce === 'function') {
+    var filtersSlot = getEl('regionalFiltersComponent');
+    var msoFiltersSlot = getEl('regionalMsoFiltersComponent');
+    if (filtersSlot) loader.loadComponentOnce(filtersSlot).catch(function() {});
+    if (msoFiltersSlot) loader.loadComponentOnce(msoFiltersSlot).catch(function() {});
+  }
 })();
