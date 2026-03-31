@@ -27,12 +27,20 @@ from va_explorer.va_data_management.utils.location_access import (
 from .constants import FEEDBACK_MODULE_FEATURES
 
 
-feedback_upload_root = Path(__file__).resolve().parents[1] / "static" / "data" / "uploads"
-feedback_upload_root.mkdir(parents=True, exist_ok=True)
-feedback_attachment_storage = FileSystemStorage(
-    location=str(feedback_upload_root),
-    base_url=f"{settings.STATIC_URL}data/uploads/",
-)
+# Return a new FileSystemStorage instance at call time so Django serializes
+# only the callable reference (a stable dotted path) rather than the
+# constructor arguments, which include a machine-specific absolute path and
+# would otherwise cause a new alter_feedback_attachment migration on every
+# machine that runs makemigrations.
+def _get_feedback_attachment_storage():
+    upload_root = (
+        Path(getattr(settings, "MEDIA_ROOT", Path(__file__).resolve().parents[2] / "media"))
+        / "feedback" / "uploads"
+    )
+    return FileSystemStorage(
+        location=str(upload_root),
+        base_url=f"{settings.MEDIA_URL}feedback/uploads/",
+    )
 
 
 def feedback_attachment_upload_path(instance, filename):
