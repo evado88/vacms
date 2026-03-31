@@ -2231,7 +2231,7 @@ class RegionalOperationsComponentContextMixin:
             if (raw := (e.get("va__Id10010") or "").strip())
         }
         shared_norm_cache = self._build_norm_match_cache(
-            pd.Series(sorted(_all_event_name_norms)), mso_name_norms, 85
+            pd.Series(sorted(_all_event_name_norms), dtype=object), mso_name_norms, 85
         )
 
         # ── Death event count ─────────────────────────────────────────────────
@@ -2426,19 +2426,21 @@ class RegionalOperationsComponentContextMixin:
         # duration_records was built in the single VA pass at the top of this method.
         if duration_records:
             df_duration = pd.DataFrame.from_records(duration_records)
-            start_dt_text = (
-                df_duration["interview_date"].fillna("").astype(str).str.strip()
-                + " "
-                + df_duration["start_time"].fillna("").astype(str).str.strip()
-            ).str.strip()
+            # Id10011 (start_time) is already a full ISO-8601 datetime with
+            # timezone offset — use it directly instead of concatenating with
+            # the separate date field, which forced dateutil string parsing
+            # (0.6 s for 1 500 rows). infer_datetime_format=True lets pandas
+            # use its fast C path for recognised ISO-8601 patterns.
             df_duration["start_dt"] = pd.to_datetime(
-                start_dt_text,
+                df_duration["start_time"].fillna("").astype(str).str.strip(),
                 errors="coerce",
+                infer_datetime_format=True,
                 utc=True,
             )
             df_duration["end_dt"] = pd.to_datetime(
                 df_duration["end_datetime"],
                 errors="coerce",
+                infer_datetime_format=True,
                 utc=True,
             )
             df_duration = df_duration.dropna(subset=["start_dt", "end_dt"])
@@ -2778,12 +2780,20 @@ class RegionalOperationsFiltersComponent(
     template_name = "home/components/_regional_operations_filters.html"
 
     def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
+        # Skip the mixin's get_context_data (which builds both CSA and MSO
+        # rows) since the filter template needs only the lightweight filter
+        # parameters.
+        context = super(RegionalOperationsComponentContextMixin, self).get_context_data(**kwargs)
+        params = self._resolve_regional_params()
+        time_window = params["time_window"]
+        context["geography_options"] = self.geography_options
+        context["time_presets"] = self.time_presets
+        context["selected_geography"] = params["selected_geo"]
+        context["selected_time_preset"] = time_window["selected_time_preset"]
+        context["selected_start_date"] = time_window["start_value"]
+        context["selected_end_date"] = time_window["end_value"]
         filter_scope = (self.request.GET.get("filter_scope") or "").strip().lower()
-        if filter_scope == "mso":
-            context["filter_suffix"] = "_mso"
-        else:
-            context["filter_suffix"] = ""
+        context["filter_suffix"] = "_mso" if filter_scope == "mso" else ""
         return context
 
 

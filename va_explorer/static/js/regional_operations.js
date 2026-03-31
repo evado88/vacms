@@ -488,11 +488,11 @@
   initializeMap();
   wireEvents();
 
-  // Eager-load CSA and MSO supervision components on page load so they are
-  // ready before the user clicks the tab (disables lazy loading for these tabs).
+  // Pre-fetch CSA and MSO component HTML on page load so the slots are ready
+  // before the user clicks the tab.  After the fetch completes, mark each
+  // slot as loaded so DashboardLoader.loadComponentOnce skips a second fetch
+  // when hydratePanelComponents runs on first tab activation.
   refreshDataComponents({csa: true, mso: true}).then(function() {
-    // Mark data slots as loaded so hydratePanelComponents skips a redundant fetch
-    // when the tab is first clicked.
     var csaSlot = getEl('regionalCsaComponent');
     var msoSlot = getEl('regionalMsoComponent');
     if (csaSlot) csaSlot.dataset.loaded = '1';
