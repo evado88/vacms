@@ -2,6 +2,7 @@ import calendar
 from collections import Counter
 from datetime import date, datetime, time, timedelta
 
+from django.db.models import Max
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
 
@@ -105,26 +106,25 @@ def build_trend_for_queryset(queryset, key_field="key"):
     month_labels = [month.strftime("%b") for month in months]
     output = _empty_metric_trend(month_labels)
 
-    rows = (
+    # Use DB-side MAX aggregation to get the latest submissiondate per unique key.
+    # This avoids loading every row into Python memory just to build a dict of
+    # max-per-key — a single GROUP BY + MAX query is far cheaper for large tables.
+    agg_rows = (
         queryset.exclude(**{f"{key_field}__isnull": True})
         .exclude(**{key_field: ""})
-        .values(key_field, "submissiondate")
+        .values(key_field)
+        .annotate(latest_sub=Max("submissiondate"))
+        .iterator()
     )
 
-    latest_by_key = {}
-    for row in rows:
-        row_key = row.get(key_field)
-        timestamp = _parse_submission_datetime(row.get("submissiondate"))
-        if not row_key or timestamp is None:
-            continue
-        existing = latest_by_key.get(row_key)
-        if existing is None or timestamp > existing:
-            latest_by_key[row_key] = timestamp
+    timestamps = []
+    for row in agg_rows:
+        ts = _parse_submission_datetime(row.get("latest_sub"))
+        if ts is not None:
+            timestamps.append(ts)
 
-    if not latest_by_key:
+    if not timestamps:
         return output
-
-    timestamps = list(latest_by_key.values())
     output["table"]["recorded"]["Overall"] = len(timestamps)
     output["table"]["recorded"]["24"] = sum(1 for ts in timestamps if ts >= since_day)
     output["table"]["recorded"]["1 week"] = sum(1 for ts in timestamps if ts >= since_week)

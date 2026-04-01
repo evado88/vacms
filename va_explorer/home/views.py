@@ -2216,19 +2216,28 @@ class RegionalOperationsComponentContextMixin:
                 "interview_complete_date",
                 "submission_date",
                 "va__Id10010",
+                # va_interview_staff__name is the User.name assigned in case
+                # management scheduling.  For newly scheduled events where no VA
+                # has been submitted yet, va__Id10010 is null — fall back to this
+                # field so those events still appear in va_scheduled counts.
+                "va_interview_staff__name",
                 "death_id",
                 "death__DE_06",
             )
         )
 
         # Build one shared fuzzy-match cache over all unique MSO name norms present
-        # in the event rows.  All three downstream datasets (death, scheduling,
-        # mean_days) draw from the same va__Id10010 source, so their unique norms
-        # are identical — computing the cache once avoids triple work.
+        # in the event rows.  Includes names from both va__Id10010 (submitted VA
+        # form) and va_interview_staff__name (case management scheduling) so that
+        # events without a submitted VA are still matched to an MSO row.
         _all_event_name_norms = {
             self.normalize_person_name(self._format_mso_display_name(raw))
             for e in all_event_rows
-            if (raw := (e.get("va__Id10010") or "").strip())
+            for raw in (
+                (e.get("va__Id10010") or "").strip(),
+                (e.get("va_interview_staff__name") or "").strip(),
+            )
+            if raw
         }
         shared_norm_cache = self._build_norm_match_cache(
             pd.Series(sorted(_all_event_name_norms), dtype=object), mso_name_norms, 85
@@ -2239,7 +2248,10 @@ class RegionalOperationsComponentContextMixin:
         for event in all_event_rows:
             if event.get("death_id") is None:
                 continue
-            death_name_raw = (event.get("va__Id10010") or "").strip()
+            death_name_raw = (
+                (event.get("va__Id10010") or "").strip()
+                or (event.get("va_interview_staff__name") or "").strip()
+            )
             if not death_name_raw:
                 continue
             death_date = self._coerce_date(event.get("death__DE_06"))
@@ -2296,7 +2308,13 @@ class RegionalOperationsComponentContextMixin:
 
         scheduling_records = []
         for event in all_event_rows:
-            mso_name_raw = (event.get("va__Id10010") or "").strip()
+            # Prefer the actual VA form interviewer name; fall back to the User
+            # assigned in case management for events where the VA has not yet
+            # been submitted (va is null, so va__Id10010 is blank).
+            mso_name_raw = (
+                (event.get("va__Id10010") or "").strip()
+                or (event.get("va_interview_staff__name") or "").strip()
+            )
             if not mso_name_raw:
                 continue
             mso_name = self._format_mso_display_name(mso_name_raw)
@@ -2367,7 +2385,10 @@ class RegionalOperationsComponentContextMixin:
             complete_date = event.get("interview_complete_date")
             if not death_date or not complete_date:
                 continue
-            mean_name_raw = (event.get("va__Id10010") or "").strip()
+            mean_name_raw = (
+                (event.get("va__Id10010") or "").strip()
+                or (event.get("va_interview_staff__name") or "").strip()
+            )
             if not mean_name_raw:
                 continue
             mean_name = self._format_mso_display_name(mean_name_raw)

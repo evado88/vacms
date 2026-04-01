@@ -145,6 +145,9 @@
       })
       .then(function(html) {
         container.innerHTML = html;
+        // Keep data-loaded="1" in sync so DashboardLoader.loadComponentOnce
+        // knows this slot is populated and skips re-fetching on tab switch.
+        container.dataset.loaded = '1';
         if (containerId === 'regionalCsaComponent' && focusState.restoreCsaSearch) {
           var refreshedSearch = getEl('csaNameSearch');
           if (refreshedSearch) {
@@ -488,21 +491,24 @@
   initializeMap();
   wireEvents();
 
-  // Pre-fetch CSA and MSO component HTML on page load so the slots are ready
-  // before the user clicks the tab.  After the fetch completes, mark each
-  // slot as loaded so DashboardLoader.loadComponentOnce skips a second fetch
-  // when hydratePanelComponents runs on first tab activation.
-  refreshDataComponents({csa: true, mso: true}).then(function() {
-    var csaSlot = getEl('regionalCsaComponent');
-    var msoSlot = getEl('regionalMsoComponent');
-    if (csaSlot) csaSlot.dataset.loaded = '1';
-    if (msoSlot) msoSlot.dataset.loaded = '1';
-  });
+  // Pre-load all four regional-operations slots through DashboardLoader so
+  // that:
+  //  1. data-loaded="1" is set via setContainerHtml — the same flag that
+  //     loadComponentOnce checks before making a network request on tab switch.
+  //  2. In-flight deduplication prevents a double-fetch if the user clicks a
+  //     tab while the pre-load is still in progress.
+  // Filter- or sort-triggered refreshes later use refreshComponent() above
+  // (which also keeps data-loaded="1" in sync), so tab switching always
+  // remains a CSS show/hide with no extra network requests.
   var loader = window.DashboardLoader;
   if (loader && typeof loader.loadComponentOnce === 'function') {
-    var filtersSlot = getEl('regionalFiltersComponent');
+    var filtersSlot    = getEl('regionalFiltersComponent');
     var msoFiltersSlot = getEl('regionalMsoFiltersComponent');
-    if (filtersSlot) loader.loadComponentOnce(filtersSlot).catch(function() {});
+    var csaSlot        = getEl('regionalCsaComponent');
+    var msoSlot        = getEl('regionalMsoComponent');
+    if (filtersSlot)    loader.loadComponentOnce(filtersSlot).catch(function() {});
     if (msoFiltersSlot) loader.loadComponentOnce(msoFiltersSlot).catch(function() {});
+    if (csaSlot)        loader.loadComponentOnce(csaSlot).catch(function() {});
+    if (msoSlot)        loader.loadComponentOnce(msoSlot).catch(function() {});
   }
 })();

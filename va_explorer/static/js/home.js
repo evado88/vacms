@@ -750,6 +750,10 @@ const initTrendsTab = async () => {
 }
 
 const initCsaSupervisionTab = async () => {
+  // Fast path: both slots already populated — tab switch is CSS show/hide only.
+  const filtersSlot = document.getElementById("regionalFiltersComponent");
+  const csaSlot     = document.getElementById("regionalCsaComponent");
+  if (filtersSlot?.dataset?.loaded === "1" && csaSlot?.dataset?.loaded === "1") return;
   await Promise.allSettled([
     loadSlotOnce("regionalFiltersComponent"),
     loadSlotOnce("regionalCsaComponent"),
@@ -757,6 +761,10 @@ const initCsaSupervisionTab = async () => {
 }
 
 const initMsoSupervisionTab = async () => {
+  // Fast path: both slots already populated — tab switch is CSS show/hide only.
+  const msoFiltersSlot = document.getElementById("regionalMsoFiltersComponent");
+  const msoSlot        = document.getElementById("regionalMsoComponent");
+  if (msoFiltersSlot?.dataset?.loaded === "1" && msoSlot?.dataset?.loaded === "1") return;
   await loadSlotOnce("regionalMsoFiltersComponent");
   await loadSlotOnce("regionalMsoComponent");
 }

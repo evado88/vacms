@@ -99,6 +99,12 @@
     <div class="text-muted">VA Interviewer Contact</div>
     <div><strong>{{ interviewer_contact|default:"--" }}</strong></div>
   </div>
+  {% if interviewer_scheduled_count is not None %}
+  <div class="mb-3">
+    <div class="text-muted">Interviewer Total Scheduled VAs</div>
+    <div><strong>{{ interviewer_scheduled_count }}</strong></div>
+  </div>
+  {% endif %}
 
   <div class="mb-3">
     <div class="text-muted">Respondent Name</div>

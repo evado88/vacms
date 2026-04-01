@@ -25,7 +25,7 @@ from django.views.generic import (
     UpdateView,
     DeleteView,
 )  # new
-from django.db.models import Case, When, Value, IntegerField, Q
+from django.db.models import Case, Count, When, Value, IntegerField, Q
 
 # Create your views here.
 from va_explorer.vacms.cmsmodels.events import Event
@@ -107,6 +107,26 @@ class EventListView(ListView):
         )
         context["not_done_events"] = base_queryset.filter(
             va_interview_status=Event.VAInterviewStatus.NOT_DONE
+        )
+
+        # Aggregate scheduled VA events by VA interviewer so supervisors can
+        # see workload distribution at a glance.  Uses the full unfiltered
+        # base queryset (respects province/district/interviewer/status filters
+        # already applied by _apply_filters).
+        context["scheduled_by_interviewer"] = (
+            Event.objects.filter(
+                id__in=base_queryset.filter(
+                    va_interview_status=Event.VAInterviewStatus.SCHEDULED,
+                    va_interview_staff__isnull=False,
+                ).values_list("id", flat=True)
+            )
+            .values(
+                "va_interview_staff__id",
+                "va_interview_staff__name",
+                "va_interview_staff__email",
+            )
+            .annotate(scheduled_count=Count("id"))
+            .order_by("-scheduled_count", "va_interview_staff__name")
         )
         return context
 
@@ -327,9 +347,14 @@ class EventDetailView(DetailView):
             context["interviewer_contact"] = (
                 interviewer.mobile1 or interviewer.mobile2 or interviewer.email
             )
+            context["interviewer_scheduled_count"] = Event.objects.filter(
+                va_interview_staff=interviewer,
+                va_interview_status=Event.VAInterviewStatus.SCHEDULED,
+            ).count()
         else:
             context["interviewer_name"] = None
             context["interviewer_contact"] = None
+            context["interviewer_scheduled_count"] = None
         context["status_form"] = kwargs.get(
             "status_form", VAInterviewStatusForm(instance=event)
         )

@@ -607,8 +607,8 @@ def build_pregnancy_outcomes_qs(request):
 
 def build_pregnancy_qs(request):
     # Pregnancy model currently stores geography and person fields directly,
-    # so there are no FK relations to eagerly load via select_related.
-    qs = Pregnancy.objects.select_related().all()
+    # so there are no FK relations to eagerly load.
+    qs = Pregnancy.objects.all()
     qs = restrict_queryset_to_user_locations(qs, getattr(request, "user", None))
     filter_state = get_pregnancy_outcomes_filter_state(request)
     qs = _apply_geography_filter(qs, filter_state)
@@ -719,8 +719,8 @@ def get_deaths_filter_state(request):
 
 def build_deaths_qs(request, *, apply_time_filter=True):
     # Death model stores geography/person fields directly as text, so there are
-    # currently no FK relationships to include in select_related().
-    qs = Death.objects.select_related().all()
+    # currently no FK relationships to eagerly load.
+    qs = Death.objects.all()
     qs = restrict_queryset_to_user_locations(qs, getattr(request, "user", None))
 
     filter_state = get_deaths_filter_state(request)
@@ -886,29 +886,20 @@ def _build_deaths_trend_series(filtered_qs):
 
 
 def _build_pregnancy_summary_cards(filtered_qs):
-    rows = filtered_qs.values("submissiondate", "today", "start").iterator()
-
-    last_data_update = filtered_qs.aggregate(
+    # Single aggregate query replaces three separate evaluations (aggregate,
+    # count, and iterator loop for last_event_date).
+    agg = filtered_qs.aggregate(
         latest_updated=Max("updated"),
         latest_created=Max("created"),
+        latest_submission=Max("submissiondate"),
+        total=Count("pk"),
     )
-    latest_update_dt = last_data_update.get("latest_updated") or last_data_update.get(
-        "latest_created"
-    )
+    latest_update_dt = agg.get("latest_updated") or agg.get("latest_created")
+    total_events = agg.get("total") or 0
 
-    last_event_date = None
-    total_events = filtered_qs.count()
+    last_event_dt = _parse_outcome_datetime(agg.get("latest_submission"), end_of_day=True)
+
     mean_age, _hiv_positive_pct = _build_pregnancy_kpis(filtered_qs)
-
-    for row in rows:
-        # Use submission date as the pregnancy event/registration date for consistency.
-        candidate_event = (
-            _parse_outcome_datetime(row.get("submissiondate"), end_of_day=True)
-            or _parse_outcome_datetime(row.get("today"), end_of_day=True)
-            or _parse_outcome_datetime(row.get("start"), end_of_day=True)
-        )
-        if candidate_event and (last_event_date is None or candidate_event > last_event_date):
-            last_event_date = candidate_event
 
     return {
         "card_last_data_update": (
@@ -917,7 +908,7 @@ def _build_pregnancy_summary_cards(filtered_qs):
             else "N/A"
         ),
         "card_last_event_date": (
-            last_event_date.strftime("%Y-%m-%d") if last_event_date else "N/A"
+            last_event_dt.strftime("%Y-%m-%d") if last_event_dt else "N/A"
         ),
         "card_number_of_events": total_events,
         "card_mean_age": mean_age,
@@ -1010,7 +1001,10 @@ def _build_pregnancy_ga_detection_distribution(filtered_qs):
 
 
 def _build_pregnancy_kpis(filtered_qs):
-    age_values = []
+    # Use running sum/count instead of accumulating a list — avoids allocating
+    # one float per row in memory for potentially large datasets.
+    age_sum = 0.0
+    age_count = 0
     rows = filtered_qs.values("PE_07A", "PE_07", "submissiondate", "today", "start").iterator()
     for row in rows:
         direct_age = row.get("PE_07A")
@@ -1020,7 +1014,8 @@ def _build_pregnancy_kpis(filtered_qs):
             except (TypeError, ValueError):
                 parsed_age = None
             if parsed_age is not None and parsed_age >= 0:
-                age_values.append(parsed_age)
+                age_sum += parsed_age
+                age_count += 1
                 continue
 
         dob_dt = _parse_outcome_datetime(row.get("PE_07"))
@@ -1029,9 +1024,10 @@ def _build_pregnancy_kpis(filtered_qs):
         ) or _parse_outcome_datetime(row.get("start"))
         if dob_dt is None or event_dt is None or event_dt < dob_dt:
             continue
-        age_values.append((event_dt - dob_dt).days / 365.25)
+        age_sum += (event_dt - dob_dt).days / 365.25
+        age_count += 1
 
-    mean_age = round(sum(age_values) / len(age_values), 1) if age_values else 0.0
+    mean_age = round(age_sum / age_count, 1) if age_count else 0.0
 
     hiv_known_filter = (
         ~Q(PE_23__isnull=True)
