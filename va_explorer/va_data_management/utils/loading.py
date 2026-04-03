@@ -11,6 +11,7 @@ from simple_history.utils import bulk_create_with_history
 
 from va_explorer.users.utils.demo_users import make_field_workers_for_facilities
 from va_explorer.va_data_management.models import Location, VerbalAutopsy, SRSClusterLocation
+from va_explorer.va_data_management.odk.normalization import build_odk_rename_map
 from va_explorer.va_data_management.utils.date_parsing import parse_date
 from va_explorer.va_data_management.utils.location_assignment import (
     assign_va_location,
@@ -268,28 +269,12 @@ def normalize_dataframe_columns(df, model):
     - Replace only hyphens (-) with underscores (_), without affecting existing underscores
     - Only keep columns that exist in the model
     """
-    # Get model fields as a set for easy checking
     model_fields = [f.name for f in model._meta.get_fields()]
     model_fields_set = set(model_fields)
+    rename_map = build_odk_rename_map(df.columns, expected_fields=model_fields)
 
-    # Build a case-insensitive map of model fields
-    case_map = {f.lower(): f for f in model_fields}
-
-    # Prepare a mapping for renaming columns
-    rename_map = {}
-    for col in df.columns:
-        # Replace hyphens with underscores only (preserve underscores)
-        col_trans = col.replace("-", "_")
-        # Try to map ignoring case to a model field
-        mapped_col = case_map.get(col_trans.lower())
-        if mapped_col:
-            rename_map[col] = mapped_col
-
-    # Rename columns in the DataFrame
     df = df.rename(columns=rename_map)
     df.columns = df.columns.str.strip()
-
-    # Keep only columns that exist on the model
     df = df[[col for col in df.columns if col in model_fields_set]]
 
     return df

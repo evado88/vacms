@@ -8,6 +8,7 @@ from django.conf import settings
 from django.db import OperationalError, ProgrammingError, connection
 from django.utils import timezone
 
+from va_explorer.va_data_management.odk.config import get_odk_form_configs
 
 logger = logging.getLogger(__name__)
 
@@ -85,24 +86,14 @@ class VaDataManagementConfig(AppConfig):
     def _get_target_form_configs(self):
         target_names = {"pregnancy", "pregnancy_outcome", "death", "verbal_autopsy"}
         configs = []
-        for cfg in getattr(settings, "ODK_PULL_FORMS", []):
+        for cfg in get_odk_form_configs(
+            default_project_id=getattr(settings, "ODK_DEFAULT_PROJECT_ID", None)
+        ):
             if cfg.get("form_name") not in target_names:
                 continue
-            form_id = cfg.get("form_id")
-            if not form_id or cfg.get("enabled") is False:
+            if cfg.get("enabled") is False:
                 continue
-            project_id = cfg.get("project_id") or getattr(
-                settings, "ODK_DEFAULT_PROJECT_ID", None
-            )
-            configs.append(
-                {
-                    "form_id": form_id,
-                    "form_name": cfg.get("form_name"),
-                    "project_id": project_id,
-                    "enabled": cfg.get("enabled", True),
-                    "frequency_minutes": cfg.get("frequency_minutes"),
-                }
-            )
+            configs.append(cfg)
         return configs
 
     def _odk_state_table_exists(self, odk_pull_state_model):

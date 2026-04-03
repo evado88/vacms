@@ -5,6 +5,7 @@ import pandas as pd
 from django.core.management.base import BaseCommand, CommandError
 
 from va_explorer.va_data_management.models import (
+    CSADailyTracker,
     Death,
     Household,
     HouseholdMember,
@@ -20,6 +21,7 @@ FORM_MODEL_MAP = {
     "pregnancy": Pregnancy,
     "pregnancy_outcome": PregnancyOutcome,
     "death": Death,
+    "csa_daily_tracker": CSADailyTracker,
 }
 
 

@@ -8,6 +8,7 @@ from django.conf import settings
 from va_explorer.va_data_management.management.commands.import_from_kobo import (
     BATCH_SIZE,
 )
+from va_explorer.va_data_management.odk.config import get_odk_form_configs
 from va_explorer.va_data_management.odk.service import ODKPullService
 from va_explorer.va_data_management.utils import coding, kobo, odk
 from va_explorer.va_data_management.utils.loading import load_records_from_dataframe
@@ -32,13 +33,13 @@ def setup_periodic_tasks(sender, **kwargs):
         name="Run Coding Algorithms daily",
     )
 
-    # Import forms and data from ODK daily at 01:00
-    interval = max(env.int("ODK_PULL_INTERVAL_MINUTES", default=30), 1)
-    sender.add_periodic_task(
-        crontab(minute=f"*/{interval}"),
-        pull_odk_scheduled.s(),
-        name="Pull ODK submissions",
-    )
+    odk_schedules = getattr(settings, "ODK_PULL_SCHEDULES", {})
+    for schedule_key, schedule in odk_schedules.items():
+        sender.add_periodic_task(
+            crontab(**schedule),
+            pull_odk_scheduled.s(schedule_key=schedule_key),
+            name=f"Pull ODK submissions ({schedule_key})",
+        )
 
     # Assign death IDs every 5 minutes (every 300 seconds)
     sender.add_periodic_task(
@@ -109,34 +110,29 @@ def import_odk_forms():
     return pull_odk_scheduled()
 
 
-def _odk_form_configs():
-    configs = getattr(settings, "ODK_PULL_FORMS", [])
-    normalized = []
-    for cfg in configs:
-        form_id = cfg.get("form_id")
-        if not form_id:
-            continue
-        normalized.append(
-            {
-                "form_id": form_id,
-                "form_name": cfg.get("form_name"),
-                "project_id": cfg.get("project_id")
-                or getattr(settings, "ODK_DEFAULT_PROJECT_ID", None),
-                "enabled": cfg.get("enabled", True),
-                "frequency_minutes": cfg.get("frequency_minutes"),
-            }
-        )
-    return normalized
+def _odk_form_configs(schedule_key=None):
+    configs = get_odk_form_configs(
+        default_project_id=getattr(settings, "ODK_DEFAULT_PROJECT_ID", None)
+    )
+    if schedule_key is None:
+        return configs
+    return [cfg for cfg in configs if cfg.get("schedule_key") == schedule_key]
 
 
 @app.task()
-def pull_odk_scheduled():
+def pull_odk_scheduled(schedule_key=None):
     service = ODKPullService(
         default_project_id=getattr(settings, "ODK_DEFAULT_PROJECT_ID", None)
     )
-    configs = _odk_form_configs()
+    configs = _odk_form_configs(schedule_key=schedule_key)
+    if not configs:
+        logger.info("No ODK forms configured for scheduled pull", extra={"schedule_key": schedule_key})
+        return {}
     summary = service.pull_forms(configs)
-    logger.info("ODK scheduled pull complete", extra={"summary": summary})
+    logger.info(
+        "ODK scheduled pull complete",
+        extra={"schedule_key": schedule_key, "summary": summary},
+    )
     return summary
 
 

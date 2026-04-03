@@ -6,6 +6,7 @@ from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 
+from va_explorer.va_data_management.odk.config import resolve_odk_form_configs
 from va_explorer.va_data_management.odk.service import ODKPullService
 
 
@@ -74,32 +75,7 @@ class Command(BaseCommand):
         self._print_summary(summary)
 
     def _resolve_forms(self, form_ids: Optional[List[str]], project_id: Optional[int]):
-        configs = getattr(settings, "ODK_PULL_FORMS", [])
-        if form_ids:
-            return [
-                {
-                    "form_id": fid,
-                    "project_id": project_id
-                    or getattr(settings, "ODK_DEFAULT_PROJECT_ID", None),
-                    "enabled": True,
-                }
-                for fid in form_ids
-            ]
-
-        resolved = []
-        for cfg in configs:
-            fid = cfg.get("form_id")
-            if not fid:
-                continue
-            resolved.append(
-                {
-                    "form_id": fid,
-                    "form_name": cfg.get("form_name"),
-                    "project_id": project_id or cfg.get("project_id"),
-                    "enabled": cfg.get("enabled", True),
-                }
-            )
-        return resolved
+        return resolve_odk_form_configs(form_ids=form_ids, project_id=project_id)
 
     def _parse_since(self, raw: str) -> datetime:
         if raw.endswith("d") and raw[:-1].isdigit():
