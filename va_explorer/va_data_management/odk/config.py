@@ -47,8 +47,14 @@ def resolve_odk_form_configs(
 ) -> List[Dict[str, Any]]:
     default_project_id = project_id or getattr(settings, "ODK_DEFAULT_PROJECT_ID", None)
     if form_ids:
+        # Look up the full config from ODK_PULL_FORMS so that form_name, fetch_expand etc.
+        # are preserved when the same form_id is passed explicitly (e.g. from the CLI).
+        known = {
+            c["form_id"]: c
+            for c in get_odk_form_configs(default_project_id=default_project_id)
+        }
         return [
-            {
+            known.get(form_id) or {
                 "form_id": form_id,
                 "form_name": None,
                 "project_id": default_project_id,

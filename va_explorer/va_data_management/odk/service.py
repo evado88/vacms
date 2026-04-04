@@ -1,5 +1,5 @@
 import logging
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timedelta
 from io import BytesIO
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -265,7 +265,10 @@ class ODKPullService:
         state, _ = ODKPullState.objects.get_or_create(
             form_id=form_id, project_id=project_id
         )
-        with self._acquire_global(project_id), self._acquire_lock(form_id, project_id):
+        # Only hold the project-wide global lock for full refreshes; incremental pulls
+        # use only the per-form lock so concurrent pulls of different forms can proceed.
+        global_ctx = self._acquire_global(project_id) if full_refresh else nullcontext()
+        with global_ctx, self._acquire_lock(form_id, project_id):
             state.mark_started()
             self._logger.info(
                 "Starting ODK pull",
