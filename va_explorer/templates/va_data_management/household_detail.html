@@ -96,10 +96,10 @@
             {% for member in object.members.all %}
               <tr>
                 <td>{{ member.id }}</td>
-                <td>{{ member.first_name|default:"-" }}</td>
-                <td>{{ member.last_name|default:"-" }}</td>
+                <td>{% pii_filter "first_name" member.first_name|default:"-" %}</td>
+                <td>{% pii_filter "last_name" member.last_name|default:"-" %}</td>
                 <td>{{ member.HH_05|default:"-" }}</td>
-                <td>{{ member.HH_08|default:"-" }}</td>
+                <td>{% pii_filter "HH_07" member.HH_07|default:"-" %}</td>
                 <td>{{ member.HH_04|default:"-" }}</td>
               </tr>
             {% endfor %}

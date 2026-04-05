@@ -50,6 +50,10 @@ class Deaths(CustomAuthMixin, PermissionRequiredMixin, ListView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
+        # Remove filter fields that would let non-PII users search by PII values.
+        if not self.request.user.can_view_pii:
+            for field in ("deceased", "start_date", "end_date"):
+                self.filter.form.fields.pop(field, None)
         context['filter'] = self.filter
         return context
 
@@ -76,6 +80,11 @@ class DeathEdit(CustomAuthMixin, PermissionRequiredMixin, DeathAccessMixin, Succ
     template_name = "va_data_management/death_edit.html"
     pk_url_kwarg = "id"
     success_message = "Death record successfully updated."
+
+    def get_form_kwargs(self):
+        kwargs = super().get_form_kwargs()
+        kwargs["include_pii"] = self.request.user.can_view_pii
+        return kwargs
 
     def get_success_url(self):
         return reverse("va_data_management:death_detail", kwargs={"id": self.object.id})

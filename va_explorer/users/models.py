@@ -114,6 +114,7 @@ class User(AbstractUser):
     has_valid_password = models.BooleanField(
         _("The user has a user-defined password"), default=False
     )
+    denied_permissions = models.JSONField(blank=True, default=list)
     uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     location_restrictions = ManyToManyField(
         Location, related_name="users", db_table="users_user_location_restrictions"
@@ -195,6 +196,12 @@ class User(AbstractUser):
 
         """
         return reverse("users:detail", kwargs={"pk": self.pk})
+
+    def has_perm(self, perm, obj=None):
+        # Per-user explicit denials override role and direct grants.
+        if perm and perm in set(self.denied_permissions or []):
+            return False
+        return super().has_perm(perm, obj=obj)
 
     # TODO: Remove if we do not require email confirmation; we will no longer
     # need the lines below
