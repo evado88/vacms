@@ -1,3 +1,11 @@
+#homeTabs .nav-link {
+  font-weight: 400;
+}
+
+#homeTabs .nav-link.active {
+  font-weight: 700;
+}
+
 #homeTabsContent {
   width: 100%;
   min-width: 0;

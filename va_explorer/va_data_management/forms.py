@@ -3,7 +3,15 @@ from django import forms
 from config.settings.base import DATE_FORMATS
 from va_explorer.va_data_management.utils.date_parsing import parse_date
 
-from .constants import FORM_FIELDS, HIDDEN_FIELDS, PII_FIELDS
+from .constants import (
+    FORM_FIELDS,
+    HIDDEN_FIELDS,
+    PII_FIELDS,
+    HOUSEHOLD_PII_FIELDS,
+    PREGNANCY_PII_FIELDS,
+    PREGNANCY_OUTCOME_PII_FIELDS,
+    DEATH_PII_FIELDS,
+)
 from .models import VerbalAutopsy, Household, Pregnancy, PregnancyOutcome, Death
 from .utils.multi_select import MultiSelectFormField
 
@@ -89,19 +97,21 @@ def validate_date_format(form, Id10023):
 class HouseholdForm(forms.ModelForm):
     class Meta:
         model = Household
-        # You can use exclude = [...] if you have fields to hide,
-        # or fields = '__all__' to include everything
         fields = '__all__'
         widgets = {}
 
     def __init__(self, *args, **kwargs):
+        include_pii = kwargs.pop("include_pii", True)
         super().__init__(*args, **kwargs)
-        # Add bootstrap styling and default textarea rows
         for name, field in self.fields.items():
             if not field.widget.attrs.get("class"):
                 field.widget.attrs["class"] = "form-control"
             if isinstance(field.widget, forms.Textarea):
                 field.widget.attrs["rows"] = "3"
+        if not include_pii:
+            for field in HOUSEHOLD_PII_FIELDS:
+                if field in self.fields:
+                    del self.fields[field]
 
 
 class PregnancyForm(forms.ModelForm):
@@ -110,22 +120,25 @@ class PregnancyForm(forms.ModelForm):
         fields = '__all__'
         widgets = {}
 
-        # define widgets by field type for better UX.
         widgets['PE_07A'] = forms.NumberInput(attrs={'class': 'form-control'})
         widgets['PE_22'] = forms.NumberInput(attrs={'class': 'form-control'})
-        # for known date fields, you can specify widgets:
         widgets['PE_07'] = forms.DateInput(attrs={'type': 'date', 'class': 'form-control'})
         widgets['PE_09A'] = forms.DateInput(attrs={'type': 'date', 'class': 'form-control'})
         widgets['PE_10A'] = forms.DateInput(attrs={'type': 'date', 'class': 'form-control'})
         widgets['PE_21'] = forms.DateInput(attrs={'type': 'date', 'class': 'form-control'})
 
     def __init__(self, *args, **kwargs):
+        include_pii = kwargs.pop("include_pii", True)
         super().__init__(*args, **kwargs)
         for name, field in self.fields.items():
             if not field.widget.attrs.get("class"):
                 field.widget.attrs["class"] = "form-control"
             if isinstance(field.widget, forms.Textarea):
                 field.widget.attrs["rows"] = "3"
+        if not include_pii:
+            for field in PREGNANCY_PII_FIELDS:
+                if field in self.fields:
+                    del self.fields[field]
 
 
 class PregnancyOutcomeForm(forms.ModelForm):
@@ -134,23 +147,25 @@ class PregnancyOutcomeForm(forms.ModelForm):
         fields = '__all__'
         widgets = {}
 
-        # Assign widgets for dates and numbers for better UX
         date_fields = [
             'today', 'start', 'PO_05', 'PO_18', 'PO_19', 'PO_24', 'PO_33', 'PO_41', 'PO_44A', 'PO_49D', 'end'
         ]
         for field in date_fields:
             widgets[field] = forms.DateInput(attrs={'type': 'date', 'class': 'form-control'})
-        
-        # If any field is truly a number, assign as NumberInput
         widgets['PO_44A'] = forms.NumberInput(attrs={'class': 'form-control'})
 
     def __init__(self, *args, **kwargs):
+        include_pii = kwargs.pop("include_pii", True)
         super().__init__(*args, **kwargs)
         for name, field in self.fields.items():
             if not field.widget.attrs.get("class"):
                 field.widget.attrs["class"] = "form-control"
             if isinstance(field.widget, forms.Textarea):
                 field.widget.attrs["rows"] = "3"
+        if not include_pii:
+            for field in PREGNANCY_OUTCOME_PII_FIELDS:
+                if field in self.fields:
+                    del self.fields[field]
 
 
 class DeathForm(forms.ModelForm):
@@ -162,16 +177,19 @@ class DeathForm(forms.ModelForm):
         date_fields = [
             'today', 'start', 'date_of_death', 'submit_time', 'end'
         ]
-
         for field in date_fields:
             widgets[field] = forms.DateInput(attrs={'type': 'date', 'class': 'form-control'})
-
         widgets['age_at_death'] = forms.NumberInput(attrs={'class': 'form-control'})
 
     def __init__(self, *args, **kwargs):
+        include_pii = kwargs.pop("include_pii", True)
         super().__init__(*args, **kwargs)
         for name, field in self.fields.items():
             if not field.widget.attrs.get("class"):
                 field.widget.attrs["class"] = "form-control"
             if isinstance(field.widget, forms.Textarea):
                 field.widget.attrs["rows"] = "3"
+        if not include_pii:
+            for field in DEATH_PII_FIELDS:
+                if field in self.fields:
+                    del self.fields[field]

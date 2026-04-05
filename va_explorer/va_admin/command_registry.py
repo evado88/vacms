@@ -430,11 +430,25 @@ def _command_specs() -> List[CommandRegistryItem]:
             _description_for("import_from_odk"),
             inputs=(
                 CommandInputSpec(
+                    type="text",
+                    name="form_id",
+                    required=False,
+                    help="Optional ODK xmlFormId to pull; may be supplied multiple times through repeated runs.",
+                    flag="--form-id",
+                ),
+                CommandInputSpec(
                     type="bool",
                     name="dry_run",
                     required=False,
                     help="Fetch data without writing to DB.",
                     flag="--dry-run",
+                ),
+                CommandInputSpec(
+                    type="bool",
+                    name="full_refresh",
+                    required=False,
+                    help="Ignore saved watermark state and refetch all submissions.",
+                    flag="--full-refresh",
                 ),
             ),
             safety="mutating",

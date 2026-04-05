@@ -11,6 +11,7 @@ from simple_history.utils import bulk_create_with_history
 
 from va_explorer.users.utils.demo_users import make_field_workers_for_facilities
 from va_explorer.va_data_management.models import Location, VerbalAutopsy, SRSClusterLocation
+from va_explorer.va_data_management.odk.normalization import build_odk_rename_map
 from va_explorer.va_data_management.utils.date_parsing import parse_date
 from va_explorer.va_data_management.utils.location_assignment import (
     assign_va_location,
@@ -268,28 +269,12 @@ def normalize_dataframe_columns(df, model):
     - Replace only hyphens (-) with underscores (_), without affecting existing underscores
     - Only keep columns that exist in the model
     """
-    # Get model fields as a set for easy checking
     model_fields = [f.name for f in model._meta.get_fields()]
     model_fields_set = set(model_fields)
+    rename_map = build_odk_rename_map(df.columns, expected_fields=model_fields)
 
-    # Build a case-insensitive map of model fields
-    case_map = {f.lower(): f for f in model_fields}
-
-    # Prepare a mapping for renaming columns
-    rename_map = {}
-    for col in df.columns:
-        # Replace hyphens with underscores only (preserve underscores)
-        col_trans = col.replace("-", "_")
-        # Try to map ignoring case to a model field
-        mapped_col = case_map.get(col_trans.lower())
-        if mapped_col:
-            rename_map[col] = mapped_col
-
-    # Rename columns in the DataFrame
     df = df.rename(columns=rename_map)
     df.columns = df.columns.str.strip()
-
-    # Keep only columns that exist on the model
     df = df[[col for col in df.columns if col in model_fields_set]]
 
     return df
@@ -702,20 +687,6 @@ def get_va_summary_stats(vas, filter_fields=False, cache_key="va_summary_stats")
             "Id10012",
         )
 
-    def _max_parsed_date(values):
-        latest = None
-        for value in values:
-            parsed = parse_date(value)
-            if not parsed or parsed in {"dk", "nan", "none", "null"}:
-                continue
-            try:
-                current = datetime.strptime(parsed, "%Y-%m-%d").date()
-            except ValueError:
-                continue
-            if latest is None or current > latest:
-                latest = current
-        return latest
-
     # check cache for va summary stats and set it if not already there
     stats = cache.get(cache_key) if cache_key else None
     if not stats:
@@ -723,30 +694,46 @@ def get_va_summary_stats(vas, filter_fields=False, cache_key="va_summary_stats")
             last_created=Max("created"),
             last_interview=Max("Id10012"),
             total_vas=Count("id"),
+            # Max() on ISO text dates is lexicographic, which equals chronological
+            # for well-formed YYYY-MM-DD* strings — avoids loading all rows to Python.
+            _max_submissiondate=Max("submissiondate"),
         )
-        latest_submission = _max_parsed_date(vas.values_list("submissiondate", flat=True))
+        raw_sd = agg.get("_max_submissiondate")
+        if raw_sd:
+            parsed_sd = parse_date(str(raw_sd))
+            if parsed_sd and parsed_sd not in {"dk", "nan", "none", "null"}:
+                try:
+                    latest_submission = datetime.strptime(parsed_sd, "%Y-%m-%d").date()
+                except ValueError:
+                    latest_submission = None
+            else:
+                latest_submission = None
+        else:
+            latest_submission = None
+
+        # Facility VAs are expected to resolve a facility Location; community VAs
+        # are expected to resolve an SRS cluster.
+        ineligible_count = vas.filter(
+            Q(Id10023__in=["DK", "dk"])
+            | Q(Id10023__isnull=True)
+            | (
+                Q(community_va__iexact="yes")
+                & Q(cluster__isnull=True)
+            )
+            | (
+                ~Q(community_va__iexact="yes")
+                & Q(location__isnull=True)
+            )
+        ).count()
+
         stats = {
             "last_update": latest_submission or agg.get("last_created"),
             "last_interview": agg.get("last_interview"),
             "total_vas": agg.get("total_vas"),
+            "ineligible_vas": ineligible_count,
         }
         if cache_key:
             cache.set(cache_key, stats, timeout=60 * 60)
-
-    # Facility VAs are expected to resolve a facility Location; community VAs
-    # are expected to resolve an SRS cluster.
-    stats["ineligible_vas"] = vas.filter(
-        Q(Id10023__in=["DK", "dk"])
-        | Q(Id10023__isnull=True)
-        | (
-            Q(community_va__iexact="yes")
-            & Q(cluster__isnull=True)
-        )
-        | (
-            ~Q(community_va__iexact="yes")
-            & Q(location__isnull=True)
-        )
-    ).count()
 
     # clean up dates if non-null
     if stats["last_update"] and not isinstance(stats["last_update"], str):

@@ -72,8 +72,11 @@ def empty_graph_data():
 
 
 def get_context_for_va_table(va_list, user):
-    context = [
-        {
+    context = []
+    for va in va_list:
+        causes = list(va.causes.all())
+        issues = list(va.coding_issues.all())
+        context.append({
             "id": va.id,
             "deceased": f"{va.Id10017} {va.Id10018}",
             "interviewer": va.Id10010,
@@ -82,22 +85,10 @@ def get_context_for_va_table(va_list, user):
             ),
             "dod": parse_date(va.Id10023) if (va.Id10023 != "dk") else "Unknown",
             "facility": va.location.name if va.location else "Not Provided",
-            "cause": (
-                va.causes.all()[0].cause if len(va.causes.all()) > 0 else "Not Coded"
-            ),
-            "warnings": len(
-                [
-                    issue
-                    for issue in va.coding_issues.all()
-                    if issue.severity == "warning"
-                ]
-            ),
-            "errors": len(
-                [issue for issue in va.coding_issues.all() if issue.severity == "error"]
-            ),
-        }
-        for va in va_list
-    ]
+            "cause": causes[0].cause if causes else "Not Coded",
+            "warnings": sum(1 for issue in issues if issue.severity == "warning"),
+            "errors": sum(1 for issue in issues if issue.severity == "error"),
+        })
     # Usually handled by filter, but not in this case
     for item in context:
         if not user.can_view_pii:
@@ -126,10 +117,12 @@ def get_trends_data(user):
     additional_indeterminate_cods = 0
 
     if user_vas.count() > 0:
+        # Fetch VA base data WITHOUT joining causes — causes__cause JOIN multiplies
+        # rows (one per cause per VA), which inflates the DataFrame by 3–5× and
+        # causes runaway memory growth on large datasets.
         va_df = pd.DataFrame(
             user_vas.only(*VA_DF_FIELDS)
             .select_related("location")
-            .select_related("causes")
             .values(
                 "id",
                 "Id10023",
@@ -138,9 +131,14 @@ def get_trends_data(user):
                 "Id10012",
                 name=F("Id10010"),
                 facility=F("location__name"),
-                cause=F("causes__cause"),
             )
         )
+
+        # Fetch coded VA IDs separately (cheap single-column query, no JOIN blowup).
+        coded_ids = set(
+            user_vas.filter(causes__isnull=False).values_list("id", flat=True)
+        )
+        va_df["is_coded"] = va_df["id"].isin(coded_ids)
 
         va_df["date"] = get_interview_dates(va_df)
 
@@ -178,7 +176,7 @@ def get_trends_data(user):
 
         # Coded; same query as above, just filtered by whether the va has been coded
         plot_df = plot_df.merge(
-            va_df.query("date >= @START_MONTH & cause==cause")
+            va_df.query("date >= @START_MONTH & is_coded")
             .groupby("yearmonth")["id"]
             .count()
             .rename("y_coded")
@@ -196,10 +194,10 @@ def get_trends_data(user):
         graphs["uncoded"]["y"] = _to_cumulative(uncoded_monthly)
 
         # VAs successfully coded in the past 24 hours, 1 week, and 1 month
-        vas_coded_24_hours = va_df.loc[vas_24_hours, :].query("cause == cause").shape[0]
-        vas_coded_1_week = va_df.loc[vas_1_week, :].query("cause == cause").shape[0]
-        vas_coded_1_month = va_df.loc[vas_1_month, :].query("cause == cause").shape[0]
-        vas_coded_overall = va_df.loc[vas_overall, :].query("cause == cause").shape[0]
+        vas_coded_24_hours = int(va_df.loc[vas_24_hours, "is_coded"].sum())
+        vas_coded_1_week = int(va_df.loc[vas_1_week, "is_coded"].sum())
+        vas_coded_1_month = int(va_df.loc[vas_1_month, "is_coded"].sum())
+        vas_coded_overall = int(va_df.loc[vas_overall, "is_coded"].sum())
 
         va_table["collected"]["24"] = len(vas_24_hours)
         va_table["collected"]["1 week"] = len(vas_1_week)

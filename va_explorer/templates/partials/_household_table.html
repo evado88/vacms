@@ -31,7 +31,7 @@
           <td>{{ h.district|default:"-" }}</td>
           <td>{{ h.ward|default:"-" }}</td>
           <td>{{ h.locality_name|default:"-" }}</td>
-          <td>{{ h.respondent|default:"Unknown" }}</td>
+          <td>{% pii_filter "respondent" h.respondent|default:"Unknown" %}</td>
           <td><a class="btn btn-primary" href="{% url 'va_data_management:household_detail' id=h.id %}">View</a></td>
           {% if va_data_cleanup and perms.va_data_cleanup.download %}
             <td>

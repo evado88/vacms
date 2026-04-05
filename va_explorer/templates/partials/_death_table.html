@@ -30,7 +30,7 @@
           <td>{{ o.province|default:"-" }}</td>
           <td>{{ o.district|default:"-" }}</td>
           <td>{{ o.ward|default:"-" }}</td>
-          <td>{{ o.DE_03|default:"Unknown" }}</td>
+          <td>{% pii_filter "DE_03" o.DE_03|default:"Unknown" %}</td>
           <td>{{ o.DE_06|standard_date|default:"-" }}</td>
           <td>
             <a

@@ -106,9 +106,20 @@ now appear and function.
 
   * - ``ODK_FORM_ID``
     - ``va_who_v1_5_3``
-    - Value indicating the ID of the Verbal Autopsy form within the given
-      project. Typically, found in the form list under the "ID and Version"
-      column. Defaults to the ID of an example VA form.
+    - Legacy compatibility variable for the primary Verbal Autopsy form ID.
+      Prefer the explicit per-form variables below for new deployments.
+
+  * - ``ODK_ZNPHI_VA_FORM_ID``
+    - ``""``
+    - Value indicating the xmlFormId for the ``znphi_va_who_v1_5_2_7`` VA form.
+
+  * - ``ODK_ZM_VA_FORM_ID``
+    - ``""``
+    - Value indicating the xmlFormId for the ``zm_va_who_v1_5_2_7`` VA form.
+
+  * - ``ODK_CSA_TRACKER_FORM_ID``
+    - ``""``
+    - Value indicating the xmlFormId for the CSA daily tracker form.
 
   * - ``ODK_EMAIL``
     - ``user@example.com``
@@ -123,8 +134,9 @@ now appear and function.
 
 Additional scheduling and per-form controls:
 
-- ``ODK_PULL_INTERVAL_MINUTES`` (default: 30) controls how often Celery Beat calls the ODK pull task.
-- ``ODK_FORM_ENABLED``, ``ODK_HOUSEHOLD_FORM_ENABLED``, ``ODK_PREGNANCY_FORM_ENABLED``, ``ODK_PREGNANCY_OUTCOME_FORM_ENABLED``, ``ODK_DEATH_FORM_ENABLED`` toggle per-form scheduled pulls (defaults to ``True``). Leave the corresponding ``ODK_*_FORM_ID`` blank or set ``*_FORM_ENABLED`` to ``False`` to disable.
+- Scheduled pulls are controlled in Celery Beat only. Default schedule groups are ``operational`` (death and CSA tracker, every 15 minutes), ``va_hourly`` (VA forms, hourly), and ``routine`` (household and pregnancy forms, every 3 hours).
+- ``ODK_FORM_ENABLED``, ``ODK_ZNPHI_VA_FORM_ENABLED``, ``ODK_ZM_VA_FORM_ENABLED``, ``ODK_HOUSEHOLD_FORM_ENABLED``, ``ODK_PREGNANCY_FORM_ENABLED``, ``ODK_PREGNANCY_OUTCOME_FORM_ENABLED``, ``ODK_DEATH_FORM_ENABLED``, and ``ODK_CSA_TRACKER_FORM_ENABLED`` toggle per-form scheduled pulls (defaults to ``True``). Leave the corresponding ``ODK_*_FORM_ID`` blank or set ``*_FORM_ENABLED`` to ``False`` to disable.
+- ``ODK_PULL_OVERLAP_SECONDS`` (default: 300) adds a small overlap to incremental pulls to reduce missed submissions when timestamps arrive slightly out of order.
 
 Manual import uses the shared pipeline:
 

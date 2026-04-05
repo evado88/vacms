@@ -749,34 +749,52 @@ const initTrendsTab = async () => {
   }
 }
 
-const initOperationsTab = async () => {
+const initCsaSupervisionTab = async () => {
+  // Fast path: both slots already populated — tab switch is CSS show/hide only.
+  const filtersSlot = document.getElementById("regionalFiltersComponent");
+  const csaSlot     = document.getElementById("regionalCsaComponent");
+  if (filtersSlot?.dataset?.loaded === "1" && csaSlot?.dataset?.loaded === "1") return;
   await Promise.allSettled([
     loadSlotOnce("regionalFiltersComponent"),
     loadSlotOnce("regionalCsaComponent"),
-    loadSlotOnce("regionalMsoComponent"),
   ]);
 }
 
+const initMsoSupervisionTab = async () => {
+  // Fast path: both slots already populated — tab switch is CSS show/hide only.
+  const msoFiltersSlot = document.getElementById("regionalMsoFiltersComponent");
+  const msoSlot        = document.getElementById("regionalMsoComponent");
+  if (msoFiltersSlot?.dataset?.loaded === "1" && msoSlot?.dataset?.loaded === "1") return;
+  await loadSlotOnce("regionalMsoFiltersComponent");
+  await loadSlotOnce("regionalMsoComponent");
+}
+
 const initHomeTab = async (tab) => {
+  const normalizedTab = tab === "operations_supervision" ? "csa_supervision" : tab;
   const started = perfNow();
-  if (tab === "overview") {
+  if (normalizedTab === "overview") {
     await initOverviewTab();
     perfLog("tab.init.overview", started);
     return;
   }
-  if (tab === "va_statistics") {
+  if (normalizedTab === "va_statistics") {
     await initVAStatisticsTab();
     perfLog("tab.init.va_statistics", started);
     return;
   }
-  if (tab === "trends") {
+  if (normalizedTab === "trends") {
     await initTrendsTab();
     perfLog("tab.init.trends", started);
     return;
   }
-  if (tab === "operations_supervision") {
-    await initOperationsTab();
-    perfLog("tab.init.operations_supervision", started);
+  if (normalizedTab === "csa_supervision") {
+    await initCsaSupervisionTab();
+    perfLog("tab.init.csa_supervision", started);
+    return;
+  }
+  if (normalizedTab === "mso_supervision") {
+    await initMsoSupervisionTab();
+    perfLog("tab.init.mso_supervision", started);
   }
 }
 

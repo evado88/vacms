@@ -17,6 +17,9 @@
           </th>
           <th style="display: none;" aria-hidden="true">Province</th>
           <th style="width: 10%;">
+            <a href="?csa_sort=supervisor&csa_dir={% if csa_sort == 'supervisor' and csa_dir == 'desc' %}asc{% else %}desc{% endif %}&csa_page=1" class="regional-sort-link" data-table="csa">Supervisor</a><span class="sort-icon">{% if csa_sort == 'supervisor' %}{% if csa_dir == 'asc' %}▲{% else %}▼{% endif %}{% else %}▲{% endif %}</span>
+          </th>
+          <th style="width: 10%;">
             <a href="?csa_sort=district&csa_dir={% if csa_sort == 'district' and csa_dir == 'desc' %}asc{% else %}desc{% endif %}&csa_page=1" class="regional-sort-link" data-table="csa">District</a><span class="sort-icon">{% if csa_sort == 'district' %}{% if csa_dir == 'asc' %}▲{% else %}▼{% endif %}{% else %}▲{% endif %}</span>
           </th>
           <th style="width: 10%;">
@@ -38,7 +41,13 @@
             <a href="?csa_sort=pregnancy_outcomes&csa_dir={% if csa_sort == 'pregnancy_outcomes' and csa_dir == 'desc' %}asc{% else %}desc{% endif %}&csa_page=1" class="regional-sort-link" data-table="csa">Pregnancy Outcomes</a><span class="sort-icon">{% if csa_sort == 'pregnancy_outcomes' %}{% if csa_dir == 'asc' %}▲{% else %}▼{% endif %}{% else %}▲{% endif %}</span>
           </th>
           <th class="numeric" style="width: 15%;">
-            <a href="?csa_sort=overdue_without_interview&csa_dir={% if csa_sort == 'overdue_without_interview' and csa_dir == 'desc' %}asc{% else %}desc{% endif %}&csa_page=1" class="regional-sort-link" data-table="csa">Pregnancies ≥ 6 mo. Past Due Date Without Interview</a><span class="sort-icon">{% if csa_sort == 'overdue_without_interview' %}{% if csa_dir == 'asc' %}▲{% else %}▼{% endif %}{% else %}▲{% endif %}</span>
+            <a href="?csa_sort=overdue_without_interview&csa_dir={% if csa_sort == 'overdue_without_interview' and csa_dir == 'desc' %}asc{% else %}desc{% endif %}&csa_page=1" class="regional-sort-link" data-table="csa">Preg. ≥ 6 mo. without int.</a><span class="sort-icon">{% if csa_sort == 'overdue_without_interview' %}{% if csa_dir == 'asc' %}▲{% else %}▼{% endif %}{% else %}▲{% endif %}</span>
+          </th>
+          <th class="numeric" style="width: 8%;">
+            <a href="?csa_sort=csa_target&csa_dir={% if csa_sort == 'csa_target' and csa_dir == 'desc' %}asc{% else %}desc{% endif %}&csa_page=1" class="regional-sort-link" data-table="csa">CSA Target</a><span class="sort-icon">{% if csa_sort == 'csa_target' %}{% if csa_dir == 'asc' %}▲{% else %}▼{% endif %}{% else %}▲{% endif %}</span>
+          </th>
+          <th class="numeric" style="width: 8%;">
+            <a href="?csa_sort=coverage_pct&csa_dir={% if csa_sort == 'coverage_pct' and csa_dir == 'desc' %}asc{% else %}desc{% endif %}&csa_page=1" class="regional-sort-link" data-table="csa">Coverage %</a><span class="sort-icon">{% if csa_sort == 'coverage_pct' %}{% if csa_dir == 'asc' %}▲{% else %}▼{% endif %}{% else %}▲{% endif %}</span>
           </th>
         </tr>
       </thead>
@@ -47,6 +56,7 @@
           <tr>
             <td class="csa-name">{{ row.name }}</td>
             <td style="display: none;" aria-hidden="true">{{ row.province }}</td>
+            <td>{{ row.supervisor }}</td>
             <td>{{ row.district }}</td>
             <td>{{ row.ward }}</td>
             <td class="numeric">{{ row.visits }}</td>
@@ -55,6 +65,8 @@
             <td class="numeric">{{ row.pregnancies }}</td>
             <td class="numeric">{{ row.pregnancy_outcomes }}</td>
             <td class="numeric">{{ row.overdue_without_interview }}</td>
+            <td class="numeric">{{ row.csa_target }}</td>
+            <td class="numeric coverage-cell coverage-cell--{{ row.coverage_band|default:'empty' }}">{% if row.coverage_pct is not None %}{{ row.coverage_pct }}%{% else %}—{% endif %}</td>
           </tr>
         {% empty %}
           <tr>
@@ -62,6 +74,9 @@
             <td style="display: none;" aria-hidden="true">—</td>
             <td>—</td>
             <td>—</td>
+            <td>—</td>
+            <td class="numeric">0</td>
+            <td class="numeric">&mdash;</td>
             <td class="numeric">0</td>
             <td class="numeric">0</td>
             <td class="numeric">0</td>

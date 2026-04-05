@@ -50,38 +50,65 @@ QUESTIONS_TO_AUTODETECT_DUPLICATES = os.environ.get(
 )
 
 ODK_DEFAULT_PROJECT_ID = env.int("ODK_PROJECT_ID", default=None)
+ODK_PULL_SCHEDULES = {
+    # Death and other operational forms can run more frequently.
+    "operational": {"minute": "7,22,37,52"},
+    # VA pulls are lower urgency and heavier to process.
+    "va_hourly": {"minute": "17"},
+    # Household and pregnancy workflows can run less often.
+    "routine": {"minute": "42", "hour": "*/3"},
+}
+ODK_PULL_OVERLAP_SECONDS = env.int("ODK_PULL_OVERLAP_SECONDS", default=300)
 # Form configs used by scheduled pulls and as defaults for manual pulls.
 ODK_PULL_FORMS = [
     {
-        "form_id": env("ODK_FORM_ID", default=""),
+        "form_id": env("ODK_ZNPHI_VA_FORM_ID", default=env("ODK_FORM_ID", default="")),
         "form_name": "verbal_autopsy",
         "project_id": ODK_DEFAULT_PROJECT_ID,
-        "enabled": env.bool("ODK_FORM_ENABLED", default=True),
-        "frequency_minutes": env.int("ODK_PULL_INTERVAL_MINUTES", default=30),
+        "enabled": env.bool("ODK_ZNPHI_VA_FORM_ENABLED", default=env.bool("ODK_FORM_ENABLED", default=True)),
+        "schedule_key": "va_hourly",
+    },
+    {
+        "form_id": env("ODK_ZM_VA_FORM_ID", default=""),
+        "form_name": "verbal_autopsy",
+        "project_id": ODK_DEFAULT_PROJECT_ID,
+        "enabled": env.bool("ODK_ZM_VA_FORM_ENABLED", default=True),
+        "schedule_key": "va_hourly",
     },
     {
         "form_id": env("ODK_HOUSEHOLD_FORM_ID", default=""),
         "form_name": "household",
         "project_id": ODK_DEFAULT_PROJECT_ID,
         "enabled": env.bool("ODK_HOUSEHOLD_FORM_ENABLED", default=True),
+        "schedule_key": "routine",
     },
     {
         "form_id": env("ODK_PREGNANCY_FORM_ID", default=""),
         "form_name": "pregnancy",
         "project_id": ODK_DEFAULT_PROJECT_ID,
         "enabled": env.bool("ODK_PREGNANCY_FORM_ENABLED", default=True),
+        "schedule_key": "routine",
     },
     {
         "form_id": env("ODK_PREGNANCY_OUTCOME_FORM_ID", default=""),
         "form_name": "pregnancy_outcome",
         "project_id": ODK_DEFAULT_PROJECT_ID,
         "enabled": env.bool("ODK_PREGNANCY_OUTCOME_FORM_ENABLED", default=True),
+        "schedule_key": "routine",
     },
     {
         "form_id": env("ODK_DEATH_FORM_ID", default=""),
         "form_name": "death",
         "project_id": ODK_DEFAULT_PROJECT_ID,
         "enabled": env.bool("ODK_DEATH_FORM_ENABLED", default=True),
+        "schedule_key": "operational",
+    },
+    {
+        "form_id": env("ODK_CSA_TRACKER_FORM_ID", default=""),
+        "form_name": "csa_daily_tracker",
+        "project_id": ODK_DEFAULT_PROJECT_ID,
+        "enabled": env.bool("ODK_CSA_TRACKER_FORM_ENABLED", default=True),
+        "schedule_key": "operational",
     },
 ]
 

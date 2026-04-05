@@ -1,5 +1,5 @@
 import logging
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timedelta
 from io import BytesIO
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -20,6 +20,7 @@ from va_explorer.va_data_management.models import (
 from va_explorer.va_data_management.utils.loading import (
     load_records_from_dataframe,
     normalize_dataframe_columns,
+    normalize_value,
 )
 from va_explorer.va_data_management.utils.odk import make_pyodk_client
 
@@ -27,6 +28,13 @@ from va_explorer.va_data_management.utils.odk import make_pyodk_client
 logger = logging.getLogger(__name__)
 
 GLOBAL_LOCK = "__GLOBAL__"
+FORM_UNIQUE_FIELD_MAP = {
+    "household": "key",
+    "pregnancy": "key",
+    "pregnancy_outcome": "key",
+    "death": "key",
+    "csa_daily_tracker": "key",
+}
 
 
 class ODKPullLocked(Exception):
@@ -68,19 +76,95 @@ def load_definition_from_bytes(form_name: str, content: bytes) -> int:
     return created
 
 
-def import_dataframe_records(form_name: str, df: pd.DataFrame) -> int:
+def _clean_import_value(value):
+    if pd.isna(value):
+        return None
+    return value
+
+
+def import_dataframe_records(form_name: str, df: pd.DataFrame) -> Dict[str, int]:
     """Map values using ODKFormChoice and save model records."""
     lookup: Dict[str, Dict[str, str]] = {}
     for choice in ODKFormChoice.objects.filter(form_name=form_name):
-        lookup.setdefault(choice.field_name, {})[choice.value] = choice.label
+        lookup.setdefault(choice.field_name, {})[normalize_value(choice.value)] = choice.label
     for field, mapping in lookup.items():
         if field in df.columns:
-            df[field] = df[field].map(lambda v, _m=mapping: _m.get(str(v), v))
+            df[field] = df[field].map(
+                lambda value, _map=mapping: _map.get(normalize_value(value), value)
+            )
+
     model = FORM_MODEL_MAP[form_name]
     df = normalize_dataframe_columns(df, model)
-    objects = [model(**row) for row in df.to_dict(orient="records")]
-    model.objects.bulk_create(objects)
-    return len(objects)
+    df = df.loc[:, ~df.columns.duplicated()]
+
+    unique_field = FORM_UNIQUE_FIELD_MAP.get(form_name)
+    if not unique_field or unique_field not in df.columns:
+        objects = [
+            model(**{key: _clean_import_value(value) for key, value in row.items()})
+            for row in df.to_dict(orient="records")
+        ]
+        model.objects.bulk_create(objects)
+        return {"created": len(objects), "updated": 0, "ignored": 0, "duplicate_rows": 0}
+
+    df[unique_field] = df[unique_field].map(
+        lambda value: value.strip() if isinstance(value, str) else value
+    )
+    before_blank_filter = len(df)
+    df = df[df[unique_field].notna() & (df[unique_field].astype(str).str.strip() != "")]
+    ignored_count = before_blank_filter - len(df)
+
+    before_dedup = len(df)
+    df = df.drop_duplicates(subset=[unique_field], keep="last")
+    duplicate_rows = before_dedup - len(df)
+    if df.empty:
+        return {
+            "created": 0,
+            "updated": 0,
+            "ignored": ignored_count,
+            "duplicate_rows": duplicate_rows,
+        }
+
+    concrete_fields = [
+        field.name
+        for field in model._meta.concrete_fields
+        if not field.auto_created and field.name != model._meta.pk.name
+    ]
+    update_fields = [field for field in concrete_fields if field != unique_field]
+    records = [
+        {key: _clean_import_value(value) for key, value in row.items() if key in concrete_fields}
+        for row in df.to_dict(orient="records")
+    ]
+    keys = [record[unique_field] for record in records]
+    existing_by_key = {
+        getattr(obj, unique_field): obj
+        for obj in model.objects.filter(**{f"{unique_field}__in": keys})
+    }
+
+    to_create = []
+    to_update = []
+    for record in records:
+        key = record[unique_field]
+        existing = existing_by_key.get(key)
+        if existing is None:
+            to_create.append(model(**record))
+            continue
+
+        for field in update_fields:
+            setattr(existing, field, record.get(field))
+        to_update.append(existing)
+
+    with transaction.atomic():
+        if to_create:
+            model.objects.bulk_create(to_create)
+        if to_update:
+            model.objects.bulk_update(to_update, fields=update_fields)
+
+    return {
+        "created": len(to_create),
+        "updated": len(to_update),
+        "ignored": ignored_count,
+        "duplicate_rows": duplicate_rows,
+    }
 
 
 class ODKPullService:
@@ -117,12 +201,14 @@ class ODKPullService:
             lock, created = (
                 ODKPullLock.objects.select_for_update()
                 .filter(form_id=form_id, project_id=project_id)
-                .get_or_create(defaults={"expires_at": expires})
+                .get_or_create(defaults={"expires_at": expires, "locked_at": now})
             )
             if not created and lock.expires_at and lock.expires_at > now:
                 raise ODKPullLocked(f"Pull already running for {form_id}")
-            lock.expires_at = expires
-            lock.save(update_fields=["expires_at", "locked_at"])
+            ODKPullLock.objects.filter(pk=lock.pk).update(
+                expires_at=expires,
+                locked_at=now,
+            )
         try:
             yield
         finally:
@@ -138,6 +224,7 @@ class ODKPullService:
         ignore_frequency: bool = False,
     ) -> Dict[str, Dict[str, Any]]:
         """Pull multiple forms; returns summary per form_id."""
+        _ = ignore_frequency
         summary: Dict[str, Dict[str, Any]] = {}
         for cfg in form_configs:
             form_id = cfg.get("form_id")
@@ -148,23 +235,11 @@ class ODKPullService:
                 continue
             project_id = cfg.get("project_id") or self.default_project_id
             form_name = cfg.get("form_name")
-            frequency = cfg.get("frequency_minutes")
-            state, _ = ODKPullState.objects.get_or_create(
-                form_id=form_id, project_id=project_id
-            )
-            if frequency and state.last_run_finished_at and not ignore_frequency:
-                delta = timezone.now() - state.last_run_finished_at
-                if delta < timedelta(minutes=int(frequency)):
-                    summary[form_id] = {
-                        "skipped": True,
-                        "reason": "not_due",
-                        "last_run": state.last_run_finished_at,
-                    }
-                    continue
             summary[form_id] = self.pull_form(
                 form_id=form_id,
                 project_id=project_id,
                 form_name=form_name,
+                fetch_expand=cfg.get("fetch_expand"),
                 since=since,
                 full_refresh=full_refresh,
                 dry_run=dry_run,
@@ -177,6 +252,7 @@ class ODKPullService:
         form_id: str,
         project_id: Optional[int] = None,
         form_name: Optional[str] = None,
+        fetch_expand: Optional[str] = None,
         since: Optional[datetime] = None,
         full_refresh: bool = False,
         dry_run: bool = False,
@@ -189,30 +265,51 @@ class ODKPullService:
         state, _ = ODKPullState.objects.get_or_create(
             form_id=form_id, project_id=project_id
         )
-        with self._acquire_global(project_id), self._acquire_lock(form_id, project_id):
+        # Only hold the project-wide global lock for full refreshes; incremental pulls
+        # use only the per-form lock so concurrent pulls of different forms can proceed.
+        global_ctx = self._acquire_global(project_id) if full_refresh else nullcontext()
+        with global_ctx, self._acquire_lock(form_id, project_id):
             state.mark_started()
             self._logger.info(
                 "Starting ODK pull",
                 extra={
                     "form_id": form_id,
+                    "form_name": form_name,
                     "project_id": project_id,
                     "full_refresh": full_refresh,
                     "since": since,
                     "dry_run": dry_run,
+                    "fetch_expand": fetch_expand,
                 },
             )
             try:
-                since_dt = None if full_refresh else (since or state.last_submission_at)
-                df, latest_ts = self.list_submissions(
+                since_dt = None if full_refresh else self._resolve_since_timestamp(state, since)
+                df, watermarks = self.list_submissions(
                     form_id=form_id,
                     project_id=project_id,
                     since=since_dt,
+                    fetch_expand=fetch_expand,
                     include_attachments=not no_attachments and self.allow_attachments,
                 )
                 counts: Dict[str, Any] = {"fetched": len(df)}
+                self._logger.info(
+                    "Fetched ODK submissions",
+                    extra={
+                        "form_id": form_id,
+                        "form_name": form_name,
+                        "project_id": project_id,
+                        "fetched": len(df),
+                        "since": since_dt,
+                        "watermarks": watermarks,
+                        "dry_run": dry_run,
+                    },
+                )
                 if dry_run or df.empty:
                     state.mark_finished(
-                        ODKPullState.STATUS_SUCCESS, counts=counts, last_submission_at=latest_ts
+                        ODKPullState.STATUS_SUCCESS,
+                        counts=counts,
+                        last_submission_at=watermarks["submission_at"],
+                        last_server_submission_at=watermarks["server_submission_at"],
                     )
                     return {**counts, "status": ODKPullState.STATUS_SUCCESS, "dry_run": dry_run}
 
@@ -221,15 +318,18 @@ class ODKPullService:
                 state.mark_finished(
                     ODKPullState.STATUS_SUCCESS,
                     counts=counts,
-                    last_submission_at=latest_ts,
+                    last_submission_at=watermarks["submission_at"],
+                    last_server_submission_at=watermarks["server_submission_at"],
                 )
                 self._logger.info(
                     "Finished ODK pull",
                     extra={
                         "form_id": form_id,
+                        "form_name": form_name,
                         "project_id": project_id,
                         "counts": counts,
-                        "last_submission_at": latest_ts,
+                        "last_submission_at": watermarks["submission_at"],
+                        "last_server_submission_at": watermarks["server_submission_at"],
                     },
                 )
                 return {**counts, "status": ODKPullState.STATUS_SUCCESS}
@@ -245,20 +345,29 @@ class ODKPullService:
         form_id: str,
         project_id: int,
         since: Optional[datetime] = None,
+        fetch_expand: Optional[str] = None,
         include_attachments: bool = False,
-    ) -> Tuple[pd.DataFrame, Optional[datetime]]:
-        """Return submissions DataFrame and latest submission timestamp."""
+    ) -> Tuple[pd.DataFrame, Dict[str, Optional[datetime]]]:
+        """Return submissions DataFrame and extracted watermark timestamps."""
         with self.get_client(project_id).open() as client:
             filter_expr = None
             if since:
                 since_utc = self._as_utc(since)
                 filter_expr = f"updatedAt ge {since_utc}"
-            data = client.submissions.get_table(
-                form_id=form_id, project_id=project_id, expand="*", filter=filter_expr
-            )
+            get_table_kwargs = {
+                "form_id": form_id,
+                "project_id": project_id,
+                "filter": filter_expr,
+            }
+            if fetch_expand:
+                get_table_kwargs["expand"] = fetch_expand
+            data = client.submissions.get_table(**get_table_kwargs)
             records = data.get("value", [])
             if not records:
-                return pd.DataFrame(), since
+                return pd.DataFrame(), {
+                    "submission_at": None,
+                    "server_submission_at": None,
+                }
 
             df = pd.DataFrame.from_records(records)
             df.columns = [c.rsplit("-", 1)[-1] for c in df.columns]
@@ -268,8 +377,7 @@ class ODKPullService:
                     client=client, project_id=project_id, form_id=form_id, records=records
                 )
 
-            latest_ts = self._max_timestamp(df)
-            return df, latest_ts
+            return df, self._extract_watermarks(df)
 
     def download_attachments_if_needed(
         self,
@@ -289,9 +397,9 @@ class ODKPullService:
     def upsert_into_models(self, df: pd.DataFrame, form_name: Optional[str]) -> Dict[str, Any]:
         """Route data to appropriate loader."""
         if form_name and form_name in FORM_MODEL_MAP:
-            created = import_dataframe_records(form_name, df)
-            return {"created": created}
-        results = load_records_from_dataframe(df)
+            return import_dataframe_records(form_name, df)
+        with transaction.atomic():
+            results = load_records_from_dataframe(df)
         return {
             "created": len(results["created"]),
             "ignored": len(results["ignored"]),
@@ -299,13 +407,50 @@ class ODKPullService:
             "corrected": len(results.get("corrected", [])),
         }
 
-    def _max_timestamp(self, df: pd.DataFrame) -> Optional[datetime]:
-        for col in ("updatedAt", "createdAt"):
+    def _extract_watermarks(self, df: pd.DataFrame) -> Dict[str, Optional[datetime]]:
+        return {
+            "submission_at": self._max_timestamp(df, ("updatedAt", "createdAt")),
+            "server_submission_at": self._max_timestamp(
+                df,
+                (
+                    "__system/submissionDate",
+                    "__system.submissionDate",
+                    "submissionDate",
+                    "SubmissionDate",
+                ),
+            ),
+        }
+
+    def _max_timestamp(
+        self,
+        df: pd.DataFrame,
+        columns: Tuple[str, ...],
+    ) -> Optional[datetime]:
+        for col in columns:
             if col in df.columns:
                 ts = pd.to_datetime(df[col], errors="coerce")
                 if ts.notnull().any():
                     return ts.max().to_pydatetime()
         return None
+
+    def _resolve_since_timestamp(
+        self,
+        state: ODKPullState,
+        since: Optional[datetime],
+    ) -> Optional[datetime]:
+        if since is not None:
+            return since
+
+        candidates = [
+            dt
+            for dt in (state.last_submission_at, state.last_server_submission_at)
+            if dt is not None
+        ]
+        if not candidates:
+            return None
+
+        overlap_seconds = getattr(settings, "ODK_PULL_OVERLAP_SECONDS", 300)
+        return min(candidates) - timedelta(seconds=max(overlap_seconds, 0))
 
     def _as_utc(self, dt: datetime) -> str:
         if timezone.is_naive(dt):

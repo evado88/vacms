@@ -103,6 +103,11 @@ class PregnancyEdit(
     pk_url_kwarg = "id"
     success_message = "Pregnancy record successfully updated!"
 
+    def get_form_kwargs(self):
+        kwargs = super().get_form_kwargs()
+        kwargs["include_pii"] = self.request.user.can_view_pii
+        return kwargs
+
     def get_success_url(self):
         return reverse("va_data_management:pregnancy_detail", kwargs={"id": self.object.id})
 

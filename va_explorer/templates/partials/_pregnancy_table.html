@@ -30,8 +30,8 @@
           <td>{{ p.province|default:"-" }}</td>
           <td>{{ p.district|default:"-" }}</td>
           <td>{{ p.ward|default:"-" }}</td>
-          <td>{{ p.PE_06|default:"Unknown" }}</td>
-          <td>{{ p.PE_07|standard_date|default:"-" }}</td>
+          <td>{% pii_filter "PE_06" p.PE_06|default:"Unknown" %}</td>
+          <td>{% pii_filter "PE_07" p.PE_07|standard_date|default:"-" %}</td>
           <td><a class="btn btn-primary" href="{% url 'va_data_management:pregnancy_detail' id=p.id %}">View</a></td>
           {% if va_data_cleanup and perms.va_data_cleanup.download %}
             <td>

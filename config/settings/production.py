@@ -33,6 +33,10 @@ CACHES = {
             # Mimicking memcache behavior.
             # http://jazzband.github.io/django-redis/latest/#_memcached_exceptions_behavior
             "IGNORE_EXCEPTIONS": True,
+            # Fail fast so a missing Redis (e.g. running outside Docker) does
+            # not block every request while waiting for the OS TCP timeout.
+            "SOCKET_CONNECT_TIMEOUT": 1,
+            "SOCKET_TIMEOUT": 1,
         },
     }
 }

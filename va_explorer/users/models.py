@@ -44,17 +44,20 @@ def _get_feedback_attachment_storage():
 
 
 def feedback_attachment_upload_path(instance, filename):
+    """
+    Generate a predictable upload path for feedback attachments.
+    Organizes files by year/month and bakes in useful context for admins.
+    """
     now = timezone.now()
     name, ext = os.path.splitext(filename)
     module = getattr(instance, "module", "feedback") or "feedback"
     severity = getattr(instance, "severity", "unspecified") or "unspecified"
     reporter = getattr(getattr(instance, "submitted_by", None), "username", "") or "anonymous"
-
-    safe_name = "-".join(part for part in [module, severity, reporter, slugify(name)] if part)
-
+    safe_name = "-".join(
+        part for part in [module, severity, reporter, slugify(name)] if part
+    )
     return "/".join(
         [
-            "feedback/uploads",                 # <— prefix
             now.strftime("%Y"),
             now.strftime("%m"),
             f"{safe_name}-{uuid.uuid4().hex[:8]}{ext}",
@@ -111,11 +114,11 @@ class User(AbstractUser):
     has_valid_password = models.BooleanField(
         _("The user has a user-defined password"), default=False
     )
+    denied_permissions = models.JSONField(blank=True, default=list)
     uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     location_restrictions = ManyToManyField(
         Location, related_name="users", db_table="users_user_location_restrictions"
     )
-    denied_permissions = models.JSONField(blank=True, default=list)
 
     # The query set of verbal autopsies that this user has access to, based on
     # location restrictions
@@ -177,26 +180,6 @@ class User(AbstractUser):
         else:
             self.user_permissions.remove(permission)
 
-    def _get_denied_permission_set(self):
-        denied = self.denied_permissions or []
-        if not isinstance(denied, list):
-            return set()
-        return {str(perm) for perm in denied if isinstance(perm, str) and "." in perm}
-
-    def has_perm(self, perm, obj=None):
-        if self.is_active and self.is_superuser:
-            return True
-        if perm in self._get_denied_permission_set():
-            return False
-        return super().has_perm(perm, obj=obj)
-
-    def get_all_permissions(self, obj=None):
-        if self.is_active and self.is_superuser:
-            return super().get_all_permissions(obj=obj)
-        perms = super().get_all_permissions(obj=obj)
-        denied = self._get_denied_permission_set()
-        return {perm for perm in perms if perm not in denied}
-
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = []
 
@@ -213,6 +196,12 @@ class User(AbstractUser):
 
         """
         return reverse("users:detail", kwargs={"pk": self.pk})
+
+    def has_perm(self, perm, obj=None):
+        # Per-user explicit denials override role and direct grants.
+        if perm and perm in set(self.denied_permissions or []):
+            return False
+        return super().has_perm(perm, obj=obj)
 
     # TODO: Remove if we do not require email confirmation; we will no longer
     # need the lines below
