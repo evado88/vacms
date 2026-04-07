@@ -16,6 +16,38 @@ ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=["va_explorer.org"])
 
 CSRF_TRUSTED_ORIGINS = ["https://*.moh.gov.zm"]
 
+# Security
+
+# Require HTTPS for session and CSRF cookies.
+SESSION_COOKIE_SECURE = True
+CSRF_COOKIE_SECURE = True
+
+# The upstream proxy terminates TLS and forwards requests over HTTP to Nginx,
+# which in turn passes X-Forwarded-Proto: https to Django. Declaring this
+# header here tells Django to treat those requests as secure.
+# If the proxy is ever reconfigured to NOT set this header, remove this line.
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+# HTTPS redirection is enforced by the upstream proxy before traffic reaches
+# Django, so enabling SECURE_SSL_REDIRECT here would cause a redirect loop.
+# Leave it False (or remove entirely) while the proxy handles enforcement.
+SECURE_SSL_REDIRECT = False
+
+# HSTS is disabled by default (0). Once the deployment is confirmed stable
+# on HTTPS-only, set SECURE_HSTS_SECONDS in the environment:
+#   - Trial run:   SECURE_HSTS_SECONDS=3600
+#   - Production:  SECURE_HSTS_SECONDS=31536000
+# Do NOT set SECURE_HSTS_INCLUDE_SUBDOMAINS or SECURE_HSTS_PRELOAD until
+# every subdomain is HTTPS-only and you are ready to submit for preloading.
+SECURE_HSTS_SECONDS = env.int("SECURE_HSTS_SECONDS", default=0)
+
+# Debug Toolbar is a development-only tool; strip it from production.
+INSTALLED_APPS = [app for app in INSTALLED_APPS if app != "debug_toolbar"]  # noqa F405
+MIDDLEWARE = [  # noqa F405
+    mw for mw in MIDDLEWARE  # noqa F405
+    if mw != "debug_toolbar.middleware.DebugToolbarMiddleware"
+]
+
 # Media (uploads)
 MEDIA_URL = "/media/"
 MEDIA_ROOT = "/srv/vacms/shared/media"
