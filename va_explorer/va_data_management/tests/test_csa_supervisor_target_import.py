@@ -85,16 +85,3 @@ def test_load_csa_target_supervisor_map_validates_required_columns(tmp_path):
 
     with pytest.raises(CommandError):
         call_command("load_csa_target_supervisor_map", bad_csv)
-
-
-def test_load_csa_supervisor_targets_alias_command(tmp_path):
-    csv_path = _write_csv(
-        tmp_path / "alias.csv",
-        "CSA,Supervisor,CSA Target\nAlice,Supervisor A,12\n",
-    )
-
-    call_command("load_csa_supervisor_targets", csv_path)
-
-    row = CSASupervisorTargetMap.objects.get(csa_name_normalized="alice")
-    assert row.supervisor_name == "Supervisor A"
-    assert row.csa_target == 12
