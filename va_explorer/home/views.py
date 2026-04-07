@@ -1858,6 +1858,7 @@ class RegionalOperationsComponentContextMixin:
             "csa_display_name",
             "supervisor_name",
             "csa_target",
+            "tracker_first_date",
         ):
             csa_name = self._format_csa_display_name(row.get("csa_display_name"))
             normalized_key = row.get("csa_name_normalized") or normalize_csa_name_for_join(
@@ -1871,6 +1872,7 @@ class RegionalOperationsComponentContextMixin:
             payload = {
                 "supervisor": (row.get("supervisor_name") or "").strip() or "—",
                 "csa_target": self._to_int(target_raw) if target_raw is not None else 0,
+                "tracker_first_date": row.get("tracker_first_date"),
             }
             if normalized_key:
                 mapping[normalized_key] = payload
@@ -1951,6 +1953,21 @@ class RegionalOperationsComponentContextMixin:
         if not counts_by_csa:
             return []
 
+        # Compute the shared window length so the stored weekly csa_target can be
+        # scaled to match the selected filter.
+        # - 7-day preset   → window_days = 7  (scale = 1, target unchanged)
+        # - 30-day preset  → window_days = 30 (scale = 30/7)
+        # - custom range   → window_days = (end - start + 1)
+        # - "all time"     → window_days = None → resolved per-CSA in the loop
+        #                    using tracker_first_date from CSASupervisorTargetMap
+        today = date.today()
+        if start_date_str and end_date_str:
+            _cov_start = date.fromisoformat(start_date_str)
+            _cov_end = date.fromisoformat(end_date_str)
+            window_days = max(1, (_cov_end - _cov_start).days + 1)
+        else:
+            window_days = None  # resolved per-CSA below
+
         overdue_cutoff = datetime.today().date() - timedelta(days=180)
 
         pregnancy_rows = Pregnancy.objects.filter(
@@ -2006,11 +2023,24 @@ class RegionalOperationsComponentContextMixin:
             mapping_row = csa_mapping.get(normalized_key) or csa_mapping.get(display_key) or {}
 
             entry["supervisor"] = mapping_row.get("supervisor", "—")
-            entry["csa_target"] = self._to_int(mapping_row.get("csa_target"))
+            weekly_target = self._to_int(mapping_row.get("csa_target"))
+            entry["csa_target"] = weekly_target  # always show the raw weekly target in the table
 
-            if entry["csa_target"] > 0:
+            # Resolve the effective window length for this CSA.
+            # For "all time" (window_days is None) use the per-CSA tracker_first_date
+            # stored on CSASupervisorTargetMap, avoiding a live MIN(today) query.
+            if window_days is not None:
+                effective_window = window_days
+            else:
+                first_date = mapping_row.get("tracker_first_date")
+                effective_window = (
+                    max(1, (today - first_date).days + 1) if first_date else None
+                )
+
+            if weekly_target > 0 and effective_window is not None:
+                scaled_target = weekly_target * (effective_window / 7)
                 entry["coverage_pct"] = round(
-                    (entry["visits"] / entry["csa_target"]) * 100, 1
+                    (entry["visits"] / scaled_target) * 100, 1
                 )
             else:
                 entry["coverage_pct"] = None

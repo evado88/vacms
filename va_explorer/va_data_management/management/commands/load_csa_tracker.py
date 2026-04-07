@@ -1,6 +1,7 @@
 import argparse
 
 import pandas as pd
+from django.core.management import call_command
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
@@ -102,3 +103,7 @@ class Command(BaseCommand):
             f"created={len(to_create)}, updated={len(to_update)}, "
             f"dropped_blank_key={dropped_blank}, intrafile_duplicates={intrafile_dupes}."
         )
+
+        # Keep tracker_first_date current so the dashboard "all time" coverage
+        # calculation does not need to hit the tracker table on every request.
+        call_command("refresh_csa_first_dates")
