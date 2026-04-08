@@ -66,15 +66,35 @@ def build_odk_rename_map(
         rename_map[column] = target
         collisions[target].append(str(column))
 
-    duplicated = {
-        target: originals
-        for target, originals in collisions.items()
-        if len(set(originals)) > 1
-    }
-    if duplicated:
+    truly_duplicated = {}
+    for target, originals in collisions.items():
+        unique_originals = list(dict.fromkeys(originals))  # preserve order, deduplicate
+        if len(unique_originals) <= 1:
+            continue
+        # If all colliding columns are case-variants of each other, resolve by
+        # keeping the best match: exact match to target field, then lowercase
+        # match, then first occurrence. ODK Central exports both `deviceid`
+        # (form field) and `DeviceID` (metadata column); this handles that case.
+        if len({o.lower() for o in unique_originals}) == 1:
+            # Pick the column that exactly equals the target, else the lowercase one,
+            # else the first in iteration order
+            preferred = next(
+                (col for col in rename_map if str(col) in unique_originals and str(col) == target),
+                next(
+                    (col for col in rename_map if str(col) in unique_originals and str(col) == target.lower()),
+                    next(col for col in rename_map if str(col) in unique_originals),
+                ),
+            )
+            for col in list(rename_map):
+                if str(col) in unique_originals and col != preferred:
+                    del rename_map[col]
+        else:
+            truly_duplicated[target] = unique_originals
+
+    if truly_duplicated:
         pieces = ", ".join(
             f"{target}: {', '.join(sorted(set(originals)))}"
-            for target, originals in sorted(duplicated.items())
+            for target, originals in sorted(truly_duplicated.items())
         )
         raise ODKColumnCollision(f"Column normalization collision detected for {pieces}")
 
