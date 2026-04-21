@@ -107,8 +107,16 @@ class PregnancyOutcome(models.Model):
     PO_51B_07 = models.TextField("PO_51B_07. Record of Birth", blank=True, null=True)
     PO_51B_08 = models.TextField("PO_51B_08. Completed Birth Notification form", blank=True)
     gps = models.TextField("Capture GPS Cordinates", blank=True, null=True)
-    end = models.TextField("nan", blank=True, null=True)    
+    end = models.TextField("nan", blank=True, null=True)
     history = HistoricalRecords()
+
+    class Meta:
+        indexes = [
+            # Optimise date-range filtering in analytics views
+            models.Index(fields=["today"], name="pregnancy_outcome_today_idx"),
+            # Delivery date used for outcome reporting
+            models.Index(fields=["PO_41"], name="pregnancy_outcome_delivery_idx"),
+        ]
 
 class PregnancyOutcomeBaby(models.Model):
     pregnancy_outcome = models.ForeignKey(

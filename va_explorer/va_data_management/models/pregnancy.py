@@ -93,6 +93,13 @@ class Pregnancy(models.Model):
     created = models.DateTimeField(auto_now_add=True)
     updated = models.DateTimeField(auto_now=True)    
     history = HistoricalRecords()
-    
+
+    class Meta:
+        indexes = [
+            # Optimise date-range filtering in analytics views
+            models.Index(fields=["today"], name="pregnancy_today_idx"),
+            models.Index(fields=["created"], name="pregnancy_created_idx"),
+        ]
+
     def __str__(self):
        return f'{self.enumerator} - {self.PE_06} - {self.ward}'

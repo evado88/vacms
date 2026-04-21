@@ -76,6 +76,13 @@ class Death(models.Model):
 
     DE_34 = models.TextField("DE-34 Capture GPS Cordinates for the Household", blank=True, null=True)
     history = HistoricalRecords()
-    
+
+    class Meta:
+        indexes = [
+            # Optimise date-range filtering in analytics views
+            models.Index(fields=["today"], name="death_today_idx"),
+            models.Index(fields=["death_id"], name="death_id_idx"),
+        ]
+
     def __str__(self):
         return f'{self.DE_03} - {self.DE_23} - {self.ward}'

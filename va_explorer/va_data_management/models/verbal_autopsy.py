@@ -58,6 +58,12 @@ class VerbalAutopsy(SoftDeletionModel):
         indexes = [
             models.Index(fields=["unique_va_identifier"]),
             models.Index(fields=["Id10023"], name="death_date_filter_idx"),
+            # Optimise duplicate-flag filtering in Data Cleanup views
+            models.Index(fields=["duplicate"], name="va_duplicate_idx"),
+            # Optimise soft-deletion queryset filter (deleted_at IS NULL on every query)
+            models.Index(fields=["deleted_at"], name="va_deleted_at_idx"),
+            # Composite for date-range + location analytics queries
+            models.Index(fields=["location_id", "Id10023"], name="va_location_date_idx"),
         ]
 
     # Each VerbalAutopsy is associated with a facility, which is the leaf node location
@@ -1925,6 +1931,12 @@ class CauseOfDeath(models.Model):
 
 
 class CauseCodingIssue(models.Model):
+    class Meta:
+        indexes = [
+            # Optimise per-VA severity filtering in Data Cleanup views
+            models.Index(fields=["verbalautopsy_id", "severity"], name="coding_issue_va_severity_idx"),
+        ]
+
     # One VerbalAutopsy can have multiple coding issues
     verbalautopsy = models.ForeignKey(
         VerbalAutopsy, related_name="coding_issues", on_delete=models.CASCADE

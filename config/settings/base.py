@@ -227,10 +227,12 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     # Track which user makes VA data edits
     "simple_history.middleware.HistoryRequestMiddleware",
-    # Lightweight profiling for dashboard request/DB/render timings.
-    "va_explorer.utils.middleware.DashboardProfilingMiddleware",
     "debug_toolbar.middleware.DebugToolbarMiddleware",
 ]
+
+# Profiling middleware is dev-only — adds per-request overhead in production.
+if env.bool("DJANGO_DEBUG", False):
+    MIDDLEWARE.append("va_explorer.utils.middleware.DashboardProfilingMiddleware")
 
 DEBUG_TOOLBAR_CONFIG = {
     "DISABLE_PANELS": ["debug_toolbar.panels.redirects.RedirectsPanel"],
@@ -316,7 +318,7 @@ FIXTURE_DIRS = (str(APPS_DIR / "fixtures"),)
 SESSION_COOKIE_HTTPONLY = True
 CSRF_COOKIE_HTTPONLY = True
 SECURE_BROWSER_XSS_FILTER = True
-DATA_UPLOAD_MAX_MEMORY_SIZE = None
+DATA_UPLOAD_MAX_MEMORY_SIZE = 100 * 1024 * 1024  # 100 MB — prevent OOM on large imports
 
 # Email
 
@@ -376,6 +378,7 @@ CELERY_RESULT_BACKEND = CELERY_BROKER_URL
 CELERY_RESULT_EXTENDED = True
 CELERY_RESULT_BACKEND_ALWAYS_RETRY = True
 CELERY_RESULT_BACKEND_MAX_RETRIES = 5
+CELERY_RESULT_EXPIRES = 3600  # Expire task results after 1 hour to prevent Redis bloat
 CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
