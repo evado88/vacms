@@ -1,6 +1,6 @@
+import logging
 import os
 import sys
-import logging
 from datetime import timedelta
 
 from django.apps import AppConfig
@@ -42,9 +42,11 @@ class VaDataManagementConfig(AppConfig):
         }
 
         if any(cmd in sys.argv for cmd in management_cmds_to_skip):
-            logger.info("Skipping ODK pull on startup for management command: %s", sys.argv)
+            logger.info(
+                "Skipping ODK pull on startup for management command: %s", sys.argv
+            )
             return
-        
+
         self._trigger_stale_odk_pull()
 
     def _trigger_stale_odk_pull(self):

@@ -13,9 +13,9 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.generic import TemplateView, View
 from django.views.generic.edit import FormView
 
+from va_explorer.users.utils.location_mapping import map_srs_clusters_to_locations
 from va_explorer.utils.mixins import CustomAuthMixin
 from va_explorer.va_data_management.constants import PII_FIELDS, REDACTED_STRING
-from va_explorer.users.utils.location_mapping import map_srs_clusters_to_locations
 from va_explorer.va_data_management.models import (
     Death,
     Household,
@@ -25,7 +25,6 @@ from va_explorer.va_data_management.models import (
     SRSClusterLocation,
 )
 from va_explorer.va_export.forms import VADownloadForm
-
 
 EXPORT_DATASETS = {
     "verbalautopsy",
@@ -65,7 +64,7 @@ def _build_geo_filter_from_srs(loc_query, field_mapping):
         descendants = descendants | node.get_descendants()
     descendants = descendants.distinct()
 
-    level_names = {level: set() for level in field_mapping.keys()}
+    level_names = {level: set() for level in field_mapping}
     for node in descendants:
         level = str(node.location_type or "").lower()
         if level in level_names and node.name:
@@ -309,7 +308,13 @@ class VaApi(CustomAuthMixin, View):
                 if va.get("cluster_id") in cluster_ancestors:
                     for ancestor in cluster_ancestors[va["cluster_id"]]:
                         loc_type = str(ancestor.location_type or "").lower()
-                        if loc_type in {"province", "district", "constituency", "ward", "ea"}:
+                        if loc_type in {
+                            "province",
+                            "district",
+                            "constituency",
+                            "ward",
+                            "ea",
+                        }:
                             va[loc_type] = _first_non_empty(
                                 va.get(loc_type),
                                 ancestor.name,
@@ -322,7 +327,9 @@ class VaApi(CustomAuthMixin, View):
                 va["ea"] = _first_non_empty(va.get("ea"))
 
                 # Clean up location fields.
-                va["location"] = _first_non_empty(va.get("loc_name"), va.get("cluster_name"))
+                va["location"] = _first_non_empty(
+                    va.get("loc_name"), va.get("cluster_name")
+                )
                 del (va["loc_name"], va["loc_id"], va["cluster_name"], va["cluster_id"])
 
             # convert results to dataframe

@@ -76,19 +76,21 @@ def get_context_for_va_table(va_list, user):
     for va in va_list:
         causes = list(va.causes.all())
         issues = list(va.coding_issues.all())
-        context.append({
-            "id": va.id,
-            "deceased": f"{va.Id10017} {va.Id10018}",
-            "interviewer": va.Id10010,
-            "interviewed": (
-                parse_date(va.Id10012) if (va.Id10012 != "dk") else "Unknown"
-            ),
-            "dod": parse_date(va.Id10023) if (va.Id10023 != "dk") else "Unknown",
-            "facility": va.location.name if va.location else "Not Provided",
-            "cause": causes[0].cause if causes else "Not Coded",
-            "warnings": sum(1 for issue in issues if issue.severity == "warning"),
-            "errors": sum(1 for issue in issues if issue.severity == "error"),
-        })
+        context.append(
+            {
+                "id": va.id,
+                "deceased": f"{va.Id10017} {va.Id10018}",
+                "interviewer": va.Id10010,
+                "interviewed": (
+                    parse_date(va.Id10012) if (va.Id10012 != "dk") else "Unknown"
+                ),
+                "dod": parse_date(va.Id10023) if (va.Id10023 != "dk") else "Unknown",
+                "facility": va.location.name if va.location else "Not Provided",
+                "cause": causes[0].cause if causes else "Not Coded",
+                "warnings": sum(1 for issue in issues if issue.severity == "warning"),
+                "errors": sum(1 for issue in issues if issue.severity == "error"),
+            }
+        )
     # Usually handled by filter, but not in this case
     for item in context:
         if not user.can_view_pii:
@@ -189,7 +191,9 @@ def get_trends_data(user):
         graphs["coded"]["y"] = _to_cumulative(coded_monthly)
 
         # Uncoded; just take the difference between the two previous queries
-        uncoded_monthly = (plot_df["y_collected"] - plot_df["y_coded"]).astype(float).values.tolist()
+        uncoded_monthly = (
+            (plot_df["y_collected"] - plot_df["y_coded"]).astype(float).values.tolist()
+        )
         graphs["uncoded"]["x"] = plot_df["x"].values.tolist()
         graphs["uncoded"]["y"] = _to_cumulative(uncoded_monthly)
 

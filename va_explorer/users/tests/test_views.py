@@ -200,9 +200,9 @@ def test_data_viewers_group_includes_default_data_view_permissions():
     group = seeded_group("Data Viewers")
 
     actual_permissions = set(
-        group.permissions.filter(content_type__app_label="va_data_management").values_list(
-            "codename", flat=True
-        )
+        group.permissions.filter(
+            content_type__app_label="va_data_management"
+        ).values_list("codename", flat=True)
     )
 
     assert {

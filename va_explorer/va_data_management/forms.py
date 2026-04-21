@@ -4,15 +4,15 @@ from config.settings.base import DATE_FORMATS
 from va_explorer.va_data_management.utils.date_parsing import parse_date
 
 from .constants import (
+    DEATH_PII_FIELDS,
     FORM_FIELDS,
     HIDDEN_FIELDS,
-    PII_FIELDS,
     HOUSEHOLD_PII_FIELDS,
-    PREGNANCY_PII_FIELDS,
+    PII_FIELDS,
     PREGNANCY_OUTCOME_PII_FIELDS,
-    DEATH_PII_FIELDS,
+    PREGNANCY_PII_FIELDS,
 )
-from .models import VerbalAutopsy, Household, Pregnancy, PregnancyOutcome, Death
+from .models import Death, Household, Pregnancy, PregnancyOutcome, VerbalAutopsy
 from .utils.multi_select import MultiSelectFormField
 
 
@@ -97,13 +97,13 @@ def validate_date_format(form, Id10023):
 class HouseholdForm(forms.ModelForm):
     class Meta:
         model = Household
-        fields = '__all__'
+        fields = "__all__"
         widgets = {}
 
     def __init__(self, *args, **kwargs):
         include_pii = kwargs.pop("include_pii", True)
         super().__init__(*args, **kwargs)
-        for name, field in self.fields.items():
+        for _name, field in self.fields.items():
             if not field.widget.attrs.get("class"):
                 field.widget.attrs["class"] = "form-control"
             if isinstance(field.widget, forms.Textarea):
@@ -117,20 +117,28 @@ class HouseholdForm(forms.ModelForm):
 class PregnancyForm(forms.ModelForm):
     class Meta:
         model = Pregnancy
-        fields = '__all__'
+        fields = "__all__"
         widgets = {}
 
-        widgets['PE_07A'] = forms.NumberInput(attrs={'class': 'form-control'})
-        widgets['PE_22'] = forms.NumberInput(attrs={'class': 'form-control'})
-        widgets['PE_07'] = forms.DateInput(attrs={'type': 'date', 'class': 'form-control'})
-        widgets['PE_09A'] = forms.DateInput(attrs={'type': 'date', 'class': 'form-control'})
-        widgets['PE_10A'] = forms.DateInput(attrs={'type': 'date', 'class': 'form-control'})
-        widgets['PE_21'] = forms.DateInput(attrs={'type': 'date', 'class': 'form-control'})
+        widgets["PE_07A"] = forms.NumberInput(attrs={"class": "form-control"})
+        widgets["PE_22"] = forms.NumberInput(attrs={"class": "form-control"})
+        widgets["PE_07"] = forms.DateInput(
+            attrs={"type": "date", "class": "form-control"}
+        )
+        widgets["PE_09A"] = forms.DateInput(
+            attrs={"type": "date", "class": "form-control"}
+        )
+        widgets["PE_10A"] = forms.DateInput(
+            attrs={"type": "date", "class": "form-control"}
+        )
+        widgets["PE_21"] = forms.DateInput(
+            attrs={"type": "date", "class": "form-control"}
+        )
 
     def __init__(self, *args, **kwargs):
         include_pii = kwargs.pop("include_pii", True)
         super().__init__(*args, **kwargs)
-        for name, field in self.fields.items():
+        for _name, field in self.fields.items():
             if not field.widget.attrs.get("class"):
                 field.widget.attrs["class"] = "form-control"
             if isinstance(field.widget, forms.Textarea):
@@ -144,20 +152,32 @@ class PregnancyForm(forms.ModelForm):
 class PregnancyOutcomeForm(forms.ModelForm):
     class Meta:
         model = PregnancyOutcome
-        fields = '__all__'
+        fields = "__all__"
         widgets = {}
 
         date_fields = [
-            'today', 'start', 'PO_05', 'PO_18', 'PO_19', 'PO_24', 'PO_33', 'PO_41', 'PO_44A', 'PO_49D', 'end'
+            "today",
+            "start",
+            "PO_05",
+            "PO_18",
+            "PO_19",
+            "PO_24",
+            "PO_33",
+            "PO_41",
+            "PO_44A",
+            "PO_49D",
+            "end",
         ]
         for field in date_fields:
-            widgets[field] = forms.DateInput(attrs={'type': 'date', 'class': 'form-control'})
-        widgets['PO_44A'] = forms.NumberInput(attrs={'class': 'form-control'})
+            widgets[field] = forms.DateInput(
+                attrs={"type": "date", "class": "form-control"}
+            )
+        widgets["PO_44A"] = forms.NumberInput(attrs={"class": "form-control"})
 
     def __init__(self, *args, **kwargs):
         include_pii = kwargs.pop("include_pii", True)
         super().__init__(*args, **kwargs)
-        for name, field in self.fields.items():
+        for _name, field in self.fields.items():
             if not field.widget.attrs.get("class"):
                 field.widget.attrs["class"] = "form-control"
             if isinstance(field.widget, forms.Textarea):
@@ -171,20 +191,20 @@ class PregnancyOutcomeForm(forms.ModelForm):
 class DeathForm(forms.ModelForm):
     class Meta:
         model = Death
-        fields = '__all__'
+        fields = "__all__"
         widgets = {}
 
-        date_fields = [
-            'today', 'start', 'date_of_death', 'submit_time', 'end'
-        ]
+        date_fields = ["today", "start", "date_of_death", "submit_time", "end"]
         for field in date_fields:
-            widgets[field] = forms.DateInput(attrs={'type': 'date', 'class': 'form-control'})
-        widgets['age_at_death'] = forms.NumberInput(attrs={'class': 'form-control'})
+            widgets[field] = forms.DateInput(
+                attrs={"type": "date", "class": "form-control"}
+            )
+        widgets["age_at_death"] = forms.NumberInput(attrs={"class": "form-control"})
 
     def __init__(self, *args, **kwargs):
         include_pii = kwargs.pop("include_pii", True)
         super().__init__(*args, **kwargs)
-        for name, field in self.fields.items():
+        for _name, field in self.fields.items():
             if not field.widget.attrs.get("class"):
                 field.widget.attrs["class"] = "form-control"
             if isinstance(field.widget, forms.Textarea):

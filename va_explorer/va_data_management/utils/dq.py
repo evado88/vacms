@@ -2,7 +2,7 @@
 import hashlib
 import json
 from datetime import timedelta
-from typing import Iterable, Sequence, Optional, Dict, Any, List, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from django.contrib.contenttypes.models import ContentType
 from django.db import transaction
@@ -15,6 +15,7 @@ from va_explorer.va_data_management.models.data_quality import (
 )
 
 # ---------- Internal helpers ----------
+
 
 def _parse_when(s: Optional[str]) -> Optional[timezone.datetime]:
     if not s:
@@ -71,7 +72,9 @@ def _to_bool_yesno(v: Optional[str]) -> Optional[bool]:
 def _is_blank(v: Any) -> bool:
     return _norm(v) is None
 
+
 # ---------- Public API ----------
+
 
 @transaction.atomic
 def upsert_issue(
@@ -84,7 +87,7 @@ def upsert_issue(
     details: Optional[dict] = None,
 ) -> DataQualityIssue:
     ct = ContentType.objects.get_for_model(model_class)
-    member_ids = sorted(set(int(x) for x in member_ids))
+    member_ids = sorted({int(x) for x in member_ids})
     sig = _stable_signature(issue_type, ct, member_ids, keys)
 
     issue, created = DataQualityIssue.objects.get_or_create(
@@ -152,20 +155,19 @@ def resolve_missing_issues(
     active_signatures: Iterable[str],
 ) -> int:
     ct = ContentType.objects.get_for_model(model_class)
-    qs = (
-        DataQualityIssue.objects.filter(
-            issue_type=issue_type,
-            target_model=ct,
-            status=DataQualityIssue.OPEN,
-        )
-        .exclude(signature__in=set(active_signatures))
-    )
+    qs = DataQualityIssue.objects.filter(
+        issue_type=issue_type,
+        target_model=ct,
+        status=DataQualityIssue.OPEN,
+    ).exclude(signature__in=set(active_signatures))
     n = qs.count()
     if n:
         qs.update(status=DataQualityIssue.RESOLVED)
     return n
 
+
 # ---------- Duration checks ----------
+
 
 def upsert_duration_issue_if_short(
     *,
@@ -235,7 +237,9 @@ def bulk_upsert_duration_issues_if_short(
             signatures.append((obj_id, issue.signature))
     return signatures
 
+
 # ---------- Submission timeliness checks ----------
+
 
 def upsert_timeliness_issue_if_late(
     *,
@@ -285,7 +289,9 @@ def upsert_timeliness_issue_if_late(
         details=details,
     )
 
+
 # ---------- Household completeness (Minimum Viable Record) ----------
+
 
 def upsert_household_completeness_issue(
     *,
@@ -329,7 +335,10 @@ def upsert_household_completeness_issue(
             violations.append("result_list_missing")
         else:
             rl = str(result_list).strip().lower()
-            if rl in {"other", "others", "other_specify", "96", "99"} and result_other is None:
+            if (
+                rl in {"other", "others", "other_specify", "96", "99"}
+                and result_other is None
+            ):
                 violations.append("result_other_missing_for_other_result_list")
         if enumerator is None:
             violations.append("enumerator_missing")
@@ -356,7 +365,9 @@ def upsert_household_completeness_issue(
         details=details,
     )
 
+
 # ---------- NEW: Consent checks for Household ----------
+
 
 def _is_yes_consent(v: Optional[str]) -> bool:
     """
@@ -365,6 +376,7 @@ def _is_yes_consent(v: Optional[str]) -> bool:
     if v is None:
         return False
     return str(v).strip().lower() in {"yes", "y", "true", "1", "01"}
+
 
 def upsert_household_consent_issue_if_invalid(
     *,

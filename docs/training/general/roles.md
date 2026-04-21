@@ -36,8 +36,8 @@ high-level description of each role.
 
   * - Field Worker
     - Field Workers have similar permissions to Data Viewers, but are allowed
-      only allowed full access to view and modify VAs for their own location. 
-      This allows them to assist data managers in repairing any cause of death 
+      only allowed full access to view and modify VAs for their own location.
+      This allows them to assist data managers in repairing any cause of death
       errors.
 ````
 

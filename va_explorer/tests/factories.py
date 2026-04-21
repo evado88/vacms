@@ -14,8 +14,8 @@ from va_explorer.va_data_management.models import (
     Location,
     Pregnancy,
     PregnancyOutcome,
-    VerbalAutopsy,
     SRSClusterLocation,
+    VerbalAutopsy,
 )
 
 User = get_user_model()

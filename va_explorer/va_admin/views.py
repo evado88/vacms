@@ -8,8 +8,8 @@ from datetime import timedelta
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.core.management import call_command
-from django.middleware.csrf import get_token
 from django.http import HttpResponseForbidden, JsonResponse
+from django.middleware.csrf import get_token
 from django.shortcuts import render
 from django.utils import timezone
 from django.utils.dateparse import parse_date as django_parse_date
@@ -26,7 +26,6 @@ from va_explorer.va_admin.command_registry import (
 from va_explorer.va_admin.models import AdminPanelAlert
 from va_explorer.vacms.models import AdminCommandRun
 
-
 PRODUCTION_SETTINGS_MODULE = "config.settings.production"
 DISABLED_IN_PRODUCTION = {"dummify_and_dump"}
 MAX_ALERT_FEED_ITEMS = 60
@@ -41,7 +40,7 @@ def _is_production_environment():
 
 
 def _client_ip(request):
-    forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR", "")
+    forwarded_for = request.headers.get("x-forwarded-for", "")
     if forwarded_for:
         return forwarded_for.split(",")[0].strip()
     return str(request.META.get("REMOTE_ADDR", "") or "")
@@ -72,14 +71,18 @@ def _serialize_alert(alert):
         "category": alert.get_category_display(),
         "severity": alert.get_severity_display(),
         "severity_level": alert.severity,
-        "created_at": timezone.localtime(alert.created_at).strftime("%Y-%m-%d %H:%M:%S"),
+        "created_at": timezone.localtime(alert.created_at).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        ),
         "color_class": _alert_color_class(alert),
     }
 
 
 def _fetch_alert_feed(limit=MAX_ALERT_FEED_ITEMS):
     alerts = list(
-        AdminPanelAlert.objects.select_related("user").order_by("-created_at")[:max(limit * 2, limit)]
+        AdminPanelAlert.objects.select_related("user").order_by("-created_at")[
+            : max(limit * 2, limit)
+        ]
     )
     alerts.sort(key=_alert_rank_score, reverse=True)
     return alerts[:limit]
@@ -103,7 +106,11 @@ def _record_alert(
     try:
         _prune_old_alerts()
         AdminPanelAlert.objects.create(
-            user=request.user if getattr(request.user, "is_authenticated", False) else None,
+            user=(
+                request.user
+                if getattr(request.user, "is_authenticated", False)
+                else None
+            ),
             category=category,
             severity=severity,
             title=title[:255],
@@ -112,7 +119,7 @@ def _record_alert(
             context=context or {},
             path=str(request.path or "")[:512],
             ip_address=_client_ip(request)[:64],
-            user_agent=str(request.META.get("HTTP_USER_AGENT", "") or "")[:512],
+            user_agent=str(request.headers.get("user-agent", "") or "")[:512],
         )
     except Exception:
         # Alerting should never break the main workflow.
@@ -120,10 +127,7 @@ def _record_alert(
 
 
 def user_can_run_admin_commands(user):
-    return bool(
-        getattr(user, "is_authenticated", False)
-        and user.is_superuser
-    )
+    return bool(getattr(user, "is_authenticated", False) and user.is_superuser)
 
 
 @login_required
@@ -212,7 +216,11 @@ def _sanitize_input_value(field, raw_value):
                         value = candidate
                         break
                 if not value:
-                    expected = ", ".join(standardized_candidates) if standardized_candidates else standardized
+                    expected = (
+                        ", ".join(standardized_candidates)
+                        if standardized_candidates
+                        else standardized
+                    )
                     raise ValueError(
                         f"Standardized file not found in static/data: {expected}"
                     )
@@ -224,7 +232,9 @@ def _sanitize_input_value(field, raw_value):
         if not resolved_file.exists():
             raise ValueError(f"File not found in static/data: {value}")
         if field.allowed_pattern and not re.match(field.allowed_pattern, value):
-            raise ValueError(f"Filename does not match allowed pattern for {field.name}")
+            raise ValueError(
+                f"Filename does not match allowed pattern for {field.name}"
+            )
         return value
 
     if raw_value is None:
@@ -309,7 +319,9 @@ def admin_panel_run_view(request):
             title="Invalid command payload",
             summary="Admin command run endpoint received invalid JSON payload.",
         )
-        return JsonResponse({"ok": False, "output": "Invalid JSON payload."}, status=400)
+        return JsonResponse(
+            {"ok": False, "output": "Invalid JSON payload."}, status=400
+        )
 
     command_id = str(payload.get("command_id") or payload.get("command") or "").strip()
     inputs = payload.get("inputs", {}) or {}
@@ -324,7 +336,10 @@ def admin_panel_run_view(request):
             context={"command_id": command_id},
         )
         return JsonResponse(
-            {"ok": False, "output": f"Command '{command_id}' is disabled in production."},
+            {
+                "ok": False,
+                "output": f"Command '{command_id}' is disabled in production.",
+            },
             status=403,
         )
 
@@ -337,9 +352,13 @@ def admin_panel_run_view(request):
             summary=f"Command '{command_id}' is not allowlisted.",
             context={"command_id": command_id},
         )
-        return JsonResponse({"ok": False, "output": "Command is not allowlisted."}, status=400)
+        return JsonResponse(
+            {"ok": False, "output": "Command is not allowlisted."}, status=400
+        )
     if not isinstance(inputs, dict):
-        return JsonResponse({"ok": False, "output": "inputs must be an object."}, status=400)
+        return JsonResponse(
+            {"ok": False, "output": "inputs must be an object."}, status=400
+        )
 
     try:
         cmd_args, safe_inputs, filenames = _build_call_command_args(command_id, inputs)
@@ -571,7 +590,9 @@ def admin_panel_logs_view(request):
 @login_required
 def admin_panel_csrf_token_view(request):
     if not user_can_run_admin_commands(request.user):
-        return HttpResponseForbidden("You are not allowed to access CSRF token endpoint.")
+        return HttpResponseForbidden(
+            "You are not allowed to access CSRF token endpoint."
+        )
     return JsonResponse({"ok": True, "csrf_token": get_token(request)})
 
 
@@ -596,7 +617,9 @@ def admin_panel_alert_log_view(request):
     except Exception:
         return JsonResponse({"ok": False, "error": "Invalid JSON payload."}, status=400)
 
-    category = str(payload.get("category") or AdminPanelAlert.INTERACTION).strip().lower()
+    category = (
+        str(payload.get("category") or AdminPanelAlert.INTERACTION).strip().lower()
+    )
     if category not in {
         AdminPanelAlert.INTERACTION,
         AdminPanelAlert.SECURITY,

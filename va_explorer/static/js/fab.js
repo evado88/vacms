@@ -35,7 +35,7 @@ $(document).ready(function () {
     }, 1600);
     return false;
   });
-  
+
   // Start a scroll to bottom of page animation
   $('.flt-action-btn.to-bottom').click(function () {
     $('html, body').animate({

@@ -23,11 +23,15 @@ def test_csa_name_normalization_matches_dashboard_logic():
     raw = "  Jane_Doe_123  "
     display = format_csa_display_name(raw)
 
-    assert display == RegionalOperationsComponentContextMixin._format_csa_display_name(raw)
+    assert display == RegionalOperationsComponentContextMixin._format_csa_display_name(
+        raw
+    )
     assert normalize_csa_name_for_join(display) == "jane doe"
 
 
-def test_load_csa_target_supervisor_map_imports_updates_and_handles_duplicates(tmp_path):
+def test_load_csa_target_supervisor_map_imports_updates_and_handles_duplicates(
+    tmp_path,
+):
     first_csv = _write_csv(
         tmp_path / "csa_map_1.csv",
         "CSA,Supervisor,CSA Target\n"

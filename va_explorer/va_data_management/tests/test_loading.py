@@ -401,7 +401,9 @@ def test_loading_from_dataframe_missing_markers_leaves_community_va_unresolved()
     assert len(result["created"]) == 1
     assert created.community_va is None
     assert (
-        VerbalAutopsy.objects.get(instanceid="instance-community-default-1").community_va
+        VerbalAutopsy.objects.get(
+            instanceid="instance-community-default-1"
+        ).community_va
         is None
     )
 

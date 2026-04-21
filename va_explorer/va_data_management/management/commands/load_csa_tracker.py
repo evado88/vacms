@@ -44,7 +44,9 @@ class Command(BaseCommand):
         df = df.loc[:, ~df.columns.duplicated()]
 
         if "key" not in df.columns:
-            raise CommandError("The CSV must include a 'key' column to enforce uniqueness.")
+            raise CommandError(
+                "The CSV must include a 'key' column to enforce uniqueness."
+            )
 
         before_nonnull = len(df)
         df["key"] = df["key"].map(lambda v: v.strip() if isinstance(v, str) else v)
@@ -69,8 +71,7 @@ class Command(BaseCommand):
         keys = [record["key"] for record in records]
 
         existing_by_key = {
-            obj.key: obj
-            for obj in CSADailyTracker.objects.filter(key__in=keys)
+            obj.key: obj for obj in CSADailyTracker.objects.filter(key__in=keys)
         }
 
         to_create = []
@@ -78,7 +79,9 @@ class Command(BaseCommand):
 
         for record in records:
             key = record["key"]
-            values = {field: self._clean_value(record.get(field)) for field in model_fields}
+            values = {
+                field: self._clean_value(record.get(field)) for field in model_fields
+            }
 
             existing = existing_by_key.get(key)
             if existing:

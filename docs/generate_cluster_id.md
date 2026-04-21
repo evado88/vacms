@@ -23,7 +23,7 @@ python manage.py generate_ward_codes --initial
 - If table missing: attempts `makemigrations` and `migrate` automatically
 - If migration fails: prompts user to run migrations manually
 - Clears any existing data in the table
-- Loads all wards from `wards.csv` 
+- Loads all wards from `wards.csv`
 - Generates and assigns unique `cluster_code` for each ward
 - Reports completion summary
 

@@ -1,7 +1,11 @@
 import pytest
 
 from va_explorer.home.dashboard_metrics import _compute_homepage_metrics
-from va_explorer.tests.factories import LocationFactory, UserFactory, VerbalAutopsyFactory
+from va_explorer.tests.factories import (
+    LocationFactory,
+    UserFactory,
+    VerbalAutopsyFactory,
+)
 from va_explorer.va_data_management.models import SRSClusterLocation
 
 pytestmark = pytest.mark.django_db

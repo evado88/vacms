@@ -19,6 +19,7 @@ from va_explorer.tests.factories import (
     UserFactory,
     VerbalAutopsyFactory,
 )
+from va_explorer.users.models import User
 from va_explorer.va_data_management.models import (
     CSADailyTracker,
     CSASupervisorTargetMap,
@@ -27,7 +28,6 @@ from va_explorer.va_data_management.models import (
     Pregnancy,
     PregnancyOutcome,
 )
-from va_explorer.users.models import User
 from va_explorer.vacms.cmsmodels.events import Event
 
 pytestmark = pytest.mark.django_db
@@ -410,9 +410,9 @@ def test_regional_operations_page_loads(user: User):
 
     response = client.get("/regional-operations/", follow=True)
     assert response.status_code == 200
-    assert b"id=\"regionalFiltersComponent\"" in response.content
-    assert b"id=\"regionalCsaComponent\"" in response.content
-    assert b"id=\"regionalMsoComponent\"" in response.content
+    assert b'id="regionalFiltersComponent"' in response.content
+    assert b'id="regionalCsaComponent"' in response.content
+    assert b'id="regionalMsoComponent"' in response.content
 
 
 def test_regional_operations_components_refresh_independently(user: User):
@@ -425,8 +425,8 @@ def test_regional_operations_components_refresh_independently(user: User):
         follow=True,
     )
     assert filters_response.status_code == 200
-    assert b"id=\"geographyFilterSelect\"" in filters_response.content
-    assert b"value=\"lusaka\" selected" in filters_response.content
+    assert b'id="geographyFilterSelect"' in filters_response.content
+    assert b'value="lusaka" selected' in filters_response.content
 
     csa_response = client.get(
         "/regional-operations/components/csa/",
@@ -444,8 +444,8 @@ def test_regional_operations_components_refresh_independently(user: User):
         follow=True,
     )
     assert mso_response.status_code == 200
-    assert b"id=\"msoSourceSelect\"" in mso_response.content
-    assert b"value=\"facility\" selected" in mso_response.content
+    assert b'id="msoSourceSelect"' in mso_response.content
+    assert b'value="facility" selected' in mso_response.content
     assert b"regional-sort-link" in mso_response.content
     assert b"regional-page-link" in mso_response.content
 
@@ -503,7 +503,7 @@ def test_mso_uses_only_va_base_names_and_fuzzy_maps_event_aggregates(user: User)
     client.force_login(user=user)
 
     # In-scope VA base row.
-    in_scope_va = VerbalAutopsyFactory.create(
+    VerbalAutopsyFactory.create(
         Id10010="Jane Doe",
         Id10012="2024-02-02",
         province="Lusaka",
@@ -646,7 +646,9 @@ def test_csa_component_handles_unmatched_mapping_safely(user: User):
 
 
 @time_machine.travel(dt.datetime(2026, 3, 29, 12, 0, tzinfo=eastern_tz))
-def test_csa_component_matches_mapping_by_display_name_when_normalized_differs(user: User):
+def test_csa_component_matches_mapping_by_display_name_when_normalized_differs(
+    user: User,
+):
     client = Client()
     client.force_login(user=user)
 

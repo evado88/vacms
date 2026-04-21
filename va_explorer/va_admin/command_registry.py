@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 from django.conf import settings
 from django.core.management import get_commands, load_command_class
 
-
 ADMINS_GROUP_NAME = "Admins"
-SAFE_FILENAME_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
+SAFE_FILENAME_CHARS = (
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
+)
 CATEGORY_ORDER = (
     "Favorites",
     "Data Loading",
@@ -32,9 +32,9 @@ class CommandInputSpec:
     allowed_pattern: str = ""
     standardized_name: str = ""
     default: str = ""
-    choices: Tuple[str, ...] = ()
-    flag: Optional[str] = None
-    placeholder_key: Optional[str] = None
+    choices: tuple[str, ...] = ()
+    flag: str | None = None
+    placeholder_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -43,14 +43,14 @@ class CommandRegistryItem:
     management_command: str
     category: str
     description: str
-    inputs: Tuple[CommandInputSpec, ...] = field(default_factory=tuple)
+    inputs: tuple[CommandInputSpec, ...] = field(default_factory=tuple)
     safety: str = "mutating"  # read_only | mutating
-    timeout_hint: Optional[int] = None
+    timeout_hint: int | None = None
     favorite: bool = False
     dangerous: bool = False
 
 
-STANDARD_FILENAME_PLACEHOLDERS: Dict[str, str] = {
+STANDARD_FILENAME_PLACEHOLDERS: dict[str, str] = {
     # Keep blank by default so filenames can be standardized later.
     "users_csv": "",
     "households_csv": "",
@@ -79,7 +79,9 @@ def is_safe_filename(filename: str) -> bool:
 
 def resolve_data_file(filename: str) -> Path:
     if not is_safe_filename(filename):
-        raise ValueError("Invalid filename. Only safe filenames are allowed (no paths).")
+        raise ValueError(
+            "Invalid filename. Only safe filenames are allowed (no paths)."
+        )
     base = data_dir().resolve()
     resolved = (base / filename).resolve()
     if base not in resolved.parents and resolved != base:
@@ -99,7 +101,7 @@ def _description_for(command_name: str) -> str:
     return command_name.replace("_", " ").capitalize()
 
 
-def _command_specs() -> List[CommandRegistryItem]:
+def _command_specs() -> list[CommandRegistryItem]:
     csv_input = CommandInputSpec(
         type="file",
         name="csv_file",
@@ -138,21 +140,56 @@ def _command_specs() -> List[CommandRegistryItem]:
             timeout_hint=300,
             favorite=True,
         ),
-        CommandRegistryItem("get_user_form_template", "get_user_form_template", "User/Admin", _description_for("get_user_form_template"), safety="read_only"),
-        CommandRegistryItem("export_user_info", "export_user_info", "Backups/Exports", _description_for("export_user_info"), safety="read_only"),
-        CommandRegistryItem("initialize_groups", "initialize_groups", "User/Admin", _description_for("initialize_groups"), safety="mutating"),
+        CommandRegistryItem(
+            "get_user_form_template",
+            "get_user_form_template",
+            "User/Admin",
+            _description_for("get_user_form_template"),
+            safety="read_only",
+        ),
+        CommandRegistryItem(
+            "export_user_info",
+            "export_user_info",
+            "Backups/Exports",
+            _description_for("export_user_info"),
+            safety="read_only",
+        ),
+        CommandRegistryItem(
+            "initialize_groups",
+            "initialize_groups",
+            "User/Admin",
+            _description_for("initialize_groups"),
+            safety="mutating",
+        ),
         CommandRegistryItem(
             key="seed_admin_user",
             management_command="seed_admin_user",
             category="User/Admin",
             description=_description_for("seed_admin_user"),
             inputs=(
-                CommandInputSpec(type="text", name="email", required=True, help="Admin email address."),
-                CommandInputSpec(type="text", name="password", required=False, help="Optional password.", flag="--password"),
+                CommandInputSpec(
+                    type="text",
+                    name="email",
+                    required=True,
+                    help="Admin email address.",
+                ),
+                CommandInputSpec(
+                    type="text",
+                    name="password",
+                    required=False,
+                    help="Optional password.",
+                    flag="--password",
+                ),
             ),
             safety="mutating",
         ),
-        CommandRegistryItem("seed_demo_users", "seed_demo_users", "User/Admin", _description_for("seed_demo_users"), safety="mutating"),
+        CommandRegistryItem(
+            "seed_demo_users",
+            "seed_demo_users",
+            "User/Admin",
+            _description_for("seed_demo_users"),
+            safety="mutating",
+        ),
         CommandRegistryItem(
             "load_household_csv",
             "load_household_csv",
@@ -200,7 +237,17 @@ def _command_specs() -> List[CommandRegistryItem]:
             "load_pregnancy_csv",
             "Data Loading",
             _description_for("load_pregnancy_csv"),
-            inputs=(CommandInputSpec(**{**csv_input.__dict__, "filename_pattern": "E_PREGNANCY.csv", "placeholder_key": "pregnancies_csv", "standardized_name": "E_PREGNANCY.csv", "help": "Pregnancy events extract."}),),
+            inputs=(
+                CommandInputSpec(
+                    **{
+                        **csv_input.__dict__,
+                        "filename_pattern": "E_PREGNANCY.csv",
+                        "placeholder_key": "pregnancies_csv",
+                        "standardized_name": "E_PREGNANCY.csv",
+                        "help": "Pregnancy events extract.",
+                    }
+                ),
+            ),
             safety="mutating",
             timeout_hint=600,
             favorite=True,
@@ -210,7 +257,17 @@ def _command_specs() -> List[CommandRegistryItem]:
             "load_pregnancy_outcome_csv",
             "Data Loading",
             _description_for("load_pregnancy_outcome_csv"),
-            inputs=(CommandInputSpec(**{**csv_input.__dict__, "filename_pattern": "E_PREGNANCY_OUTCOME.csv", "placeholder_key": "pregnancy_outcomes_csv", "standardized_name": "E_PREGNANCY_OUTCOME.csv", "help": "Pregnancy outcomes extract."}),),
+            inputs=(
+                CommandInputSpec(
+                    **{
+                        **csv_input.__dict__,
+                        "filename_pattern": "E_PREGNANCY_OUTCOME.csv",
+                        "placeholder_key": "pregnancy_outcomes_csv",
+                        "standardized_name": "E_PREGNANCY_OUTCOME.csv",
+                        "help": "Pregnancy outcomes extract.",
+                    }
+                ),
+            ),
             safety="mutating",
             timeout_hint=600,
             favorite=True,
@@ -220,7 +277,17 @@ def _command_specs() -> List[CommandRegistryItem]:
             "load_death_csv",
             "Data Loading",
             _description_for("load_death_csv"),
-            inputs=(CommandInputSpec(**{**csv_input.__dict__, "filename_pattern": "E_DEATH.csv", "placeholder_key": "deaths_csv", "standardized_name": "E_DEATH.csv", "help": "Death events extract."}),),
+            inputs=(
+                CommandInputSpec(
+                    **{
+                        **csv_input.__dict__,
+                        "filename_pattern": "E_DEATH.csv",
+                        "placeholder_key": "deaths_csv",
+                        "standardized_name": "E_DEATH.csv",
+                        "help": "Death events extract.",
+                    }
+                ),
+            ),
             safety="mutating",
             timeout_hint=600,
             favorite=True,
@@ -250,7 +317,17 @@ def _command_specs() -> List[CommandRegistryItem]:
             "load_locations",
             "Data Loading",
             _description_for("load_locations"),
-            inputs=(CommandInputSpec(**{**csv_input.__dict__, "filename_pattern": "LOCATIONS.csv", "placeholder_key": "locations_csv", "standardized_name": "LOCATIONS.csv", "help": "Location hierarchy/facility file."}),),
+            inputs=(
+                CommandInputSpec(
+                    **{
+                        **csv_input.__dict__,
+                        "filename_pattern": "LOCATIONS.csv",
+                        "placeholder_key": "locations_csv",
+                        "standardized_name": "LOCATIONS.csv",
+                        "help": "Location hierarchy/facility file.",
+                    }
+                ),
+            ),
             safety="mutating",
         ),
         CommandRegistryItem(
@@ -277,7 +354,17 @@ def _command_specs() -> List[CommandRegistryItem]:
             "load_dhis_cod_codes",
             "Data Loading",
             _description_for("load_dhis_cod_codes"),
-            inputs=(CommandInputSpec(**{**csv_input.__dict__, "filename_pattern": "DHIS_COD_CODES.csv", "placeholder_key": "dhis_cod_codes_csv", "standardized_name": "DHIS_COD_CODES.csv", "help": "DHIS COD code mapping file."}),),
+            inputs=(
+                CommandInputSpec(
+                    **{
+                        **csv_input.__dict__,
+                        "filename_pattern": "DHIS_COD_CODES.csv",
+                        "placeholder_key": "dhis_cod_codes_csv",
+                        "standardized_name": "DHIS_COD_CODES.csv",
+                        "help": "DHIS COD code mapping file.",
+                    }
+                ),
+            ),
             safety="mutating",
         ),
         CommandRegistryItem(
@@ -309,7 +396,13 @@ def _command_specs() -> List[CommandRegistryItem]:
                     name="form_name",
                     required=True,
                     help="Target form name.",
-                    choices=("household", "pregnancy", "pregnancyoutcome", "death", "verbalautopsy"),
+                    choices=(
+                        "household",
+                        "pregnancy",
+                        "pregnancyoutcome",
+                        "death",
+                        "verbalautopsy",
+                    ),
                 ),
                 csv_input,
             ),
@@ -331,9 +424,35 @@ def _command_specs() -> List[CommandRegistryItem]:
             ),
             safety="mutating",
         ),
-        CommandRegistryItem("dq_households", "dq_households", "Data Quality", _description_for("dq_households"), safety="read_only"),
-        CommandRegistryItem("mark_vas_as_duplicate", "mark_vas_as_duplicate", "Data Quality", _description_for("mark_vas_as_duplicate"), safety="mutating"),
-        CommandRegistryItem("run_coding_algorithms", "run_coding_algorithms", "Analytics", _description_for("run_coding_algorithms"), inputs=(CommandInputSpec(type="bool", name="overwrite", flag="--overwrite", help="Overwrite existing coding."),), safety="mutating"),
+        CommandRegistryItem(
+            "dq_households",
+            "dq_households",
+            "Data Quality",
+            _description_for("dq_households"),
+            safety="read_only",
+        ),
+        CommandRegistryItem(
+            "mark_vas_as_duplicate",
+            "mark_vas_as_duplicate",
+            "Data Quality",
+            _description_for("mark_vas_as_duplicate"),
+            safety="mutating",
+        ),
+        CommandRegistryItem(
+            "run_coding_algorithms",
+            "run_coding_algorithms",
+            "Analytics",
+            _description_for("run_coding_algorithms"),
+            inputs=(
+                CommandInputSpec(
+                    type="bool",
+                    name="overwrite",
+                    flag="--overwrite",
+                    help="Overwrite existing coding.",
+                ),
+            ),
+            safety="mutating",
+        ),
         CommandRegistryItem(
             "assign_death_ids",
             "assign_death_ids",
@@ -350,8 +469,20 @@ def _command_specs() -> List[CommandRegistryItem]:
             ),
             safety="mutating",
         ),
-        CommandRegistryItem("generate_ward_codes", "generate_ward_codes", "Maintenance", _description_for("generate_ward_codes"), safety="mutating"),
-        CommandRegistryItem("refresh_locations", "refresh_locations", "Maintenance", _description_for("refresh_locations"), safety="mutating"),
+        CommandRegistryItem(
+            "generate_ward_codes",
+            "generate_ward_codes",
+            "Maintenance",
+            _description_for("generate_ward_codes"),
+            safety="mutating",
+        ),
+        CommandRegistryItem(
+            "refresh_locations",
+            "refresh_locations",
+            "Maintenance",
+            _description_for("refresh_locations"),
+            safety="mutating",
+        ),
         CommandRegistryItem(
             "update_va_locations",
             "update_va_locations",
@@ -369,8 +500,22 @@ def _command_specs() -> List[CommandRegistryItem]:
             ),
             safety="mutating",
         ),
-        CommandRegistryItem("fake_current_va_dates", "fake_current_va_dates", "Maintenance", _description_for("fake_current_va_dates"), safety="mutating", dangerous=True),
-        CommandRegistryItem("randomize_va_dates", "randomize_va_dates", "Maintenance", _description_for("randomize_va_dates"), safety="mutating", dangerous=True),
+        CommandRegistryItem(
+            "fake_current_va_dates",
+            "fake_current_va_dates",
+            "Maintenance",
+            _description_for("fake_current_va_dates"),
+            safety="mutating",
+            dangerous=True,
+        ),
+        CommandRegistryItem(
+            "randomize_va_dates",
+            "randomize_va_dates",
+            "Maintenance",
+            _description_for("randomize_va_dates"),
+            safety="mutating",
+            dangerous=True,
+        ),
         CommandRegistryItem(
             "purge_admin_panel_alerts",
             "purge_admin_panel_alerts",
@@ -395,7 +540,14 @@ def _command_specs() -> List[CommandRegistryItem]:
             ),
             safety="mutating",
         ),
-        CommandRegistryItem("dummify_and_dump", "dummify_and_dump", "Backups/Exports", _description_for("dummify_and_dump"), safety="mutating", dangerous=True),
+        CommandRegistryItem(
+            "dummify_and_dump",
+            "dummify_and_dump",
+            "Backups/Exports",
+            _description_for("dummify_and_dump"),
+            safety="mutating",
+            dangerous=True,
+        ),
         CommandRegistryItem(
             "backup_admin_panel_alerts",
             "backup_admin_panel_alerts",
@@ -420,9 +572,27 @@ def _command_specs() -> List[CommandRegistryItem]:
             ),
             safety="read_only",
         ),
-        CommandRegistryItem("export_locations", "export_locations", "Backups/Exports", _description_for("export_locations"), safety="read_only"),
-        CommandRegistryItem("run_dhis", "run_dhis", "Integrations", _description_for("run_dhis"), safety="mutating"),
-        CommandRegistryItem("import_from_kobo", "import_from_kobo", "Integrations", _description_for("import_from_kobo"), safety="mutating"),
+        CommandRegistryItem(
+            "export_locations",
+            "export_locations",
+            "Backups/Exports",
+            _description_for("export_locations"),
+            safety="read_only",
+        ),
+        CommandRegistryItem(
+            "run_dhis",
+            "run_dhis",
+            "Integrations",
+            _description_for("run_dhis"),
+            safety="mutating",
+        ),
+        CommandRegistryItem(
+            "import_from_kobo",
+            "import_from_kobo",
+            "Integrations",
+            _description_for("import_from_kobo"),
+            safety="mutating",
+        ),
         CommandRegistryItem(
             "import_from_odk",
             "import_from_odk",
@@ -456,16 +626,16 @@ def _command_specs() -> List[CommandRegistryItem]:
     ]
 
 
-REGISTRY_ITEMS: Tuple[CommandRegistryItem, ...] = tuple(_command_specs())
-ALLOWLIST: Dict[str, CommandRegistryItem] = {item.key: item for item in REGISTRY_ITEMS}
+REGISTRY_ITEMS: tuple[CommandRegistryItem, ...] = tuple(_command_specs())
+ALLOWLIST: dict[str, CommandRegistryItem] = {item.key: item for item in REGISTRY_ITEMS}
 
 
-def grouped_command_specs() -> Dict[str, List[CommandRegistryItem]]:
-    groups: Dict[str, List[CommandRegistryItem]] = {}
+def grouped_command_specs() -> dict[str, list[CommandRegistryItem]]:
+    groups: dict[str, list[CommandRegistryItem]] = {}
     for item in REGISTRY_ITEMS:
         groups.setdefault(item.category, []).append(item)
 
-    ordered: Dict[str, List[CommandRegistryItem]] = {}
+    ordered: dict[str, list[CommandRegistryItem]] = {}
     for category in CATEGORY_ORDER:
         if category == "Favorites":
             favorites = [item for item in REGISTRY_ITEMS if item.favorite]

@@ -73,7 +73,9 @@ def test_load_va_data_counts_coded_community_without_facility_location():
     assert data["update_stats"]["total_vas"] == 2
     # Coded geo totals should include both facility- and cluster-sourced records.
     assert {"province_name": "Southern", "count": 2} in data["geographic_province_sums"]
-    assert {"district_name": "District 1", "count": 2} in data["geographic_district_sums"]
+    assert {"district_name": "District 1", "count": 2} in data[
+        "geographic_district_sums"
+    ]
     # Map-level geographic totals should also include both paths.
     assert {"province_name": "Southern", "count": 2} in data["map_province_sums"]
     assert {"district_name": "District 1", "count": 2} in data["map_district_sums"]

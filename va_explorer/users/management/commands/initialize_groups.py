@@ -6,11 +6,11 @@ from va_explorer.users.models import User
 from va_explorer.va_analytics.models import Dashboard
 from va_explorer.va_data_cleanup.models import DataCleanup
 from va_explorer.va_data_management.models import (
-    VerbalAutopsy,
+    Death,
     Household,
     Pregnancy,
     PregnancyOutcome,
-    Death,
+    VerbalAutopsy,
 )
 
 GROUPS_PERMISSIONS = {

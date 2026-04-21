@@ -44,7 +44,8 @@ SECURE_HSTS_SECONDS = env.int("SECURE_HSTS_SECONDS", default=0)
 # Debug Toolbar is a development-only tool; strip it from production.
 INSTALLED_APPS = [app for app in INSTALLED_APPS if app != "debug_toolbar"]  # noqa F405
 MIDDLEWARE = [  # noqa F405
-    mw for mw in MIDDLEWARE  # noqa F405
+    mw
+    for mw in MIDDLEWARE  # noqa F405
     if mw != "debug_toolbar.middleware.DebugToolbarMiddleware"
 ]
 
@@ -75,7 +76,14 @@ CACHES = {
 
 # Static
 
-STATICFILES_STORAGE = "whitenoise.storage.CompressedStaticFilesStorage"
+STORAGES = {
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    },
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedStaticFilesStorage",
+    },
+}
 WHITENOISE_MANIFEST_STRICT = False
 # Templates
 

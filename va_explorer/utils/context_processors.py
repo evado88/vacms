@@ -46,12 +46,15 @@ def mailbox(request):
 
 def feedback_counts(request):
     user = getattr(request, "user", None)
-    if user and user.is_authenticated:
-        if user.is_superuser or user.groups.filter(name="Admins").exists():
-            key = "ctx:feedback_new_count"
-            count = cache.get(key)
-            if count is None:
-                count = Feedback.objects.filter(status=Feedback.Status.NEW).count()
-                cache.set(key, count, timeout=_CTX_CACHE_TTL)
-            return {"FEEDBACK_NEW_COUNT": count}
+    if (
+        user
+        and user.is_authenticated
+        and (user.is_superuser or user.groups.filter(name="Admins").exists())
+    ):
+        key = "ctx:feedback_new_count"
+        count = cache.get(key)
+        if count is None:
+            count = Feedback.objects.filter(status=Feedback.Status.NEW).count()
+            cache.set(key, count, timeout=_CTX_CACHE_TTL)
+        return {"FEEDBACK_NEW_COUNT": count}
     return {"FEEDBACK_NEW_COUNT": 0}

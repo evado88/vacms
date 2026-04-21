@@ -14,7 +14,6 @@ from django.forms import (
     RadioSelect,
     SelectMultiple,
 )
-from django.utils.crypto import get_random_string
 
 from va_explorer.users.utils.location_mapping import map_srs_clusters_to_locations
 from va_explorer.va_data_management.models import Location, SRSClusterLocation
@@ -55,7 +54,7 @@ def validate_location_access(form, geographic_access, location_restrictions, gro
     # just ensure that the Field Worker role is treated the same as
     # other roles when considering location restrictions by disabling
     # the Field Workers conditional block
-    if False and group.name == "Field Workers":
+    if False:
         if len(location_restrictions) == 0 or geographic_access == "national":
             form._errors["facility_restrictions"] = form.error_class(
                 ["You must add one or more facilities."]
@@ -180,13 +179,16 @@ class GroupSelect(forms.Select):
 class UserCommonFields(forms.ModelForm):
     name = forms.CharField(required=True, max_length=100)
     group = ModelChoiceField(
-        queryset=Group.objects.exclude(name="tmp_va_dbg_grp"), required=True, widget=GroupSelect
+        queryset=Group.objects.exclude(name="tmp_va_dbg_grp"),
+        required=True,
+        widget=GroupSelect,
     )
     location_restrictions = ModelMultipleChoiceField(
         # Don't include 'Unknown' or Root/Country node in options
         queryset=SRSClusterLocation.objects.filter(
             location_type__in=["province", "district"]
-        ).exclude(name="Unknown")
+        )
+        .exclude(name="Unknown")
         .order_by("path"),
         widget=LocationRestrictionsSelectMultiple(
             attrs={"class": "location-restrictions-select"}
@@ -215,27 +217,39 @@ class UserCommonFields(forms.ModelForm):
     )
 
     # Individual module permission fields
-    perm_view_dashboard          = forms.BooleanField(label="View Dashboard", required=False)
-    perm_supervise_users         = forms.BooleanField(label="Supervise Users", required=False)
-    perm_add_user                = forms.BooleanField(label="Add User", required=False)
-    perm_view_user               = forms.BooleanField(label="View Users", required=False)
-    perm_change_user             = forms.BooleanField(label="Edit User", required=False)
-    perm_delete_user             = forms.BooleanField(label="Delete User", required=False)
-    perm_view_verbalautopsy      = forms.BooleanField(label="View Verbal Autopsy", required=False)
-    perm_change_verbalautopsy    = forms.BooleanField(label="Edit Verbal Autopsy", required=False)
-    perm_delete_verbalautopsy    = forms.BooleanField(label="Delete Verbal Autopsy", required=False)
-    perm_bulk_delete             = forms.BooleanField(label="Bulk Delete", required=False)
-    perm_view_household          = forms.BooleanField(label="View Household", required=False)
-    perm_change_household        = forms.BooleanField(label="Edit Household", required=False)
-    perm_view_pregnancy          = forms.BooleanField(label="View Pregnancy", required=False)
-    perm_change_pregnancy        = forms.BooleanField(label="Edit Pregnancy", required=False)
-    perm_view_pregnancyoutcome   = forms.BooleanField(label="View Pregnancy Outcome", required=False)
-    perm_change_pregnancyoutcome = forms.BooleanField(label="Edit Pregnancy Outcome", required=False)
-    perm_view_death              = forms.BooleanField(label="View Death", required=False)
-    perm_change_death            = forms.BooleanField(label="Edit Death", required=False)
-    perm_view_datacleanup        = forms.BooleanField(label="View Data Cleanup", required=False)
-    perm_download_datacleanup    = forms.BooleanField(label="Download", required=False)
-    perm_bulk_download           = forms.BooleanField(label="Bulk Download", required=False)
+    perm_view_dashboard = forms.BooleanField(label="View Dashboard", required=False)
+    perm_supervise_users = forms.BooleanField(label="Supervise Users", required=False)
+    perm_add_user = forms.BooleanField(label="Add User", required=False)
+    perm_view_user = forms.BooleanField(label="View Users", required=False)
+    perm_change_user = forms.BooleanField(label="Edit User", required=False)
+    perm_delete_user = forms.BooleanField(label="Delete User", required=False)
+    perm_view_verbalautopsy = forms.BooleanField(
+        label="View Verbal Autopsy", required=False
+    )
+    perm_change_verbalautopsy = forms.BooleanField(
+        label="Edit Verbal Autopsy", required=False
+    )
+    perm_delete_verbalautopsy = forms.BooleanField(
+        label="Delete Verbal Autopsy", required=False
+    )
+    perm_bulk_delete = forms.BooleanField(label="Bulk Delete", required=False)
+    perm_view_household = forms.BooleanField(label="View Household", required=False)
+    perm_change_household = forms.BooleanField(label="Edit Household", required=False)
+    perm_view_pregnancy = forms.BooleanField(label="View Pregnancy", required=False)
+    perm_change_pregnancy = forms.BooleanField(label="Edit Pregnancy", required=False)
+    perm_view_pregnancyoutcome = forms.BooleanField(
+        label="View Pregnancy Outcome", required=False
+    )
+    perm_change_pregnancyoutcome = forms.BooleanField(
+        label="Edit Pregnancy Outcome", required=False
+    )
+    perm_view_death = forms.BooleanField(label="View Death", required=False)
+    perm_change_death = forms.BooleanField(label="Edit Death", required=False)
+    perm_view_datacleanup = forms.BooleanField(
+        label="View Data Cleanup", required=False
+    )
+    perm_download_datacleanup = forms.BooleanField(label="Download", required=False)
+    perm_bulk_download = forms.BooleanField(label="Bulk Download", required=False)
 
 
 class ExtendedUserCreationForm(UserCommonFields, UserCreationForm):
@@ -252,7 +266,6 @@ class ExtendedUserCreationForm(UserCommonFields, UserCreationForm):
     password1 = None
     password2 = None
 
- 
     class Meta:
         model = User
         fields = [
@@ -313,10 +326,10 @@ class ExtendedUserCreationForm(UserCommonFields, UserCreationForm):
             user.name = self.cleaned_data["name"]
             user.mobile1 = self.cleaned_data["mobile1"]
             user.mobile2 = self.cleaned_data["mobile2"]
-            user.address= self.cleaned_data["address"]
+            user.address = self.cleaned_data["address"]
             user.password = self.cleaned_data["password"]
-            
-            #password = get_random_string(length=16)
+
+            # password = get_random_string(length=16)
             password = user.password
             user.set_password(password)
 
@@ -339,10 +352,10 @@ class ExtendedUserCreationForm(UserCommonFields, UserCreationForm):
                 "" * 20
                 + f"Created user with email {user.email} and temp. password {password}"
             )
-            
-            #prevent sending of emails
+
+            # prevent sending of emails
             email_confirmation = False
-            
+
             if email_confirmation:
                 try:
                     get_adapter().send_new_user_mail(self.request, user, password)
@@ -362,7 +375,7 @@ class UserUpdateForm(UserCommonFields, forms.ModelForm):
     Similar to UserCreationForm but adds is_active field to allow an administrator
     to mark a user account as inactive
     """
-    
+
     class Meta:
         model = User
         fields = [
@@ -415,7 +428,8 @@ class UserUpdateForm(UserCommonFields, forms.ModelForm):
             user = process_user_data(user, self.cleaned_data)
 
         return user
-    
+
+
 class UserPasswordUpdateForm(forms.Form):
     id = forms.CharField(
         label="User ID",
@@ -456,7 +470,6 @@ class UserPasswordUpdateForm(forms.Form):
         if password1 and password2 and password1 != password2:
             raise forms.ValidationError("The provided passwords do not match")
         return cleaned_data
-
 
 
 class UserSetPasswordForm(PasswordVerificationMixin, forms.Form):
@@ -548,9 +561,7 @@ class FeedbackForm(forms.ModelForm):
         ]
         widgets = {
             "subject": forms.TextInput(attrs={"class": "form-control"}),
-            "description": forms.Textarea(
-                attrs={"class": "form-control", "rows": 5}
-            ),
+            "description": forms.Textarea(attrs={"class": "form-control", "rows": 5}),
         }
 
     def __init__(self, *args, **kwargs):
@@ -589,12 +600,13 @@ class FeedbackStatusForm(forms.ModelForm):
             "status": forms.Select(attrs={"class": "form-select form-select-sm"})
         }
 
+
 class UserImportForm(forms.Form):
-    
+
     groups = forms.ModelChoiceField(
-            queryset=Group.objects.all(),
-            widget=forms.Select,
-            required=False,
-            label="Group (overwrites group in CSV file)"
-        )
+        queryset=Group.objects.all(),
+        widget=forms.Select,
+        required=False,
+        label="Group (overwrites group in CSV file)",
+    )
     file = forms.FileField()

@@ -1,31 +1,28 @@
-import re
-
 from django.contrib import messages
 from django.contrib.auth.mixins import PermissionRequiredMixin
 from django.contrib.messages.views import SuccessMessageMixin
-from django.db.models import Q, TextField
-from django.db.models import Value as V
-from django.db.models.functions import Concat
 from django.shortcuts import redirect
 from django.urls import reverse, reverse_lazy
 from django.views.generic import (
     DeleteView,
     DetailView,
-    ListView,
     TemplateView,
     UpdateView,
 )
-from django.views.generic.detail import SingleObjectMixin
-
 from django_filters.views import FilterView
 
 from va_explorer.utils.mixins import CustomAuthMixin, LocationRestrictedQuerySetMixin
+from va_explorer.va_data_management.filters import PregnancyFilter
 from va_explorer.va_data_management.forms import PregnancyForm
 from va_explorer.va_data_management.models import Pregnancy
-from va_explorer.va_data_management.filters import PregnancyFilter
 
 
-class Pregnancies(CustomAuthMixin, PermissionRequiredMixin, LocationRestrictedQuerySetMixin, FilterView):
+class Pregnancies(
+    CustomAuthMixin,
+    PermissionRequiredMixin,
+    LocationRestrictedQuerySetMixin,
+    FilterView,
+):
     permission_required = "va_data_management.view_pregnancy"
     template_name = "va_data_management/pregnancies.html"
     filterset_class = PregnancyFilter
@@ -57,7 +54,10 @@ class Pregnancies(CustomAuthMixin, PermissionRequiredMixin, LocationRestrictedQu
 
 
 class PregnancyDetail(
-    CustomAuthMixin, PermissionRequiredMixin, LocationRestrictedQuerySetMixin, DetailView
+    CustomAuthMixin,
+    PermissionRequiredMixin,
+    LocationRestrictedQuerySetMixin,
+    DetailView,
 ):
     permission_required = "va_data_management.view_pregnancy"
     template_name = "va_data_management/pregnancy_detail.html"
@@ -92,7 +92,9 @@ class PregnancyEdit(
         return kwargs
 
     def get_success_url(self):
-        return reverse("va_data_management:pregnancy_detail", kwargs={"id": self.object.id})
+        return reverse(
+            "va_data_management:pregnancy_detail", kwargs={"id": self.object.id}
+        )
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -100,14 +102,17 @@ class PregnancyEdit(
         return context
 
 
-class PregnancyDelete(CustomAuthMixin, PermissionRequiredMixin, LocationRestrictedQuerySetMixin, DeleteView):
+class PregnancyDelete(
+    CustomAuthMixin,
+    PermissionRequiredMixin,
+    LocationRestrictedQuerySetMixin,
+    DeleteView,
+):
     permission_required = "va_data_management.delete_pregnancy"
     model = Pregnancy
     success_url = reverse_lazy("va_data_management:pregnancy_list")
     success_message = "Pregnancy %(id)s was deleted successfully"
-    error_message = (
-        "Pregnancy %(id)s could not be deleted. This record doesn't exist or you don't have access."
-    )
+    error_message = "Pregnancy %(id)s could not be deleted. This record doesn't exist or you don't have access."
 
     def form_valid(self, form):
         obj = self.get_object()

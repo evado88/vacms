@@ -2,7 +2,6 @@ import logging
 import time
 from contextlib import contextmanager
 
-
 logger = logging.getLogger("dashboard.profiling")
 
 

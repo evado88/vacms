@@ -10,12 +10,12 @@ from django.contrib.auth.models import AbstractUser, Permission
 from django.core.files.storage import FileSystemStorage
 from django.db import models
 from django.db.models import ManyToManyField
-from django.urls import reverse
-from django.utils import timezone
-from django.utils.translation import gettext_lazy as _
-from django.utils.text import slugify
 from django.db.models.signals import post_save
 from django.dispatch import receiver
+from django.urls import reverse
+from django.utils import timezone
+from django.utils.text import slugify
+from django.utils.translation import gettext_lazy as _
 
 # from allauth.account.models import EmailAddress
 # from allauth.account.signals import email_confirmed
@@ -24,6 +24,7 @@ from va_explorer.va_data_management.models import Location, VerbalAutopsy
 from va_explorer.va_data_management.utils.location_access import (
     restrict_va_queryset_to_user_locations,
 )
+
 from .constants import FEEDBACK_MODULE_FEATURES
 
 
@@ -34,8 +35,13 @@ from .constants import FEEDBACK_MODULE_FEATURES
 # machine that runs makemigrations.
 def _get_feedback_attachment_storage():
     upload_root = (
-        Path(getattr(settings, "MEDIA_ROOT", Path(__file__).resolve().parents[2] / "media"))
-        / "feedback" / "uploads"
+        Path(
+            getattr(
+                settings, "MEDIA_ROOT", Path(__file__).resolve().parents[2] / "media"
+            )
+        )
+        / "feedback"
+        / "uploads"
     )
     return FileSystemStorage(
         location=str(upload_root),
@@ -52,7 +58,9 @@ def feedback_attachment_upload_path(instance, filename):
     name, ext = os.path.splitext(filename)
     module = getattr(instance, "module", "feedback") or "feedback"
     severity = getattr(instance, "severity", "unspecified") or "unspecified"
-    reporter = getattr(getattr(instance, "submitted_by", None), "username", "") or "anonymous"
+    reporter = (
+        getattr(getattr(instance, "submitted_by", None), "username", "") or "anonymous"
+    )
     safe_name = "-".join(
         part for part in [module, severity, reporter, slugify(name)] if part
     )
@@ -105,12 +113,14 @@ class User(AbstractUser):
 
     email = models.EmailField(_("email address"), unique=True)
     name = models.CharField(_("Name of User"), blank=True, max_length=255)
-    #start new fields for case management
+    # start new fields for case management
     mobile1 = models.CharField(_("Mobile 1"), blank=True, max_length=255)
     mobile2 = models.CharField(_("Mobile 2"), blank=True, max_length=255)
     address = models.CharField(_("Address"), blank=True, max_length=255)
-    worker_id = models.CharField(_("Worker ID"), null=True, blank=True,  unique=True, max_length=255) # ID to be used in ODK for assignment.
-    #end new fields
+    worker_id = models.CharField(
+        _("Worker ID"), null=True, blank=True, unique=True, max_length=255
+    )  # ID to be used in ODK for assignment.
+    # end new fields
     has_valid_password = models.BooleanField(
         _("The user has a user-defined password"), default=False
     )
@@ -186,7 +196,7 @@ class User(AbstractUser):
     objects = CustomUserManager()
 
     def __str__(self):
-        return f'{self.name} - {self.email}'
+        return f"{self.name} - {self.email}"
 
     def get_absolute_url(self):
         """Get url for user's detail view.
@@ -260,7 +270,10 @@ class UnreadUserMessageManager(UserMessageManager):
 
 class UserMessage(models.Model):
     user = models.ForeignKey(
-        User, on_delete=models.CASCADE, related_name="messages", related_query_name="message"
+        User,
+        on_delete=models.CASCADE,
+        related_name="messages",
+        related_query_name="message",
     )
     subject = models.CharField(max_length=255, blank=True)
     body = models.TextField()
@@ -315,9 +328,7 @@ class Feedback(models.Model):
         max_length=16, choices=Severity.choices, default=Severity.LOW
     )
     description = models.TextField()
-    status = models.CharField(
-        max_length=16, choices=Status.choices, default=Status.NEW
-    )
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.NEW)
     report_type = models.CharField(
         max_length=16, choices=ReportType.choices, default=ReportType.BUG
     )
@@ -353,18 +364,24 @@ class Feedback(models.Model):
         return cls.module_feature_map().get(module, [])
 
     def get_feature_display(self):
-        return dict(self.feature_choices_for(self.module)).get(self.feature, self.feature)
+        return dict(self.feature_choices_for(self.module)).get(
+            self.feature, self.feature
+        )
 
     @staticmethod
     def collect_system_metadata(request):
-        user_agent = request.META.get("HTTP_USER_AGENT", "")
+        user_agent = request.headers.get("user-agent", "")
         return {
             "operating_system": platform.platform(),
             "python_version": platform.python_version(),
             "hostname": platform.node(),
             "user_agent": user_agent,
             "ip_address": request.META.get("REMOTE_ADDR"),
-            "path": request.build_absolute_uri() if hasattr(request, "build_absolute_uri") else "",
+            "path": (
+                request.build_absolute_uri()
+                if hasattr(request, "build_absolute_uri")
+                else ""
+            ),
             "timestamp": timezone.now().isoformat(),
         }
 
@@ -373,48 +390,66 @@ def generate_unique_worker_id():
     """
     Generate a unique worker ID using checksum validation logic.
     Format: CheckChar + 3 digits (e.g., A123)
-    
+
     Returns:
         str: A unique worker ID not currently in use
     """
     checksum_map = {
-        2: "A", 3: "B", 7: "C", 12: "D", 13: "E", 16: "F", 1: "G", 
-        10: "H", 14: "J", 4: "K", 8: "L", 18: "M", 6: "N", 15: "P",
-        0: "R", 9: "S", 17: "T", 5: "Y", 11: "Z"
+        2: "A",
+        3: "B",
+        7: "C",
+        12: "D",
+        13: "E",
+        16: "F",
+        1: "G",
+        10: "H",
+        14: "J",
+        4: "K",
+        8: "L",
+        18: "M",
+        6: "N",
+        15: "P",
+        0: "R",
+        9: "S",
+        17: "T",
+        5: "Y",
+        11: "Z",
     }
-    
+
     # Get all existing worker IDs
-    existing_ids = set(User.objects.filter(worker_id__isnull=False).values_list('worker_id', flat=True))
-    
+    existing_ids = set(
+        User.objects.filter(worker_id__isnull=False).values_list("worker_id", flat=True)
+    )
+
     # Generate IDs from 001 to 999
     for idc in range(1, 1000):
         # Skip if not 3 digits
         if len(str(idc)) != 3:
             continue
-            
+
         # Get individual digits
         idc_str = str(idc).zfill(3)
         p1, p2, p3 = int(idc_str[0]), int(idc_str[1]), int(idc_str[2])
-        
+
         # Skip if all digits are the same (e.g., 111, 222)
         if p1 == p2 == p3:
             continue
-        
+
         # Calculate checksum
         check_num = (p1 * 9 + p2 * 7 + p3 * 5) % 19
-        
+
         # Get check character
         check_chr = checksum_map.get(check_num)
         if not check_chr:
             continue
-            
+
         # Build staff ID
         worker_id = f"{check_chr}{idc_str}"
-        
+
         # Check if this ID is already used
         if worker_id not in existing_ids:
             return worker_id
-    
+
     # If all IDs are exhausted (unlikely), raise an error
     raise ValueError("All worker IDs have been exhausted")
 
@@ -422,12 +457,14 @@ def generate_unique_worker_id():
 @receiver(post_save, sender=User)
 def assign_worker_id_to_mortality_officer(sender, instance, created, **kwargs):
     """
-    Post-save signal to assign a unique worker_id to users in the 
+    Post-save signal to assign a unique worker_id to users in the
     'Mortality Surveillance Officer' group.
     """
     # Check if user is in "Mortality Surveillance Officer" group
-    is_mortality_officer = instance.groups.filter(name="Mortality Surveillance Officer").exists()
-    
+    is_mortality_officer = instance.groups.filter(
+        name="Mortality Surveillance Officer"
+    ).exists()
+
     # Only assign worker_id if:
     # 1. User is a Mortality Surveillance Officer
     # 2. User doesn't already have a worker_id
@@ -435,14 +472,17 @@ def assign_worker_id_to_mortality_officer(sender, instance, created, **kwargs):
         try:
             # Generate unique worker_id
             worker_id = generate_unique_worker_id()
-            
+
             # Assign to user and save (using update to avoid triggering signal again)
             User.objects.filter(pk=instance.pk).update(worker_id=worker_id)
-            
+
             # Update the instance in memory
             instance.worker_id = worker_id
         except ValueError as e:
             # Log error if all worker IDs are exhausted
             import logging
+
             logger = logging.getLogger(__name__)
-            logger.error(f"Failed to generate worker_id for user {instance.email}: {e}")
+            logger.error(
+                "Failed to generate worker_id for user %s: %s", instance.email, e
+            )

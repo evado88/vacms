@@ -1,5 +1,4 @@
 from django.contrib import admin
-from django.contrib.contenttypes.models import ContentType
 
 from .models.data_quality import DataQualityIssue, DataQualityIssueMember
 
@@ -13,7 +12,14 @@ class DataQualityIssueMemberInline(admin.TabularInline):
 
 @admin.register(DataQualityIssue)
 class DataQualityIssueAdmin(admin.ModelAdmin):
-    list_display = ("issue_type", "target_model", "status", "detected_at", "updated", "signature")
+    list_display = (
+        "issue_type",
+        "target_model",
+        "status",
+        "detected_at",
+        "updated",
+        "signature",
+    )
     list_filter = ("issue_type", "status", "target_model")
     search_fields = ("signature", "title")
     inlines = [DataQualityIssueMemberInline]

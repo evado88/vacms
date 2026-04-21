@@ -63,7 +63,9 @@ class VerbalAutopsy(SoftDeletionModel):
             # Optimise soft-deletion queryset filter (deleted_at IS NULL on every query)
             models.Index(fields=["deleted_at"], name="va_deleted_at_idx"),
             # Composite for date-range + location analytics queries
-            models.Index(fields=["location_id", "Id10023"], name="va_location_date_idx"),
+            models.Index(
+                fields=["location_id", "Id10023"], name="va_location_date_idx"
+            ),
         ]
 
     # Each VerbalAutopsy is associated with a facility, which is the leaf node location
@@ -1770,7 +1772,7 @@ class VerbalAutopsy(SoftDeletionModel):
             self.handle_update_duplicates()
 
         super().save(*args, **kwargs)
-        
+
     @staticmethod
     def _has_meaningful_value(value):
         normalized = ("" if value is None else str(value)).strip().lower()
@@ -1836,10 +1838,9 @@ class VerbalAutopsy(SoftDeletionModel):
             "area": self.area,
             "hospital": self.hospital,
         }
-        
-    
+
     def __str__(self):
-        return f'{self.deviceid} - {self.Id10023_a} - {self.hospital} - {self.area}'
+        return f"{self.deviceid} - {self.Id10023_a} - {self.hospital} - {self.area}"
 
 
 # Parses the comma-separated list string in settings.QUESTIONS_TO_AUTODETECT_DUPLICATES into a Python list
@@ -1934,7 +1935,10 @@ class CauseCodingIssue(models.Model):
     class Meta:
         indexes = [
             # Optimise per-VA severity filtering in Data Cleanup views
-            models.Index(fields=["verbalautopsy_id", "severity"], name="coding_issue_va_severity_idx"),
+            models.Index(
+                fields=["verbalautopsy_id", "severity"],
+                name="coding_issue_va_severity_idx",
+            ),
         ]
 
     # One VerbalAutopsy can have multiple coding issues

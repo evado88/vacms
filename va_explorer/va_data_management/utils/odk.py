@@ -1,5 +1,5 @@
-from io import BytesIO
 import logging
+from io import BytesIO
 from tempfile import NamedTemporaryFile
 
 import environ
@@ -15,6 +15,7 @@ ODK_HOST = env("ODK_HOST", default="http://127.0.0.1:5002")
 SSL_VERIFY = env.bool("ODK_SSL_VERIFY", not ODK_HOST.startswith("https://localhost"))
 
 logger = logging.getLogger(__name__)
+
 
 def flatten_dict(item):
     result = {}
@@ -135,9 +136,9 @@ def make_pyodk_client(project_id=None):
             "base_url": ODK_HOST,
             "username": env("ODK_EMAIL"),
             "password": env("ODK_PASSWORD"),
-            "default_project_id": project_id
-            if project_id is not None
-            else env.int("ODK_PROJECT_ID"),
+            "default_project_id": (
+                project_id if project_id is not None else env.int("ODK_PROJECT_ID")
+            ),
         }
     }
     with NamedTemporaryFile(delete=False, suffix=".toml") as tmp:

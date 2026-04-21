@@ -12,7 +12,6 @@ from va_explorer.va_data_management.odk.normalization import (
 )
 from va_explorer.va_data_management.utils.loading import normalize_dataframe_columns
 
-
 pytestmark = pytest.mark.django_db
 
 
@@ -55,7 +54,12 @@ def test_iter_odk_column_aliases_preserves_legacy_dash_tail_behavior():
 
 def test_get_odk_form_configs_normalizes_defaults(settings):
     settings.ODK_PULL_FORMS = [
-        {"form_id": "alpha", "form_name": "death", "enabled": True, "schedule_key": "operational"},
+        {
+            "form_id": "alpha",
+            "form_name": "death",
+            "enabled": True,
+            "schedule_key": "operational",
+        },
         {"form_id": "", "form_name": "ignored"},
     ]
     settings.ODK_DEFAULT_PROJECT_ID = 99

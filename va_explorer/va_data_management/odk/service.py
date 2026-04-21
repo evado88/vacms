@@ -24,7 +24,6 @@ from va_explorer.va_data_management.utils.loading import (
 )
 from va_explorer.va_data_management.utils.odk import make_pyodk_client
 
-
 logger = logging.getLogger(__name__)
 
 GLOBAL_LOCK = "__GLOBAL__"
@@ -86,7 +85,9 @@ def import_dataframe_records(form_name: str, df: pd.DataFrame) -> Dict[str, int]
     """Map values using ODKFormChoice and save model records."""
     lookup: Dict[str, Dict[str, str]] = {}
     for choice in ODKFormChoice.objects.filter(form_name=form_name):
-        lookup.setdefault(choice.field_name, {})[normalize_value(choice.value)] = choice.label
+        lookup.setdefault(choice.field_name, {})[
+            normalize_value(choice.value)
+        ] = choice.label
     for field, mapping in lookup.items():
         if field in df.columns:
             df[field] = df[field].map(
@@ -104,7 +105,12 @@ def import_dataframe_records(form_name: str, df: pd.DataFrame) -> Dict[str, int]
             for row in df.to_dict(orient="records")
         ]
         model.objects.bulk_create(objects)
-        return {"created": len(objects), "updated": 0, "ignored": 0, "duplicate_rows": 0}
+        return {
+            "created": len(objects),
+            "updated": 0,
+            "ignored": 0,
+            "duplicate_rows": 0,
+        }
 
     df[unique_field] = df[unique_field].map(
         lambda value: value.strip() if isinstance(value, str) else value
@@ -131,7 +137,11 @@ def import_dataframe_records(form_name: str, df: pd.DataFrame) -> Dict[str, int]
     ]
     update_fields = [field for field in concrete_fields if field != unique_field]
     records = [
-        {key: _clean_import_value(value) for key, value in row.items() if key in concrete_fields}
+        {
+            key: _clean_import_value(value)
+            for key, value in row.items()
+            if key in concrete_fields
+        }
         for row in df.to_dict(orient="records")
     ]
     keys = [record[unique_field] for record in records]
@@ -283,7 +293,11 @@ class ODKPullService:
                 },
             )
             try:
-                since_dt = None if full_refresh else self._resolve_since_timestamp(state, since)
+                since_dt = (
+                    None
+                    if full_refresh
+                    else self._resolve_since_timestamp(state, since)
+                )
                 df, watermarks = self.list_submissions(
                     form_id=form_id,
                     project_id=project_id,
@@ -311,7 +325,11 @@ class ODKPullService:
                         last_submission_at=watermarks["submission_at"],
                         last_server_submission_at=watermarks["server_submission_at"],
                     )
-                    return {**counts, "status": ODKPullState.STATUS_SUCCESS, "dry_run": dry_run}
+                    return {
+                        **counts,
+                        "status": ODKPullState.STATUS_SUCCESS,
+                        "dry_run": dry_run,
+                    }
 
                 loaded_counts = self.upsert_into_models(df, form_name=form_name)
                 counts.update(loaded_counts)
@@ -374,7 +392,10 @@ class ODKPullService:
 
             if include_attachments:
                 self.download_attachments_if_needed(
-                    client=client, project_id=project_id, form_id=form_id, records=records
+                    client=client,
+                    project_id=project_id,
+                    form_id=form_id,
+                    records=records,
                 )
 
             return df, self._extract_watermarks(df)
@@ -388,13 +409,20 @@ class ODKPullService:
     ) -> None:
         """Fetch attachments for submissions that report missing attachments."""
         # Placeholder: VACMS currently stores tabular data; attachments can be added later.
-        missing = [r for r in records if r.get("attachmentsPresent") and not r.get("attachments")]
+        missing = [
+            r
+            for r in records
+            if r.get("attachmentsPresent") and not r.get("attachments")
+        ]
         if missing:
             self._logger.info(
-                "Skipping attachment download for %s submissions (not implemented)", len(missing)
+                "Skipping attachment download for %s submissions (not implemented)",
+                len(missing),
             )
 
-    def upsert_into_models(self, df: pd.DataFrame, form_name: Optional[str]) -> Dict[str, Any]:
+    def upsert_into_models(
+        self, df: pd.DataFrame, form_name: Optional[str]
+    ) -> Dict[str, Any]:
         """Route data to appropriate loader."""
         if form_name and form_name in FORM_MODEL_MAP:
             return import_dataframe_records(form_name, df)
@@ -455,6 +483,9 @@ class ODKPullService:
     def _as_utc(self, dt: datetime) -> str:
         if timezone.is_naive(dt):
             dt = timezone.make_aware(dt, timezone=timezone.utc)
-        return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace(
-            "+00:00", "Z"
+        return (
+            dt.astimezone(timezone.utc)
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z")
         )

@@ -10,7 +10,10 @@ from django.db import transaction
 
 from va_explorer.va_data_management.models import ODKFormChoice
 from va_explorer.va_data_management.odk.config import resolve_odk_form_configs
-from va_explorer.va_data_management.utils.loading import normalize_string, normalize_value
+from va_explorer.va_data_management.utils.loading import (
+    normalize_string,
+    normalize_value,
+)
 from va_explorer.va_data_management.utils.odk import make_pyodk_client
 
 FORM_ID_MAP = {
@@ -116,15 +119,21 @@ class Command(BaseCommand):
                 form_id_col = col
                 break
         if not form_id_col:
-            raise CommandError(f"{path_for_error}: Could not find 'form_id' column in 'settings' sheet.")
+            raise CommandError(
+                f"{path_for_error}: Could not find 'form_id' column in 'settings' sheet."
+            )
 
         form_id = (settings_df.iloc[0][form_id_col] or "").strip()
         if not form_id:
-            raise CommandError(f"{path_for_error}: Empty 'form_id' in 'settings' sheet.")
+            raise CommandError(
+                f"{path_for_error}: Empty 'form_id' in 'settings' sheet."
+            )
 
         form_name = FORM_ID_MAP.get(form_id.upper())
         if not form_name:
-            raise CommandError(f"{path_for_error}: Form ID '{form_id}' is not recognized or mapped.")
+            raise CommandError(
+                f"{path_for_error}: Form ID '{form_id}' is not recognized or mapped."
+            )
         return normalize_string(form_name)
 
     # ---------------------------
@@ -154,7 +163,9 @@ class Command(BaseCommand):
         missing = [p for p in PRESET_FILES if not os.path.isfile(p)]
         if missing:
             missing_list = "\n  - ".join(missing)
-            raise CommandError(f"The following preset files were not found:\n  - {missing_list}")
+            raise CommandError(
+                f"The following preset files were not found:\n  - {missing_list}"
+            )
 
         # ---- DRY RUN path: parse & report only, no DB writes ----
         if dry_run:
@@ -162,10 +173,16 @@ class Command(BaseCommand):
             for path in PRESET_FILES:
                 self.stdout.write(f"\n[INFO] [DRY-RUN] Processing file: {path}")
                 created = self._process_single_file(
-                    path, verbose=verbose, dry_run=True, only_field=only_field, force=False
+                    path,
+                    verbose=verbose,
+                    dry_run=True,
+                    only_field=only_field,
+                    force=False,
                 )
                 total_created += created
-            self.stdout.write(f"\n[SUMMARY] [DRY-RUN] Total choices that would be created/updated: {total_created}")
+            self.stdout.write(
+                f"\n[SUMMARY] [DRY-RUN] Total choices that would be created/updated: {total_created}"
+            )
             return
 
         # ---- REAL LOAD path: single transaction, all-or-nothing ----
@@ -175,7 +192,11 @@ class Command(BaseCommand):
                 for path in PRESET_FILES:
                     self.stdout.write(f"\n[INFO] Processing file: {path}")
                     created = self._process_single_file(
-                        path, verbose=verbose, dry_run=False, only_field=only_field, force=force
+                        path,
+                        verbose=verbose,
+                        dry_run=False,
+                        only_field=only_field,
+                        force=force,
                     )
                     total_created += created
                 self.stdout.write(
@@ -184,22 +205,32 @@ class Command(BaseCommand):
         except CommandError as ce:
             # Known/expected validation failure: show friendly error and confirm rollback
             self.stderr.write(f"\n[ERROR] {ce}")
-            self.stderr.write("[INFO] All changes have been rolled back; database remains unchanged.")
+            self.stderr.write(
+                "[INFO] All changes have been rolled back; database remains unchanged."
+            )
             raise
         except Exception as ex:
             # Unexpected failure: include path if available from message
             self.stderr.write(f"\n[ERROR] Unexpected failure: {ex}")
-            self.stderr.write("[INFO] All changes have been rolled back; database remains unchanged.")
-            raise CommandError("Aborted due to unexpected error; see logs above for details.") from ex
+            self.stderr.write(
+                "[INFO] All changes have been rolled back; database remains unchanged."
+            )
+            raise CommandError(
+                "Aborted due to unexpected error; see logs above for details."
+            ) from ex
 
-    def _handle_from_odk(self, *, form_id, project_id, form_name, dry_run, only_field, force, verbose):
+    def _handle_from_odk(
+        self, *, form_id, project_id, form_name, dry_run, only_field, force, verbose
+    ):
         """Fetch an XLSForm definition from ODK Central and load its choices."""
         if not form_id:
             raise CommandError("--form-id is required when using --from-odk.")
 
         # Resolve form_name: explicit arg > ODK_PULL_FORMS lookup
         if not form_name:
-            configs = resolve_odk_form_configs(form_ids=[form_id], project_id=project_id)
+            configs = resolve_odk_form_configs(
+                form_ids=[form_id], project_id=project_id
+            )
             form_name = configs[0].get("form_name") if configs else None
         if not form_name:
             raise CommandError(
@@ -209,18 +240,26 @@ class Command(BaseCommand):
 
         pid = project_id or getattr(settings, "ODK_DEFAULT_PROJECT_ID", None)
         if not pid:
-            raise CommandError("project_id is required (pass --project-id or set ODK_DEFAULT_PROJECT_ID).")
+            raise CommandError(
+                "project_id is required (pass --project-id or set ODK_DEFAULT_PROJECT_ID)."
+            )
 
-        self.stdout.write(f"\n[INFO] Fetching XLSForm from ODK Central: form_id={form_id}, project_id={pid}")
+        self.stdout.write(
+            f"\n[INFO] Fetching XLSForm from ODK Central: form_id={form_id}, project_id={pid}"
+        )
         try:
             with make_pyodk_client(pid).open() as client:
                 resp = client.get(f"projects/{pid}/forms/{form_id}.xlsx")
                 resp.raise_for_status()
                 content = resp.content
         except Exception as ex:
-            raise CommandError(f"Failed to download XLSForm from ODK Central: {ex}") from ex
+            raise CommandError(
+                f"Failed to download XLSForm from ODK Central: {ex}"
+            ) from ex
 
-        self.stdout.write(f"[INFO] Downloaded {len(content):,} bytes; processing form '{form_name}'")
+        self.stdout.write(
+            f"[INFO] Downloaded {len(content):,} bytes; processing form '{form_name}'"
+        )
         try:
             with transaction.atomic():
                 created = self._process_single_file(
@@ -232,15 +271,23 @@ class Command(BaseCommand):
                     form_name=form_name,
                 )
             prefix = "[DRY-RUN] " if dry_run else ""
-            self.stdout.write(f"\n[SUCCESS] {prefix}Loaded {created} choices for form '{form_name}'.")
+            self.stdout.write(
+                f"\n[SUCCESS] {prefix}Loaded {created} choices for form '{form_name}'."
+            )
         except CommandError as ce:
             self.stderr.write(f"\n[ERROR] {ce}")
-            self.stderr.write("[INFO] All changes have been rolled back; database remains unchanged.")
+            self.stderr.write(
+                "[INFO] All changes have been rolled back; database remains unchanged."
+            )
             raise
         except Exception as ex:
             self.stderr.write(f"\n[ERROR] Unexpected failure: {ex}")
-            self.stderr.write("[INFO] All changes have been rolled back; database remains unchanged.")
-            raise CommandError("Aborted due to unexpected error; see logs above for details.") from ex
+            self.stderr.write(
+                "[INFO] All changes have been rolled back; database remains unchanged."
+            )
+            raise CommandError(
+                "Aborted due to unexpected error; see logs above for details."
+            ) from ex
 
     # ---------------------------
     # Process a single file (may raise CommandError)
@@ -270,14 +317,18 @@ class Command(BaseCommand):
                 keep_default_na=False,
             )
 
-        source_label = f"ODK Central:{form_name}" if isinstance(source, bytes) else source
+        source_label = (
+            f"ODK Central:{form_name}" if isinstance(source, bytes) else source
+        )
 
         # --- Derive form_name from 'settings' sheet when not supplied directly ---
         if form_name is None:
             try:
                 form_settings = _read_sheet("settings")
             except Exception as ex:
-                raise CommandError(f"{source_label}: Error reading 'settings' sheet: {ex}") from ex
+                raise CommandError(
+                    f"{source_label}: Error reading 'settings' sheet: {ex}"
+                ) from ex
             form_name = self._derive_form_name(form_settings, source_label)
 
         norm_form_name = normalize_string(form_name)
@@ -286,7 +337,9 @@ class Command(BaseCommand):
         if force and not dry_run:
             deleted = ODKFormChoice.objects.filter(form_name=norm_form_name).delete()
             if verbose:
-                self.stdout.write(f"[INFO] --force: deleted existing rows for form '{norm_form_name}': {deleted}")
+                self.stdout.write(
+                    f"[INFO] --force: deleted existing rows for form '{norm_form_name}': {deleted}"
+                )
         elif ODKFormChoice.objects.filter(form_name=norm_form_name).exists():
             raise CommandError(
                 f"{source_label}: The form '{norm_form_name}' is already loaded. Use --force to reload."
@@ -297,12 +350,18 @@ class Command(BaseCommand):
             survey = _read_sheet("survey")
             choices = _read_sheet("choices")
         except Exception as ex:
-            raise CommandError(f"{source_label}: Error reading 'survey' or 'choices' sheets: {ex}") from ex
+            raise CommandError(
+                f"{source_label}: Error reading 'survey' or 'choices' sheets: {ex}"
+            ) from ex
 
         # --- Detect label column (label or label::<lang>) ---
-        label_col = next((c for c in choices.columns if str(c).lower().startswith("label")), None)
+        label_col = next(
+            (c for c in choices.columns if str(c).lower().startswith("label")), None
+        )
         if not label_col:
-            raise CommandError(f"{source_label}: Could not find a 'label' column in 'choices' sheet.")
+            raise CommandError(
+                f"{source_label}: Could not find a 'label' column in 'choices' sheet."
+            )
 
         # --- Detect list_name column robustly ---
         list_name_col = self._find_column(choices, "list_name")
@@ -313,7 +372,9 @@ class Command(BaseCommand):
             )
 
         # Precompute normalized list_name on choices
-        choices["_list_name_norm"] = choices[list_name_col].apply(lambda x: normalize_string(x))
+        choices["_list_name_norm"] = choices[list_name_col].apply(
+            lambda x: normalize_string(x)
+        )
 
         created = 0
         missing_lists = []
@@ -321,7 +382,11 @@ class Command(BaseCommand):
         # --- Iterate survey rows, parse select_* and match list names robustly ---
         for _, srow in survey.iterrows():
             qtype = str(srow.get("type", "") or "").strip()
-            m = re.match(r"select_(?:one|multiple)(?:_from_file)?\s+(.+)", qtype, flags=re.IGNORECASE)
+            m = re.match(
+                r"select_(?:one|multiple)(?:_from_file)?\s+(.+)",
+                qtype,
+                flags=re.IGNORECASE,
+            )
             if not m:
                 continue
 
@@ -379,10 +444,13 @@ class Command(BaseCommand):
         # --- Diagnostics for missing lists ---
         if missing_lists:
             # Surface detailed info but do not fail hard: replicate previous behavior
-            self.stderr.write(f"[WARN] {source_label}: Some select questions had no matching choices list:")
+            self.stderr.write(
+                f"[WARN] {source_label}: Some select questions had no matching choices list:"
+            )
             unique_lists = sorted({ln for _, ln in missing_lists})
             self.stderr.write(
-                "       Missing list_names (normalized): " + ", ".join(normalize_string(x) for x in unique_lists)
+                "       Missing list_names (normalized): "
+                + ", ".join(normalize_string(x) for x in unique_lists)
             )
             for field, ln in missing_lists:
                 self.stderr.write(f"       field '{field}' expected list '{ln}'")

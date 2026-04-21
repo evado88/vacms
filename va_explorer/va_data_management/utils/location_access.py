@@ -1,4 +1,4 @@
-from typing import Dict, Iterable, List, Optional, Set
+from typing import Dict, List, Optional, Set
 
 from django.core.cache import cache
 from django.db.models import Q
@@ -110,9 +110,7 @@ def restrict_queryset_to_user_locations(queryset, user, field_mapping=None):
     # This lets us use a single __in lookup per field instead of a chain of
     # __iexact OR conditions, reducing the Q-object tree depth considerably.
     active_fields = {
-        field_name
-        for loc_type, field_name in mapping.items()
-        if allowed.get(loc_type)
+        field_name for loc_type, field_name in mapping.items() if allowed.get(loc_type)
     }
     annotations = {f"_rloc_{fn}": Lower(fn) for fn in active_fields}
     if annotations:

@@ -65,7 +65,10 @@ ODK_PULL_FORMS = [
         "form_id": env("ODK_ZNPHI_VA_FORM_ID", default=env("ODK_FORM_ID", default="")),
         "form_name": "verbal_autopsy",
         "project_id": ODK_DEFAULT_PROJECT_ID,
-        "enabled": env.bool("ODK_ZNPHI_VA_FORM_ENABLED", default=env.bool("ODK_FORM_ENABLED", default=True)),
+        "enabled": env.bool(
+            "ODK_ZNPHI_VA_FORM_ENABLED",
+            default=env.bool("ODK_FORM_ENABLED", default=True),
+        ),
         "schedule_key": "va_hourly",
     },
     {
@@ -163,8 +166,8 @@ THIRD_PARTY_APPS = [
     "django_filters",
     "django_pivot",
     "corsheaders",
-    "bootstrap_datepicker_plus",#required for date picker to work properly
-] 
+    "bootstrap_datepicker_plus",  # required for date picker to work properly
+]
 
 LOCAL_APPS = [
     "va_explorer.home.apps.HomeConfig",

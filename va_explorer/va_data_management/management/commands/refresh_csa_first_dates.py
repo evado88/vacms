@@ -16,7 +16,10 @@ from datetime import date
 from django.core.management.base import BaseCommand
 from django.db.models import Min
 
-from va_explorer.va_data_management.models import CSADailyTracker, CSASupervisorTargetMap
+from va_explorer.va_data_management.models import (
+    CSADailyTracker,
+    CSASupervisorTargetMap,
+)
 from va_explorer.va_data_management.utils.csa_names import (
     format_csa_display_name,
     normalize_csa_name_for_join,

@@ -63,7 +63,7 @@ contributors should, at a minimum, install:
 ## 1. Clone this repo and change into the new directory
 
 ```shell
-git clone https://gitlab.znphi.co.zm/srsgroup/srs-vae-new 
+git clone https://gitlab.znphi.co.zm/srsgroup/srs-vae-new
 ```
 Next, cd into your created project
 ```shell
@@ -76,7 +76,7 @@ Next, cd into your created project
   ### NOTE: If you have a Python version higher than `3.12` installed eg. `3.13` onwards, you may need to specify the lower version for easy compatibility with the project. For example, you can use `Python 3.10`. You can do this by running the following command:
 
 ```shell
-py -3.10 -m venv vae_venv 
+py -3.10 -m venv vae_venv
 ```
 
 This command above will create a virtual environment named `vae_venv` using `Python 3.10`. Specify the Python version you want to use in place of `3.10` above.
@@ -211,16 +211,16 @@ python manage.py migrate
 
 **Universal approach that works in all terminals:**
 ```shell
-python manage.py initialize_groups 
+python manage.py initialize_groups
 python manage.py seed_admin_user <EMAIL_ADDRESS> --password <PASSWORD>
 ```
 
 **Example:**
 ```shell
-python manage.py initialize_groups 
+python manage.py initialize_groups
 python manage.py seed_admin_user admin@example.com --password 12345
 ```
-**Explanation:** 
+**Explanation:**
 - `initialize_groups` command creates the default groups and permissions.
 - `seed_admin_user` command creates an admin user with the specified email and password.
 - Replace ` admin@example.com` and `12345` with your desired email and password.
@@ -236,46 +236,46 @@ python manage.py seed_admin_user <EMAIL_ADDRESS> --password <PASSWORD>
 **Git Bash**
 ```shell
 # Option 1 (Recommended)
-python manage.py initialize_groups 
+python manage.py initialize_groups
 python manage.py seed_admin_user <EMAIL_ADDRESS> --password <PASSWORD>
 
 # Option 2
-./manage.py initialize_groups 
+./manage.py initialize_groups
 ./manage.py seed_admin_user <EMAIL_ADDRESS> --password <PASSWORD>
 ```
 
 **PowerShell**
 ```shell
 # Option 1 (Recommended)
-python manage.py initialize_groups 
+python manage.py initialize_groups
 python manage.py seed_admin_user <EMAIL_ADDRESS> --password <PASSWORD>
 
 # Option 2
-.\manage.py initialize_groups 
+.\manage.py initialize_groups
 .\manage.py seed_admin_user <EMAIL_ADDRESS> --password <PASSWORD>
 ```
 
 **Linux/Mac Terminal**
 ```shell
 # Option 1 (Recommended)
-python manage.py initialize_groups 
+python manage.py initialize_groups
 python manage.py seed_admin_user <EMAIL_ADDRESS> --password <PASSWORD>
 
 # Option 2
-./manage.py initialize_groups 
+./manage.py initialize_groups
 ./manage.py seed_admin_user <EMAIL_ADDRESS> --password <PASSWORD>
 ```
 
 **Example:**
 ```shell
-python manage.py initialize_groups 
+python manage.py initialize_groups
 python manage.py seed_admin_user admin@example.com --password 12345
 ```
 
 ### This maintains the same format and structure as your existing README content while providing the terminal-specific alternatives for the admin setup commands.
 
 ```shell
-./manage.py initialize_groups 
+./manage.py initialize_groups
 ./manage.py seed_admin_user <EMAIL_ADDRESS> --password <PASSWORD>
 ```
 

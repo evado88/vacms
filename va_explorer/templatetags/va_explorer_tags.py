@@ -18,9 +18,10 @@ def format_enumerator(value):
     if not value:
         return value
     # Remove trailing underscore(s) followed by digits (e.g. _123 or _1_2)
-    cleaned = re.sub(r'(_\d+)+$', '', str(value))
+    cleaned = re.sub(r"(_\d+)+$", "", str(value))
     # Replace remaining underscores with spaces
-    return cleaned.replace('_', ' ')
+    return cleaned.replace("_", " ")
+
 
 ISO_DATE_FORMAT = "%Y-%m-%d"
 ISO_DATETIME_FORMAT = "%Y-%m-%d %H:%M"

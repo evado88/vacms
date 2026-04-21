@@ -79,9 +79,17 @@ def build_odk_rename_map(
             # Pick the column that exactly equals the target, else the lowercase one,
             # else the first in iteration order
             preferred = next(
-                (col for col in rename_map if str(col) in unique_originals and str(col) == target),
+                (
+                    col
+                    for col in rename_map
+                    if str(col) in unique_originals and str(col) == target
+                ),
                 next(
-                    (col for col in rename_map if str(col) in unique_originals and str(col) == target.lower()),
+                    (
+                        col
+                        for col in rename_map
+                        if str(col) in unique_originals and str(col) == target.lower()
+                    ),
                     next(col for col in rename_map if str(col) in unique_originals),
                 ),
             )
@@ -96,7 +104,9 @@ def build_odk_rename_map(
             f"{target}: {', '.join(sorted(set(originals)))}"
             for target, originals in sorted(truly_duplicated.items())
         )
-        raise ODKColumnCollision(f"Column normalization collision detected for {pieces}")
+        raise ODKColumnCollision(
+            f"Column normalization collision detected for {pieces}"
+        )
 
     return rename_map
 

@@ -68,10 +68,13 @@ class DashboardProfilingMiddleware:
             db_query_count = len(new_queries)
             db_window_ms = (time.perf_counter() - sql_started_at) * 1000.0
 
-            step_summary = ", ".join(
-                f"{step['name']}={step['duration_ms']:.2f}ms"
-                for step in top_steps(request, limit=5)
-            ) or "none"
+            step_summary = (
+                ", ".join(
+                    f"{step['name']}={step['duration_ms']:.2f}ms"
+                    for step in top_steps(request, limit=5)
+                )
+                or "none"
+            )
 
             logger.info(
                 (

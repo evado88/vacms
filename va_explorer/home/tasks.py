@@ -4,7 +4,10 @@ from django.core.cache import cache
 from django.utils import timezone
 
 from config.celery_app import app
-from va_explorer.home.cache_utils import HOME_DASHBOARD_PREWARM_KEY, HOME_DASHBOARD_PREWARM_TTL
+from va_explorer.home.cache_utils import (
+    HOME_DASHBOARD_PREWARM_KEY,
+    HOME_DASHBOARD_PREWARM_TTL,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +31,9 @@ def prewarm_home_dashboard_cache():
             location_value="",
             include_chart_series=True,
         )
-        cache.set(HOME_DASHBOARD_PREWARM_KEY, payload, timeout=HOME_DASHBOARD_PREWARM_TTL)
+        cache.set(
+            HOME_DASHBOARD_PREWARM_KEY, payload, timeout=HOME_DASHBOARD_PREWARM_TTL
+        )
         logger.info("Home dashboard prewarm cache updated")
         return {"status": "ok"}
     except Exception as exc:

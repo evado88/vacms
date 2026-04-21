@@ -139,7 +139,7 @@ const dashboard = new Vue({
             if (!this.geographic_level_sums || Object.keys(this.geographic_level_sums).length === 0) return;
             const counts = Object.values(this.geographic_level_sums).map(item => item.count || 0);
             if (counts.length === 0) return;
-            
+
             const geoMax = Math.max(...counts) + 100;
             const geoMin = 1;
             const n = 10;
@@ -501,7 +501,7 @@ const dashboard = new Vue({
                     console.log(`[Reproject] Unknown CRS: ${crsName}, checking coordinates to determine if reprojection needed`);
                 }
             }
-            
+
             // Check if coordinates look like they're already in WGS84 (lat/lng range)
             // WGS84: lat -90 to 90, lng -180 to 180
             // EPSG:3857: x -20037508 to 20037508, y -20037508 to 20037508
@@ -522,19 +522,19 @@ const dashboard = new Vue({
                     }
                 }
             }
-            
-            const looksLikeWGS84 = sampleCoords && 
-                Math.abs(sampleCoords[0]) <= 180 && 
+
+            const looksLikeWGS84 = sampleCoords &&
+                Math.abs(sampleCoords[0]) <= 180 &&
                 Math.abs(sampleCoords[1]) <= 90;
-            
+
             if (looksLikeWGS84) {
                 console.log(`[Reproject] Coordinates appear to already be in WGS84 (sample: [${sampleCoords[0]}, ${sampleCoords[1]}]), skipping reprojection`);
                 delete geojson.crs;
                 return geojson;
             }
-            
+
             console.log(`[Reproject] Reprojecting from EPSG:3857 to EPSG:4326. Sample coords before: [${sampleCoords ? sampleCoords.join(', ') : 'N/A'}]`);
-            
+
             const R = 6378137; // Earth's radius in meters
             const reprojectCoords = (coords) => {
                 if (Array.isArray(coords[0])) {
@@ -570,7 +570,7 @@ const dashboard = new Vue({
 
             // Remove or update CRS to indicate WGS84
             delete geojson.crs;
-            
+
             if (sampleCoords && geojson.features.length > 0) {
                 const reprojectedSample = geojson.features[0].geometry.coordinates;
                 let reprojectedCoords = null;
@@ -602,7 +602,7 @@ const dashboard = new Vue({
                 const cacheBuster = `?v=${Date.now()}`;
                 const response = await fetch(`${url}${filename}${cacheBuster}`);
                 const geojson = await response.json();
-                
+
                 console.log(`[Load] Loaded ${geojson.features.length} features from ${filename}`);
                 // Log sample area_ids for debugging
                 if (geojson.features.length > 0) {
@@ -613,10 +613,10 @@ const dashboard = new Vue({
                     }));
                     console.log(`[Load] Sample features from ${filename}:`, sampleIds);
                 }
-                
+
                 // Reproject from EPSG:3857 to EPSG:4326
                 const reprojectedGeojson = this.reproject3857to4326(geojson);
-                
+
                 // Cache it
                 this.geojsonCache[level] = reprojectedGeojson;
                 return reprojectedGeojson;
@@ -660,10 +660,10 @@ const dashboard = new Vue({
                 cod_categories: [],
                 matrix_percent: [],
             };
-            
+
             // Get aggregates for current drill level
             this.geographic_level_sums = this.getAggregatesForLevel(jsonRes);
-            
+
             this.uncoded_vas = jsonRes.uncoded_vas;
             this.update_stats = jsonRes.update_stats;
             this.listOfCausesDropdownOptions = jsonRes.all_causes_list;
@@ -814,7 +814,7 @@ const dashboard = new Vue({
             // Add explicit zoom control at top-left (prevent CSS/layout moving it)
             // Enable zoom controls with higher max zoom for EA level features
             try {
-                L.control.zoom({ 
+                L.control.zoom({
                     position: 'topleft',
                     zoomInTitle: 'Zoom in',
                     zoomOutTitle: 'Zoom out'
@@ -858,7 +858,7 @@ const dashboard = new Vue({
 
             // Filter features based on current drill-down path
             let filteredGeojson = JSON.parse(JSON.stringify(geojson));
-            
+
             // Log drilldown path for debugging
             console.log(`[Level ${this.currentLevel}] Drilldown path:`, this.drill.path.map(p => ({
                 level: p.level,
@@ -866,27 +866,27 @@ const dashboard = new Vue({
                 levelIndex: p.levelIndex,
                 area_id: p.id
             })));
-            
+
             filteredGeojson.features = filteredGeojson.features.filter(feature => {
                 // For provincial level with no drill-down, show all provinces (parent_id null)
                 if (this.drill.path.length === 1) {
                     return feature.properties.parent_id == null;
                 }
-                
+
                 // For all levels, filter by parent_id of the most recent drill-down
                 const parent = this.drill.path[this.drill.path.length - 1];
                 const matches = feature.properties.parent_id === parent.id;
-                
+
                 // Log first few features for debugging
                 if (filteredGeojson.features.indexOf(feature) < 3) {
                     console.log(`[Level ${this.currentLevel}] Feature: area_id=${feature.properties.area_id}, area_name="${feature.properties.area_name}", parent_id=${feature.properties.parent_id}, looking for parent.id=${parent.id}, matches=${matches}`);
                 }
-                
+
                 return matches;
             });
 
             console.log(`[Level ${this.currentLevel}] Filtered features: ${filteredGeojson.features.length} out of ${geojson.features.length} total`);
-            
+
             // Log which features were found
             if (filteredGeojson.features.length > 0) {
                 console.log(`[Level ${this.currentLevel}] Found features:`, filteredGeojson.features.map(f => {
@@ -912,11 +912,11 @@ const dashboard = new Vue({
                     };
                 }));
             }
-            
+
             // If no features found, log more details
             if (filteredGeojson.features.length === 0 && this.drill.path.length > 1) {
                 const parent = this.drill.path[this.drill.path.length - 1];
-                console.warn(`[Level ${this.currentLevel}] No features found! Looking for parent_id=${parent.id} (${parent.name} ${parent.level}), but available parent_ids in data:`, 
+                console.warn(`[Level ${this.currentLevel}] No features found! Looking for parent_id=${parent.id} (${parent.name} ${parent.level}), but available parent_ids in data:`,
                     [...new Set(geojson.features.slice(0, 10).map(f => f.properties.parent_id))]);
             }
 
@@ -935,7 +935,7 @@ const dashboard = new Vue({
                 onEachFeature: function (feature, layer) {
                     const html_tooltip = vm.generateTooltip(feature);
                     layer.bindTooltip(html_tooltip);
-                    
+
                     // Handle double intent via rapid consecutive clicks as a robust fallback.
                     layer.on("click", async (e) => {
                         vm.featureHitInTick = true;
@@ -1015,7 +1015,7 @@ const dashboard = new Vue({
                         east: bounds.getEast(),
                         west: bounds.getWest()
                     } : 'null');
-                    
+
                     if (bounds && bounds.isValid()) {
                         // Validate bounds are within Zambia's approximate boundaries
                         // Zambia is roughly: lat -8 to -18, lng 22 to 33
@@ -1023,9 +1023,9 @@ const dashboard = new Vue({
                         const south = bounds.getSouth();
                         const east = bounds.getEast();
                         const west = bounds.getWest();
-                        
+
                         const isWithinZambia = north < -8 && south > -18 && east < 33 && west > 22;
-                        
+
                         if (!isWithinZambia) {
                             console.warn(`[Bounds] Calculated bounds are outside Zambia! North: ${north}, South: ${south}, East: ${east}, West: ${west}`);
                             console.warn(`[Bounds] Resetting to Zambia bounds instead`);
@@ -1038,20 +1038,20 @@ const dashboard = new Vue({
                             // Use minimal padding for tighter zoom to features
                             // For level 5 (EA), use even tighter padding since features are very small
                             const padding = this.currentLevel === 5 ? [3, 3] : [5, 5];
-                            this.map.fitBounds(bounds, { 
+                            this.map.fitBounds(bounds, {
                                 padding: padding,
                                 maxZoom: 18 // Allow deeper zoom for small features
                             });
                             // second invalidate to ensure tiles render correctly after fit
                             try { this.map.invalidateSize(); } catch (e) {}
-                            
+
                             // For level 5, ensure we can zoom in even more if needed
                             if (this.currentLevel === 5) {
                                 // Check if we're at max zoom and features are still small
                                 const currentZoom = this.map.getZoom();
                                 const boundsSize = bounds.getNorthEast().distanceTo(bounds.getSouthWest());
                                 console.log(`[Bounds] Level 5 - Current zoom: ${currentZoom}, bounds size: ${boundsSize.toFixed(2)}m`);
-                                
+
                                 // If bounds are very small and we're not at max zoom, try to zoom in more
                                 if (boundsSize < 50000 && currentZoom < 18) {
                                     // Manually zoom in a bit more
@@ -1128,13 +1128,13 @@ const dashboard = new Vue({
                 const regionAreaId = feature.properties.area_id;
 
                 console.log(`[Drill Down] Clicked on ${regionLevel}: "${regionName}" with area_id=${regionAreaId}, parent_id=${feature.properties.parent_id}`);
-            
+
             // Verify the clicked feature's area_id matches what's in the current GeoJSON cache
             // This helps detect cache mismatches
                 const currentGeojson = this.geojsonCache[this.currentLevel];
                 if (currentGeojson) {
-                    const matchingFeature = currentGeojson.features.find(f => 
-                        f.properties.area_name === regionName && 
+                    const matchingFeature = currentGeojson.features.find(f =>
+                        f.properties.area_name === regionName &&
                         f.properties.area_id === regionAreaId
                     );
                     if (!matchingFeature) {
@@ -1239,9 +1239,9 @@ const dashboard = new Vue({
             // Jump back to specific breadcrumb level
             // breadcrumbIndex 0 = Country (Zambia), breadcrumbIndex 1 = Province, breadcrumbIndex 2 = District, etc.
             // drill.path structure: [Zambia, Province, District, Constituency, ...]
-            
+
             console.log(`[Breadcrumb] Clicked on breadcrumb index ${breadcrumbIndex}`);
-            
+
             if (breadcrumbIndex === 0) {
                 // Clicked on Country (Zambia) - show all provinces (level 1)
                 this.drill.path = [{ level: this.drill.hierarchy[0], id: "ZM", name: "Zambia", levelIndex: 0 }];
@@ -1251,20 +1251,20 @@ const dashboard = new Vue({
                 // Get the breadcrumb that was clicked
                 const breadcrumbs = this.drilldownBreadcrumbs;
                 const clickedBreadcrumb = breadcrumbs[breadcrumbIndex];
-                
+
                 if (!clickedBreadcrumb) {
                     console.warn(`[Breadcrumb] Invalid breadcrumb index ${breadcrumbIndex}`);
                     return;
                 }
-                
+
                 // The clicked breadcrumb's levelIndex tells us what level to show
                 // Keep path up to and including the clicked breadcrumb.
                 this.drill.path = this.drill.path.slice(0, breadcrumbIndex + 1);
                 this.syncDrillState();
-                
+
                 console.log(`[Breadcrumb] Clicked on ${clickedBreadcrumb.name}, navigating to level ${this.currentLevel} (${LEVEL_CONFIG[this.currentLevel].label}), drilldownPath:`, this.drill.path.map(p => p.name));
             }
-            
+
             await this.refreshDashboardForDrillChange("breadcrumb_drill");
         },
         getColor(feature) {
@@ -1346,11 +1346,11 @@ const dashboard = new Vue({
             const areaName = feature.properties.area_name;
             const level = LEVEL_CONFIG[this.currentLevel].label;
             const count = this.getFeatureCount(feature);
-            
-            const drillHint = this.currentLevel < MAX_DRILL_LEVEL ? 
-                '<br><small style="font-style: italic;">(Double-click to drill down)</small>' : 
+
+            const drillHint = this.currentLevel < MAX_DRILL_LEVEL ?
+                '<br><small style="font-style: italic;">(Double-click to drill down)</small>' :
                 '<br><small style="font-style: italic;">(Max drill level reached)</small>';
-            
+
             const html_tooltip = `
                 <div class="mapTooltip">
                     <h4>${areaName}</h4>
@@ -1643,7 +1643,7 @@ const dashboard = new Vue({
             if (this.mapController && typeof this.mapController.resetDrill === "function") {
                 await this.mapController.resetDrill();
             }
-            
+
             await this.updateDataAndMap();
         },
         clearGeojsonCache() {

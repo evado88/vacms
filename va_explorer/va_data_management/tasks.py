@@ -1,6 +1,5 @@
 import logging
 from collections import defaultdict
-from math import ceil
 
 from celery.schedules import crontab
 from django.conf import settings
@@ -11,10 +10,14 @@ from config.settings.base import env
 from va_explorer.va_data_management.management.commands.import_from_kobo import (
     BATCH_SIZE,
 )
-from va_explorer.va_data_management.models import ClusterLocationCodes, Death, VerbalAutopsy
+from va_explorer.va_data_management.models import (
+    ClusterLocationCodes,
+    Death,
+    VerbalAutopsy,
+)
 from va_explorer.va_data_management.odk.config import get_odk_form_configs
 from va_explorer.va_data_management.odk.service import ODKPullService
-from va_explorer.va_data_management.utils import coding, kobo, odk
+from va_explorer.va_data_management.utils import coding, kobo
 from va_explorer.va_data_management.utils.loading import load_records_from_dataframe
 
 _CODING_BATCH_SIZE = 500
@@ -79,7 +82,11 @@ def run_coding_algorithms():
         run_coding_algorithms_batch.delay(batch_ids)
         num_batches += 1
 
-    logger.info("Coding orchestrator dispatched %d batch task(s) for %d VAs", num_batches, len(va_ids))
+    logger.info(
+        "Coding orchestrator dispatched %d batch task(s) for %d VAs",
+        num_batches,
+        len(va_ids),
+    )
     return {"num_batches": num_batches, "total_uncoded": len(va_ids)}
 
 
@@ -162,7 +169,10 @@ def pull_odk_scheduled(schedule_key=None):
     )
     configs = _odk_form_configs(schedule_key=schedule_key)
     if not configs:
-        logger.info("No ODK forms configured for scheduled pull", extra={"schedule_key": schedule_key})
+        logger.info(
+            "No ODK forms configured for scheduled pull",
+            extra={"schedule_key": schedule_key},
+        )
         return {}
     summary = service.pull_forms(configs)
     logger.info(
@@ -175,15 +185,13 @@ def pull_odk_scheduled(schedule_key=None):
 @app.task()
 def assign_death_ids_task():
     """Periodic task to assign death_ids to Death records without them.
-    
+
     Runs every 5 minutes to batch-assign sequential death_ids based on cluster codes.
     Format: cluster_code + 4-digit sequential number (e.g., 1213SM0001, 1213SM0002).
     """
     try:
         # Query deaths without death_id
-        deaths_qs = Death.objects.filter(
-            Q(death_id__isnull=True) | Q(death_id="")
-        )
+        deaths_qs = Death.objects.filter(Q(death_id__isnull=True) | Q(death_id=""))
         total_missing = deaths_qs.count()
 
         if total_missing == 0:
@@ -191,10 +199,10 @@ def assign_death_ids_task():
             return {
                 "status": "success",
                 "deaths_assigned": 0,
-                "message": "No deaths to process"
+                "message": "No deaths to process",
             }
 
-        logger.info(f"Found {total_missing} deaths without death_ids")
+        logger.info("Found %s deaths without death_ids", total_missing)
 
         # Group deaths by ward
         deaths_by_ward = defaultdict(list)
@@ -208,18 +216,18 @@ def assign_death_ids_task():
             return {
                 "status": "success",
                 "deaths_assigned": 0,
-                "message": "No wards in death records"
+                "message": "No wards in death records",
             }
 
         # Build mapping: ward_code -> cluster_code
         ward_to_cluster = {}
         missing_wards = []
-        
-        for ward_name in deaths_by_ward.keys():
+
+        for ward_name in deaths_by_ward:
             cluster_loc = ClusterLocationCodes.objects.filter(
                 ward_code__iexact=ward_name
             ).first()
-            
+
             if cluster_loc and cluster_loc.cluster_code:
                 ward_to_cluster[ward_name] = cluster_loc.cluster_code
             else:
@@ -227,8 +235,9 @@ def assign_death_ids_task():
 
         if missing_wards:
             logger.warning(
-                f"No cluster code found for {len(missing_wards)} ward(s): "
-                f"{', '.join(missing_wards[:5])}"
+                "No cluster code found for %s ward(s): %s",
+                len(missing_wards),
+                ", ".join(missing_wards[:5]),
             )
 
         # Assign death_ids
@@ -237,32 +246,33 @@ def assign_death_ids_task():
 
         for ward_name, deaths_in_ward in deaths_by_ward.items():
             cluster_code = ward_to_cluster.get(ward_name)
-            
+
             if not cluster_code:
                 logger.warning(
-                    f"Skipping {len(deaths_in_ward)} death(s) in ward '{ward_name}' "
-                    f"(no cluster code)"
+                    "Skipping %s death(s) in ward '%s' (no cluster code)",
+                    len(deaths_in_ward),
+                    ward_name,
                 )
                 continue
 
             # Get existing deaths in this ward to find next sequence
-            existing_deaths = Death.objects.filter(
-                ward__iexact=ward_name
-            ).exclude(
+            existing_deaths = Death.objects.filter(ward__iexact=ward_name).exclude(
                 Q(death_id__isnull=True) | Q(death_id="")
             )
-            
+
             # Extract sequence numbers from existing death_ids
             existing_sequences = []
             for existing_death in existing_deaths:
-                if existing_death.death_id and existing_death.death_id.startswith(cluster_code):
-                    suffix = existing_death.death_id[len(cluster_code):]
+                if existing_death.death_id and existing_death.death_id.startswith(
+                    cluster_code
+                ):
+                    suffix = existing_death.death_id[len(cluster_code) :]
                     try:
                         seq_num = int(suffix)
                         existing_sequences.append(seq_num)
                     except ValueError:
                         pass
-            
+
             next_seq = max(existing_sequences) + 1 if existing_sequences else 1
 
             # Assign sequential death_ids
@@ -278,25 +288,20 @@ def assign_death_ids_task():
             return {
                 "status": "success",
                 "deaths_assigned": 0,
-                "message": "No deaths with valid cluster codes"
+                "message": "No deaths with valid cluster codes",
             }
 
         # Persist changes
         Death.objects.bulk_update(deaths_to_update, ["death_id"], batch_size=1000)
-        
-        logger.info(f"Successfully assigned death_ids to {assignments_count} death(s)")
+
+        logger.info("Successfully assigned death_ids to %s death(s)", assignments_count)
         return {
             "status": "success",
             "deaths_assigned": assignments_count,
             "wards_processed": len(ward_to_cluster),
-            "wards_skipped": len(missing_wards)
+            "wards_skipped": len(missing_wards),
         }
 
     except Exception as e:
-        logger.error(f"Error in assign_death_ids_task: {str(e)}", exc_info=True)
-        return {
-            "status": "error",
-            "error": str(e)
-        }
-
-
+        logger.exception("Error in assign_death_ids_task: %s", e)
+        return {"status": "error", "error": str(e)}

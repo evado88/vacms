@@ -10,7 +10,11 @@ from django.db.models import Count, Max, Q
 from simple_history.utils import bulk_create_with_history
 
 from va_explorer.users.utils.demo_users import make_field_workers_for_facilities
-from va_explorer.va_data_management.models import Location, VerbalAutopsy, SRSClusterLocation
+from va_explorer.va_data_management.models import (
+    Location,
+    SRSClusterLocation,
+    VerbalAutopsy,
+)
 from va_explorer.va_data_management.odk.normalization import build_odk_rename_map
 from va_explorer.va_data_management.utils.date_parsing import parse_date
 from va_explorer.va_data_management.utils.location_assignment import (
@@ -22,14 +26,18 @@ from ..constants import _checkbox_choices
 
 User = get_user_model()
 
+
 def normalize_string(s):
     """Strip whitespace, replace hyphens with underscores, remove surrounding quotes."""
     if pd.isnull(s):
         return ""
     s = str(s).strip().replace("-", "_")
-    if s.startswith(("'", '"')): s = s[1:]
-    if s.endswith(("'", '"')): s = s[:-1]
+    if s.startswith(("'", '"')):
+        s = s[1:]
+    if s.endswith(("'", '"')):
+        s = s[:-1]
     return s
+
 
 def normalize_value(val):
     """Remove leading zeros, normalize .0 floats to int, preserve case."""
@@ -41,7 +49,7 @@ def normalize_value(val):
             val = int(val)
         s = str(val).strip()
         # If string looks like '1.0', '02.0', etc.
-        if s.replace('.', '', 1).isdigit():
+        if s.replace(".", "", 1).isdigit():
             float_val = float(s)
             if float_val.is_integer():
                 s = str(int(float_val))
@@ -85,10 +93,7 @@ def normalize_community_va_value(
             if normalized in {"no", "n", "false", "0"}:
                 return "no"
 
-    if any(
-        _has_meaningful_value(v)
-        for v in (district, constituency, ward, ea)
-    ):
+    if any(_has_meaningful_value(v) for v in (district, constituency, ward, ea)):
         return "yes"
 
     if _has_meaningful_value(area) and _has_meaningful_value(hospital):
@@ -117,7 +122,9 @@ def build_srs_location_maps():
         "all_by_id": {},
         "lineage_cache": {},
     }
-    for loc in SRSClusterLocation.objects.only("id", "name", "code", "location_type").iterator():
+    for loc in SRSClusterLocation.objects.only(
+        "id", "name", "code", "location_type"
+    ).iterator():
         level = _normalized_geo_token(loc.location_type)
         if level not in maps:
             continue
@@ -262,6 +269,7 @@ def resolve_srs_cluster_from_row(row, srs_maps):
             return match
     return None
 
+
 def normalize_dataframe_columns(df, model):
     """
     Rename and filter DataFrame columns to align with model fields.
@@ -279,12 +287,9 @@ def normalize_dataframe_columns(df, model):
 
     return df
 
+
 def load_odk_csv_to_model(
-    df,
-    model,
-    odk_choices_queryset,
-    odk_map_columns,
-    verbose=False
+    df, model, odk_choices_queryset, odk_map_columns, verbose=False
 ):
     """
     Generic loader for ODK CSV to Django model, using ODKFormChoice for value-to-label mapping.
@@ -311,7 +316,7 @@ def load_odk_csv_to_model(
         elif col not in df.columns and verbose:
             print(f"Column '{col}' not in DataFrame")
         elif col not in odk_map and verbose:
-            print(f"Column '{col}' not in odk_map") 
+            print(f"Column '{col}' not in odk_map")
 
     # Remove duplicate columns after renaming
     df = df.loc[:, ~df.columns.duplicated()]
@@ -322,8 +327,10 @@ def load_odk_csv_to_model(
 
     # Identify integer fields in the model
     int_fields = [
-        f.name for f in model._meta.get_fields()
-        if getattr(f, "get_internal_type", lambda: None)() in [
+        f.name
+        for f in model._meta.get_fields()
+        if getattr(f, "get_internal_type", lambda: None)()
+        in [
             "IntegerField",
             "BigIntegerField",
             "SmallIntegerField",
@@ -335,7 +342,8 @@ def load_odk_csv_to_model(
     # Handle ForeignKey: cluster → SRSClusterLocation
     if "cluster" in df.columns:
         cluster_map = {
-            str(loc.code): loc for loc in SRSClusterLocation.objects.exclude(code__isnull=True)
+            str(loc.code): loc
+            for loc in SRSClusterLocation.objects.exclude(code__isnull=True)
         }
 
         def get_cluster_instance(code):
@@ -354,7 +362,6 @@ def load_odk_csv_to_model(
         for row in df.to_dict(orient="records")
     ]
     return objects
-
 
 
 # load VA records into django database
@@ -716,14 +723,8 @@ def get_va_summary_stats(vas, filter_fields=False, cache_key="va_summary_stats")
         ineligible_count = vas.filter(
             Q(Id10023__in=["DK", "dk"])
             | Q(Id10023__isnull=True)
-            | (
-                Q(community_va__iexact="yes")
-                & Q(cluster__isnull=True)
-            )
-            | (
-                ~Q(community_va__iexact="yes")
-                & Q(location__isnull=True)
-            )
+            | (Q(community_va__iexact="yes") & Q(cluster__isnull=True))
+            | (~Q(community_va__iexact="yes") & Q(location__isnull=True))
         ).count()
 
         stats = {

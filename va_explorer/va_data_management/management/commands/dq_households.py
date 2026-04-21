@@ -16,12 +16,12 @@ from django.utils.dateparse import parse_date, parse_datetime
 from va_explorer.va_data_management.models import Household
 from va_explorer.va_data_management.models.data_quality import DataQualityIssue
 from va_explorer.va_data_management.utils.dq import (
-    upsert_issue,
     resolve_missing_issues,
     upsert_duration_issue_if_short,
-    upsert_timeliness_issue_if_late,
     upsert_household_completeness_issue,
     upsert_household_consent_issue_if_invalid,  # NEW
+    upsert_issue,
+    upsert_timeliness_issue_if_late,
 )
 
 
@@ -70,13 +70,13 @@ class Command(BaseCommand):
     )
 
     # -------- Fixed constants --------
-    TIME_WINDOW = timedelta(days=1)          # duplicates EA+HUN+HHN within 1 day
-    MIN_DURATION = timedelta(minutes=15)     # short interviews < 15m
-    MAX_DELAY = timedelta(days=2)            # late submission > 2 days
+    TIME_WINDOW = timedelta(days=1)  # duplicates EA+HUN+HHN within 1 day
+    MIN_DURATION = timedelta(minutes=15)  # short interviews < 15m
+    MAX_DELAY = timedelta(days=2)  # late submission > 2 days
     OUT_CSV = Path("reports/dq_households.csv")
     OUT_JSON = Path("reports/dq_households.json")
-    LIMIT = 0                                # 0 = no limit
-    RESOLVE_MISSING = True                   # resolve stale issues automatically
+    LIMIT = 0  # 0 = no limit
+    RESOLVE_MISSING = True  # resolve stale issues automatically
 
     def add_arguments(self, parser):
         # No user-provided arguments
@@ -98,18 +98,34 @@ class Command(BaseCommand):
                 hh_fields_all.append(f.name)
 
         value_fields = [
-            "id", "key",
-            "province", "district", "constituency", "ward",
-            "ea", "hun", "hhn",
-            "start", "end", "today",
-            "submission_date", "submit_time",
-            "enumerator", "respondent",
+            "id",
+            "key",
+            "province",
+            "district",
+            "constituency",
+            "ward",
+            "ea",
+            "hun",
+            "hhn",
+            "start",
+            "end",
+            "today",
+            "submission_date",
+            "submit_time",
+            "enumerator",
+            "respondent",
             # MVR / consent fields
-            "HH_01", "HH_02", "household", "result_list", "result_other",
+            "HH_01",
+            "HH_02",
+            "household",
+            "result_list",
+            "result_other",
             "consent",
             *hh_fields_all,
         ]
-        value_fields = list(dict.fromkeys(value_fields))  # de-dup while preserving order
+        value_fields = list(
+            dict.fromkeys(value_fields)
+        )  # de-dup while preserving order
 
         qs = Household.objects.all().values(*value_fields)
         if limit > 0:
@@ -172,9 +188,17 @@ class Command(BaseCommand):
 
         def exact_key(row) -> Tuple[Optional[str], ...]:
             return (
-                row["province"], row["district"], row["constituency"], row["ward"],
-                row["ea"], row["hun"], row["hhn"],
-                row["start"], row["end"], row["enumerator"], row["respondent"],
+                row["province"],
+                row["district"],
+                row["constituency"],
+                row["ward"],
+                row["ea"],
+                row["hun"],
+                row["hhn"],
+                row["start"],
+                row["end"],
+                row["enumerator"],
+                row["respondent"],
             )
 
         for row in normed:
@@ -183,20 +207,30 @@ class Command(BaseCommand):
         for key_tuple, ids in exact_groups.items():
             if len(ids) > 1:
                 keys_dict = {
-                    "province": key_tuple[0], "district": key_tuple[1],
-                    "constituency": key_tuple[2], "ward": key_tuple[3],
-                    "ea": key_tuple[4], "hun": key_tuple[5], "hhn": key_tuple[6],
-                    "start": key_tuple[7], "end": key_tuple[8],
-                    "enumerator": key_tuple[9], "respondent": key_tuple[10],
+                    "province": key_tuple[0],
+                    "district": key_tuple[1],
+                    "constituency": key_tuple[2],
+                    "ward": key_tuple[3],
+                    "ea": key_tuple[4],
+                    "hun": key_tuple[5],
+                    "hhn": key_tuple[6],
+                    "start": key_tuple[7],
+                    "end": key_tuple[8],
+                    "enumerator": key_tuple[9],
+                    "respondent": key_tuple[10],
                 }
-                findings.append(Finding(
-                    kind="exact_fields",
-                    household_ids=sorted(ids),
-                    keys=keys_dict,
-                    details={"count": str(len(ids))},
-                ))
+                findings.append(
+                    Finding(
+                        kind="exact_fields",
+                        household_ids=sorted(ids),
+                        keys=keys_dict,
+                        details={"count": str(len(ids))},
+                    )
+                )
 
-        tri_groups: Dict[Tuple[Optional[str], Optional[str], Optional[str]], List[dict]] = defaultdict(list)
+        tri_groups: Dict[
+            Tuple[Optional[str], Optional[str], Optional[str]], List[dict]
+        ] = defaultdict(list)
         for row in normed:
             tri_groups[(row["ea"], row["hun"], row["hhn"])].append(row)
 
@@ -205,7 +239,9 @@ class Command(BaseCommand):
             if not (ea and hun and hhn):
                 continue
 
-            def best_dt(r): return r["start_dt"] or r["end_dt"]
+            def best_dt(r):
+                return r["start_dt"] or r["end_dt"]
+
             members = [m for m in members if best_dt(m) is not None]
             if len(members) < 2:
                 continue
@@ -232,32 +268,45 @@ class Command(BaseCommand):
             if current_cluster:
                 cluster_ids.extend(current_cluster)
 
-            cluster_ids = sorted(list(set(cluster_ids)))
+            cluster_ids = sorted(set(cluster_ids))
             if len(cluster_ids) >= 2:
                 times = [best_dt(m) for m in members if m["id"] in cluster_ids]
                 min_t = min(times) if times else None
                 max_t = max(times) if times else None
-                findings.append(Finding(
-                    kind="ea_hun_hhn_time",
-                    household_ids=cluster_ids,
-                    keys={"ea": ea, "hun": hun, "hhn": hhn},
-                    details={
-                        "window": str(window),
-                        "first_seen": min_t.isoformat() if min_t else "",
-                        "last_seen": max_t.isoformat() if max_t else "",
-                        "count": str(len(cluster_ids)),
-                    },
-                ))
+                findings.append(
+                    Finding(
+                        kind="ea_hun_hhn_time",
+                        household_ids=cluster_ids,
+                        keys={"ea": ea, "hun": hun, "hhn": hhn},
+                        details={
+                            "window": str(window),
+                            "first_seen": min_t.isoformat() if min_t else "",
+                            "last_seen": max_t.isoformat() if max_t else "",
+                            "count": str(len(cluster_ids)),
+                        },
+                    )
+                )
 
         admin_groups: Dict[
-            Tuple[Optional[str], Optional[str], Optional[str], Optional[str], Optional[str], Optional[str]],
+            Tuple[
+                Optional[str],
+                Optional[str],
+                Optional[str],
+                Optional[str],
+                Optional[str],
+                Optional[str],
+            ],
             List[int],
         ] = defaultdict(list)
 
         def admin_key(row):
             return (
-                row["province"], row["district"], row["constituency"], row["ward"],
-                row["hun"], row["hhn"],
+                row["province"],
+                row["district"],
+                row["constituency"],
+                row["ward"],
+                row["hun"],
+                row["hhn"],
             )
 
         for row in normed:
@@ -269,16 +318,21 @@ class Command(BaseCommand):
         for k, ids in admin_groups.items():
             if len(ids) > 1:
                 keys_dict = {
-                    "province": k[0], "district": k[1],
-                    "constituency": k[2], "ward": k[3],
-                    "hun": k[4], "hhn": k[5],
+                    "province": k[0],
+                    "district": k[1],
+                    "constituency": k[2],
+                    "ward": k[3],
+                    "hun": k[4],
+                    "hhn": k[5],
                 }
-                findings.append(Finding(
-                    kind="admin_hun_hhn",
-                    household_ids=sorted(ids),
-                    keys=keys_dict,
-                    details={"count": str(len(ids))},
-                ))
+                findings.append(
+                    Finding(
+                        kind="admin_hun_hhn",
+                        household_ids=sorted(ids),
+                        keys=keys_dict,
+                        details={"count": str(len(ids))},
+                    )
+                )
 
         # Prioritize & collapse overlapping duplicate groups
         PRIORITY = {"exact_fields": 0, "ea_hun_hhn_time": 1, "admin_hun_hhn": 2}
@@ -320,15 +374,17 @@ class Command(BaseCommand):
                 active_duration_signatures.append(issue.signature)
                 if row["start_dt"] and row["end_dt"]:
                     dur = row["end_dt"] - row["start_dt"]
-                    duration_findings.append(Finding(
-                        kind="short_duration",
-                        household_ids=[row["id"]],
-                        keys={"start": row["start"], "end": row["end"]},
-                        details={
-                            "duration_minutes": f"{dur.total_seconds() / 60:.2f}",
-                            "threshold": str(min_duration),
-                        },
-                    ))
+                    duration_findings.append(
+                        Finding(
+                            kind="short_duration",
+                            household_ids=[row["id"]],
+                            keys={"start": row["start"], "end": row["end"]},
+                            details={
+                                "duration_minutes": f"{dur.total_seconds() / 60:.2f}",
+                                "threshold": str(min_duration),
+                            },
+                        )
+                    )
 
         # -------- Timeliness --------
         timeliness_findings: List[Finding] = []
@@ -349,20 +405,22 @@ class Command(BaseCommand):
                 submitted_dt = row["submit_time_dt"] or row["submission_date_dt"]
                 if interview_dt and submitted_dt:
                     delay = submitted_dt - interview_dt
-                    timeliness_findings.append(Finding(
-                        kind="submission_timeliness",
-                        household_ids=[row["id"]],
-                        keys={
-                            "start": row["start"],
-                            "today": row["today"],
-                            "submission_date": row["submission_date"],
-                            "submit_time": row["submit_time"],
-                        },
-                        details={
-                            "delay_hours": f"{delay.total_seconds()/3600:.2f}",
-                            "threshold": str(max_delay),
-                        },
-                    ))
+                    timeliness_findings.append(
+                        Finding(
+                            kind="submission_timeliness",
+                            household_ids=[row["id"]],
+                            keys={
+                                "start": row["start"],
+                                "today": row["today"],
+                                "submission_date": row["submission_date"],
+                                "submit_time": row["submit_time"],
+                            },
+                            details={
+                                "delay_hours": f"{delay.total_seconds()/3600:.2f}",
+                                "threshold": str(max_delay),
+                            },
+                        )
+                    )
 
         # -------- Completeness (MVR) --------
         completeness_findings: List[Finding] = []
@@ -381,19 +439,21 @@ class Command(BaseCommand):
             )
             if issue:
                 active_incomplete_signatures.append(issue.signature)
-                completeness_findings.append(Finding(
-                    kind="mvr_completeness",
-                    household_ids=[row["id"]],
-                    keys={
-                        "HH_01": row.get("HH_01_raw"),
-                        "HH_02": row.get("HH_02_raw"),
-                        "household": row.get("household_raw"),
-                        "enumerator": row.get("enumerator_raw"),
-                        "result_list": row.get("result_list_raw"),
-                        "result_other": row.get("result_other_raw"),
-                    },
-                    details={"note": "Minimum Viable Record rule violated"},
-                ))
+                completeness_findings.append(
+                    Finding(
+                        kind="mvr_completeness",
+                        household_ids=[row["id"]],
+                        keys={
+                            "HH_01": row.get("HH_01_raw"),
+                            "HH_02": row.get("HH_02_raw"),
+                            "household": row.get("household_raw"),
+                            "enumerator": row.get("enumerator_raw"),
+                            "result_list": row.get("result_list_raw"),
+                            "result_other": row.get("result_other_raw"),
+                        },
+                        details={"note": "Minimum Viable Record rule violated"},
+                    )
+                )
 
         # -------- Consent (NEW) --------
         consent_findings: List[Finding] = []
@@ -407,15 +467,17 @@ class Command(BaseCommand):
             )
             if issue:
                 active_consent_signatures.append(issue.signature)
-                consent_findings.append(Finding(
-                    kind="consent",
-                    household_ids=[row["id"]],
-                    keys={
-                        "household": row.get("household_raw"),
-                        "consent": row.get("consent_raw"),
-                    },
-                    details={"subtype": "household_consent_missing_or_invalid"},
-                ))
+                consent_findings.append(
+                    Finding(
+                        kind="consent",
+                        household_ids=[row["id"]],
+                        keys={
+                            "household": row.get("household_raw"),
+                            "consent": row.get("consent_raw"),
+                        },
+                        details={"subtype": "household_consent_missing_or_invalid"},
+                    )
+                )
 
         # -------- Resolve stale issues (optional) --------
         if resolve_missing:
@@ -425,7 +487,11 @@ class Command(BaseCommand):
                 active_signatures=active_duplicate_signatures,
             )
             if n_resolved_dupes:
-                self.stdout.write(self.style.WARNING(f"Marked {n_resolved_dupes} stale duplicate groups as resolved."))
+                self.stdout.write(
+                    self.style.WARNING(
+                        f"Marked {n_resolved_dupes} stale duplicate groups as resolved."
+                    )
+                )
 
             n_resolved_duration = resolve_missing_issues(
                 issue_type=DataQualityIssue.DURATION,
@@ -433,7 +499,11 @@ class Command(BaseCommand):
                 active_signatures=active_duration_signatures,
             )
             if n_resolved_duration:
-                self.stdout.write(self.style.WARNING(f"Marked {n_resolved_duration} stale short-duration issues as resolved."))
+                self.stdout.write(
+                    self.style.WARNING(
+                        f"Marked {n_resolved_duration} stale short-duration issues as resolved."
+                    )
+                )
 
             n_resolved_timeliness = resolve_missing_issues(
                 issue_type=DataQualityIssue.TIMELINESS,
@@ -441,7 +511,11 @@ class Command(BaseCommand):
                 active_signatures=active_timeliness_signatures,
             )
             if n_resolved_timeliness:
-                self.stdout.write(self.style.WARNING(f"Marked {n_resolved_timeliness} stale timeliness issues as resolved."))
+                self.stdout.write(
+                    self.style.WARNING(
+                        f"Marked {n_resolved_timeliness} stale timeliness issues as resolved."
+                    )
+                )
 
             n_resolved_incomplete = resolve_missing_issues(
                 issue_type=DataQualityIssue.INCOMPLETE,
@@ -449,7 +523,11 @@ class Command(BaseCommand):
                 active_signatures=active_incomplete_signatures,
             )
             if n_resolved_incomplete:
-                self.stdout.write(self.style.WARNING(f"Marked {n_resolved_incomplete} stale completeness issues as resolved."))
+                self.stdout.write(
+                    self.style.WARNING(
+                        f"Marked {n_resolved_incomplete} stale completeness issues as resolved."
+                    )
+                )
 
             n_resolved_consent = resolve_missing_issues(
                 issue_type=DataQualityIssue.CONSENT,
@@ -457,17 +535,39 @@ class Command(BaseCommand):
                 active_signatures=active_consent_signatures,
             )
             if n_resolved_consent:
-                self.stdout.write(self.style.WARNING(f"Marked {n_resolved_consent} stale consent issues as resolved."))
+                self.stdout.write(
+                    self.style.WARNING(
+                        f"Marked {n_resolved_consent} stale consent issues as resolved."
+                    )
+                )
 
         # -------- Output / Reports --------
         kinds = defaultdict(int)
-        for group in (findings, duration_findings, timeliness_findings, completeness_findings, consent_findings):
+        for group in (
+            findings,
+            duration_findings,
+            timeliness_findings,
+            completeness_findings,
+            consent_findings,
+        ):
             for f in group:
                 kinds[f.kind] += 1
 
         self.stdout.write(self.style.SUCCESS("Household data-quality checks complete."))
-        if not any([findings, duration_findings, timeliness_findings, completeness_findings, consent_findings]):
-            self.stdout.write(self.style.SUCCESS("No duplicate, duration, timeliness, completeness, or consent issues found."))
+        if not any(
+            [
+                findings,
+                duration_findings,
+                timeliness_findings,
+                completeness_findings,
+                consent_findings,
+            ]
+        ):
+            self.stdout.write(
+                self.style.SUCCESS(
+                    "No duplicate, duration, timeliness, completeness, or consent issues found."
+                )
+            )
         else:
             self.stdout.write("Groups by category:")
             for kind, n in kinds.items():
@@ -479,13 +579,23 @@ class Command(BaseCommand):
             with out_csv.open("w", newline="", encoding="utf-8") as fh:
                 w = csv.writer(fh)
                 w.writerow(["kind", "household_ids", "keys", "details"])
-                for f in (findings + duration_findings + timeliness_findings + completeness_findings + consent_findings):
-                    w.writerow([
-                        f.kind,
-                        ";".join(str(x) for x in f.household_ids),
-                        json.dumps(f.keys, ensure_ascii=False),
-                        json.dumps({"subtype": f.kind, **f.details}, ensure_ascii=False),
-                    ])
+                for f in (
+                    findings
+                    + duration_findings
+                    + timeliness_findings
+                    + completeness_findings
+                    + consent_findings
+                ):
+                    w.writerow(
+                        [
+                            f.kind,
+                            ";".join(str(x) for x in f.household_ids),
+                            json.dumps(f.keys, ensure_ascii=False),
+                            json.dumps(
+                                {"subtype": f.kind, **f.details}, ensure_ascii=False
+                            ),
+                        ]
+                    )
             self.stdout.write(self.style.SUCCESS(f"Wrote CSV report → {out_csv}"))
 
         if out_json:
@@ -500,7 +610,13 @@ class Command(BaseCommand):
                                 "keys": f.keys,
                                 "details": {"subtype": f.kind, **f.details},
                             }
-                            for f in (findings + duration_findings + timeliness_findings + completeness_findings + consent_findings)
+                            for f in (
+                                findings
+                                + duration_findings
+                                + timeliness_findings
+                                + completeness_findings
+                                + consent_findings
+                            )
                         ],
                     ],
                     fh,

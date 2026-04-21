@@ -118,7 +118,9 @@ def build_test_db():
 class TestAPIView:
     def test_household_csv_download(self, user: User):
         build_test_db()
-        Household.objects.create(key="hh-export-1", today="2026-01-01", province="Central")
+        Household.objects.create(
+            key="hh-export-1", today="2026-01-01", province="Central"
+        )
 
         c = Client()
         c.force_login(user=user)
@@ -126,7 +128,10 @@ class TestAPIView:
         response = c.post(POST_URL, data={"dataset": "household", "format": "csv"})
         assert response.status_code == 200
         assert response.headers["content-type"] == FILE_CONTENT_TYPE
-        assert response.headers["content-disposition"] == "attachment; filename=household.csv.zip"
+        assert (
+            response.headers["content-disposition"]
+            == "attachment; filename=household.csv.zip"
+        )
 
         try:
             f = io.BytesIO(response.content)
@@ -139,7 +144,9 @@ class TestAPIView:
 
     def test_pregnancy_csv_download(self, user: User):
         build_test_db()
-        Pregnancy.objects.create(key="preg-export-1", today="2026-01-02", PE_06="Jane Doe")
+        Pregnancy.objects.create(
+            key="preg-export-1", today="2026-01-02", PE_06="Jane Doe"
+        )
 
         c = Client()
         c.force_login(user=user)
@@ -147,7 +154,10 @@ class TestAPIView:
         response = c.post(POST_URL, data={"dataset": "pregnancy", "format": "csv"})
         assert response.status_code == 200
         assert response.headers["content-type"] == FILE_CONTENT_TYPE
-        assert response.headers["content-disposition"] == "attachment; filename=pregnancy.csv.zip"
+        assert (
+            response.headers["content-disposition"]
+            == "attachment; filename=pregnancy.csv.zip"
+        )
 
         try:
             f = io.BytesIO(response.content)
@@ -160,21 +170,30 @@ class TestAPIView:
 
     def test_pregnancy_outcome_csv_download(self, user: User):
         build_test_db()
-        PregnancyOutcome.objects.create(key="po-export-1", today="2026-01-03", PO_04="Mother")
+        PregnancyOutcome.objects.create(
+            key="po-export-1", today="2026-01-03", PO_04="Mother"
+        )
 
         c = Client()
         c.force_login(user=user)
 
-        response = c.post(POST_URL, data={"dataset": "pregnancy_outcome", "format": "csv"})
+        response = c.post(
+            POST_URL, data={"dataset": "pregnancy_outcome", "format": "csv"}
+        )
         assert response.status_code == 200
         assert response.headers["content-type"] == FILE_CONTENT_TYPE
-        assert response.headers["content-disposition"] == "attachment; filename=pregnancy_outcome.csv.zip"
+        assert (
+            response.headers["content-disposition"]
+            == "attachment; filename=pregnancy_outcome.csv.zip"
+        )
 
         try:
             f = io.BytesIO(response.content)
             zipped_file = zipfile.ZipFile(f, "r")
             assert "pregnancy_outcome_download.csv" in zipped_file.namelist()
-            assert len(zipped_file.open("pregnancy_outcome_download.csv").readlines()) >= 2
+            assert (
+                len(zipped_file.open("pregnancy_outcome_download.csv").readlines()) >= 2
+            )
         finally:
             zipped_file.close()
             f.close()
@@ -189,7 +208,10 @@ class TestAPIView:
         response = c.post(POST_URL, data={"dataset": "death", "format": "csv"})
         assert response.status_code == 200
         assert response.headers["content-type"] == FILE_CONTENT_TYPE
-        assert response.headers["content-disposition"] == "attachment; filename=death.csv.zip"
+        assert (
+            response.headers["content-disposition"]
+            == "attachment; filename=death.csv.zip"
+        )
 
         try:
             f = io.BytesIO(response.content)
@@ -256,7 +278,7 @@ class TestAPIView:
     def test_download_csv_with_no_matching_vas(self, user: User):
         test_data = build_test_db()
         # only download data from "No VA Facility", which will have no matching VAs
-        no_va_facility = Location.objects.get(name="Empty Facility")
+        Location.objects.get(name="Empty Facility")
 
         c = Client()
         c.force_login(user=user)
@@ -287,7 +309,7 @@ class TestAPIView:
     def test_download_json_with_no_matching_vas(self, user: User):
         test_data = build_test_db()
         # only download data from "No VA Facility", which will have no matching VAs
-        no_va_facility = Location.objects.get(name="Empty Facility")
+        Location.objects.get(name="Empty Facility")
 
         c = Client()
         c.force_login(user=user)
@@ -320,7 +342,7 @@ class TestAPIView:
         test_data = build_test_db()
         # only download data from location a
         province = Location.objects.get(location_type="province")
-        facility_1 = Location.objects.get(
+        Location.objects.get(
             path_string=f"{province.name} Province/District1 District/Facility1"
         )
 
@@ -391,7 +413,9 @@ class TestAPIView:
             zipped_file.close()
             f.close()
 
-    def test_id_filter_includes_community_va_without_facility_location(self, user: User):
+    def test_id_filter_includes_community_va_without_facility_location(
+        self, user: User
+    ):
         test_data = build_test_db()
         srs_constituency = test_data["srs_district1"].add_child(
             name="Constituency 2", location_type="constituency"

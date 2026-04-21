@@ -57,7 +57,9 @@ class TestPregnancyOutcomesQuerysetBuilder:
         live = self._create_po(key="po-live", po_group="Live Birth")
         still = self._create_po(key="po-still", po_group="Stillbirth")
 
-        request = rf.get("/va_analytics/outcomes-dashboard/", {"pregnancy_outcome": "Stillbirth"})
+        request = rf.get(
+            "/va_analytics/outcomes-dashboard/", {"pregnancy_outcome": "Stillbirth"}
+        )
         qs = build_pregnancy_outcomes_qs(request)
 
         assert list(qs.values_list("key", flat=True)) == [still.key]
@@ -68,10 +70,14 @@ class TestPregnancyOutcomesQuerysetBuilder:
         recent_date = (now - timedelta(days=1)).strftime("%Y-%m-%d")
         old_date = (now - timedelta(days=20)).strftime("%Y-%m-%d")
 
-        recent = self._create_po(key="po-recent", PO_41=recent_date, submissiondate=recent_date)
+        recent = self._create_po(
+            key="po-recent", PO_41=recent_date, submissiondate=recent_date
+        )
         old = self._create_po(key="po-old", PO_41=old_date, submissiondate=old_date)
 
-        request = rf.get("/va_analytics/outcomes-dashboard/", {"time_preset": "last_7_days"})
+        request = rf.get(
+            "/va_analytics/outcomes-dashboard/", {"time_preset": "last_7_days"}
+        )
         qs = build_pregnancy_outcomes_qs(request)
 
         keys = set(qs.values_list("key", flat=True))

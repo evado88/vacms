@@ -1,31 +1,39 @@
 import json
 import subprocess
 import sys
+from pathlib import Path
+
+from django import forms
+from django.conf import settings
 from django.contrib import messages
-from django.shortcuts import redirect, render
+from django.contrib.auth.decorators import login_required
+from django.db.models import Count, Q
 from django.http import (
-    HttpResponse,
     HttpResponseForbidden,
     JsonResponse,
     StreamingHttpResponse,
 )
+from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils import timezone
-from django import forms
-from django.conf import settings
-from pathlib import Path
+from django.utils.decorators import method_decorator
 from django.views import View
 from django.views.decorators.http import require_POST
-from django.contrib.auth.decorators import login_required
-from django.utils.decorators import method_decorator
 from django.views.generic import (
-    ListView,
-    DetailView,
     CreateView,
+    DetailView,
+    ListView,
     UpdateView,
-    DeleteView,
 )  # new
-from django.db.models import Case, Count, When, Value, IntegerField, Q
+
+from va_explorer.va_data_management.models import Death
+from va_explorer.vacms.admin_panel import (
+    ADMINS_GROUP_NAME,
+    ALLOWLIST,
+    STANDARD_FILENAME_PLACEHOLDERS,
+    grouped_command_specs,
+    resolve_data_file,
+)
 
 # Create your views here.
 from va_explorer.vacms.cmsmodels.events import Event
@@ -34,15 +42,6 @@ from va_explorer.vacms.notifications import (
     ensure_va_schedule_message,
     remove_va_schedule_message,
 )
-from va_explorer.vacms.admin_panel import (
-    ALLOWLIST,
-    ADMINS_GROUP_NAME,
-    STANDARD_FILENAME_PLACEHOLDERS,
-    grouped_command_specs,
-    resolve_data_file,
-)
-from va_explorer.va_data_management.models import Death
-
 
 ALLOWED_VA_SCHEDULER_GROUPS = ("Admins", "Data Managers")
 
@@ -60,10 +59,7 @@ def user_can_manage_va_schedule(user):
 def user_can_access_admin_panel(user):
     return bool(
         getattr(user, "is_authenticated", False)
-        and (
-            user.is_superuser
-            or user.groups.filter(name=ADMINS_GROUP_NAME).exists()
-        )
+        and (user.is_superuser or user.groups.filter(name=ADMINS_GROUP_NAME).exists())
     )
 
 
@@ -83,13 +79,23 @@ class EventListView(ListView):
     }
 
     def get_queryset(self):
-        queryset = super().get_queryset().select_related(
-            "death", "pregnancy", "pregnancy_outcome", "household", "va_interview_staff"
+        queryset = (
+            super()
+            .get_queryset()
+            .select_related(
+                "death",
+                "pregnancy",
+                "pregnancy_outcome",
+                "household",
+                "va_interview_staff",
+            )
         )
         queryset = self._apply_filters(queryset)
         order_by_raw = self.request.GET.get("order_by", "interview_scheduled_date")
         direction = "-" if order_by_raw.startswith("-") else ""
-        db_field = self._SORT_FIELDS.get(order_by_raw.lstrip("-"), "interview_scheduled_date")
+        db_field = self._SORT_FIELDS.get(
+            order_by_raw.lstrip("-"), "interview_scheduled_date"
+        )
         return queryset.order_by(direction + db_field, "id")
 
     def get_context_data(self, **kwargs):
@@ -141,24 +147,24 @@ class EventListView(ListView):
 
         if filters["province"]:
             queryset = queryset.filter(
-                Q(death__province__icontains=filters["province"]) |
-                Q(pregnancy__province__icontains=filters["province"]) |
-                Q(pregnancy_outcome__province__icontains=filters["province"]) |
-                Q(household__province__icontains=filters["province"])
+                Q(death__province__icontains=filters["province"])
+                | Q(pregnancy__province__icontains=filters["province"])
+                | Q(pregnancy_outcome__province__icontains=filters["province"])
+                | Q(household__province__icontains=filters["province"])
             )
         if filters["district"]:
             queryset = queryset.filter(
-                Q(death__district__icontains=filters["district"]) |
-                Q(pregnancy__district__icontains=filters["district"]) |
-                Q(pregnancy_outcome__district__icontains=filters["district"]) |
-                Q(household__district__icontains=filters["district"])
+                Q(death__district__icontains=filters["district"])
+                | Q(pregnancy__district__icontains=filters["district"])
+                | Q(pregnancy_outcome__district__icontains=filters["district"])
+                | Q(household__district__icontains=filters["district"])
             )
         if filters["interview_status"]:
             queryset = queryset.filter(va_interview_status=filters["interview_status"])
         if filters["interviewer"]:
             queryset = queryset.filter(
-                Q(va_interview_staff__name__icontains=filters["interviewer"]) |
-                Q(va_interview_staff__email__icontains=filters["interviewer"])
+                Q(va_interview_staff__name__icontains=filters["interviewer"])
+                | Q(va_interview_staff__email__icontains=filters["interviewer"])
             )
 
         self._filters_context = filters
@@ -214,10 +220,6 @@ def EventCreateDeathView(request, death):
             minterview_contact_name = form.cleaned_data["interview_contact_name"]
             minterview_contact_tel = form.cleaned_data["interview_contact_tel"]
             minterview_comments = form.cleaned_data["interview_comments"]
-            # ...
-            context = {
-                "message": f"d={minterview_scheduled_date},s={mva_interview_staff.id},n={minterview_contact_name},t={minterview_contact_tel},c={minterview_comments}",
-            }
 
             deathDetail = Death.objects.get(id=death)
 
@@ -245,7 +247,7 @@ def EventCreateDeathView(request, death):
               return HttpResponse(
                 json.dumps(context), status=200, content_type="application/json"
             )
-            
+
             """
             # return render(request, "va_cms/event_death_create.html", context)
         else:
@@ -307,9 +309,8 @@ class EventDetailView(DetailView):
 
     def dispatch(self, request, *args, **kwargs):
         self.object = self.get_object()
-        if (
-            request.method.lower() == "post"
-            and not self._can_update_status(self.object)
+        if request.method.lower() == "post" and not self._can_update_status(
+            self.object
         ):
             return HttpResponseForbidden("You are not allowed to update this event.")
         return super().dispatch(request, *args, **kwargs)
@@ -438,9 +439,7 @@ def _build_command_arguments(command_name, inputs):
         if field.type == "file":
             resolved_file = resolve_data_file(value)
             if not resolved_file.exists():
-                raise ValueError(
-                    f"File not found in static/data: {value}"
-                )
+                raise ValueError(f"File not found in static/data: {value}")
             value = str(resolved_file)
 
         if field.flag:
@@ -495,14 +494,15 @@ def vacms_admin_command_stream(request):
 
         try:
             assert process.stdout is not None
-            for line in process.stdout:
-                yield line
+            yield from process.stdout
         finally:
             process.wait()
             yield "-" * 80 + "\n"
             yield f"[exit_code={process.returncode}] {spec.management_command}\n"
 
-    response = StreamingHttpResponse(stream_output(), content_type="text/plain; charset=utf-8")
+    response = StreamingHttpResponse(
+        stream_output(), content_type="text/plain; charset=utf-8"
+    )
     response["X-Accel-Buffering"] = "no"
     return response
 

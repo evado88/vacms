@@ -1,18 +1,25 @@
 from django.contrib import messages
 from django.contrib.auth.mixins import PermissionRequiredMixin
 from django.contrib.messages.views import SuccessMessageMixin
-from django.urls import reverse_lazy, reverse
-from django.views.generic import ListView, DetailView, UpdateView, DeleteView, TemplateView
-from django.views.generic.detail import SingleObjectMixin
 from django.shortcuts import redirect
+from django.urls import reverse, reverse_lazy
+from django.views.generic import (
+    DeleteView,
+    DetailView,
+    ListView,
+    TemplateView,
+    UpdateView,
+)
 
 from va_explorer.utils.mixins import CustomAuthMixin, LocationRestrictedQuerySetMixin
-from va_explorer.va_data_management.models import Death
-from va_explorer.va_data_management.forms import DeathForm
 from va_explorer.va_data_management.filters import DeathFilter
+from va_explorer.va_data_management.forms import DeathForm
+from va_explorer.va_data_management.models import Death
 
 
-class Deaths(CustomAuthMixin, PermissionRequiredMixin, LocationRestrictedQuerySetMixin, ListView):
+class Deaths(
+    CustomAuthMixin, PermissionRequiredMixin, LocationRestrictedQuerySetMixin, ListView
+):
     permission_required = "va_data_management.view_death"
     model = Death
     template_name = "va_data_management/deaths.html"
@@ -42,11 +49,16 @@ class Deaths(CustomAuthMixin, PermissionRequiredMixin, LocationRestrictedQuerySe
         if not self.request.user.can_view_pii:
             for field in ("deceased", "start_date", "end_date"):
                 self.filter.form.fields.pop(field, None)
-        context['filter'] = self.filter
+        context["filter"] = self.filter
         return context
 
 
-class DeathDetail(CustomAuthMixin, PermissionRequiredMixin, LocationRestrictedQuerySetMixin, DetailView):
+class DeathDetail(
+    CustomAuthMixin,
+    PermissionRequiredMixin,
+    LocationRestrictedQuerySetMixin,
+    DetailView,
+):
     permission_required = "va_data_management.view_death"
     model = Death
     pk_url_kwarg = "id"
@@ -61,7 +73,13 @@ class DeathDetail(CustomAuthMixin, PermissionRequiredMixin, LocationRestrictedQu
         return context
 
 
-class DeathEdit(CustomAuthMixin, PermissionRequiredMixin, LocationRestrictedQuerySetMixin, SuccessMessageMixin, UpdateView):
+class DeathEdit(
+    CustomAuthMixin,
+    PermissionRequiredMixin,
+    LocationRestrictedQuerySetMixin,
+    SuccessMessageMixin,
+    UpdateView,
+):
     permission_required = "va_data_management.change_death"
     model = Death
     form_class = DeathForm
@@ -83,7 +101,12 @@ class DeathEdit(CustomAuthMixin, PermissionRequiredMixin, LocationRestrictedQuer
         return context
 
 
-class DeathDelete(CustomAuthMixin, PermissionRequiredMixin, LocationRestrictedQuerySetMixin, DeleteView):
+class DeathDelete(
+    CustomAuthMixin,
+    PermissionRequiredMixin,
+    LocationRestrictedQuerySetMixin,
+    DeleteView,
+):
     permission_required = "va_data_management.delete_death"
     model = Death
     success_url = reverse_lazy("va_data_management:deaths")
@@ -91,7 +114,9 @@ class DeathDelete(CustomAuthMixin, PermissionRequiredMixin, LocationRestrictedQu
     success_message = "Death record %(id)s was deleted successfully."
 
     def form_valid(self, form):
-        messages.success(self.request, self.success_message % self.get_object().__dict__)
+        messages.success(
+            self.request, self.success_message % self.get_object().__dict__
+        )
         return super().form_valid(form)
 
 

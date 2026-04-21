@@ -135,7 +135,9 @@ class Command(BaseCommand):
             deleted_count = 0
             with transaction.atomic():
                 if to_create:
-                    CSASupervisorTargetMap.objects.bulk_create(to_create, batch_size=1000)
+                    CSASupervisorTargetMap.objects.bulk_create(
+                        to_create, batch_size=1000
+                    )
                 if to_update:
                     CSASupervisorTargetMap.objects.bulk_update(
                         to_update,

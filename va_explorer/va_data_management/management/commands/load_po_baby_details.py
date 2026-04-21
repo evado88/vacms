@@ -40,7 +40,9 @@ class Command(BaseCommand):
         norm_form_name = normalize_string(form_name)
         odk_choices = ODKFormChoice.objects.filter(form_name=norm_form_name)
         if not odk_choices.exists():
-            raise CommandError("ODK form definition for 'pregnancy_outcome' not loaded.")
+            raise CommandError(
+                "ODK form definition for 'pregnancy_outcome' not loaded."
+            )
 
         df = pd.read_csv(csv_file, dtype=str)
 
@@ -67,7 +69,9 @@ class Command(BaseCommand):
             before_dupes = len(df)
             df["row_key"] = df["row_key"].astype(str).str.strip()
             df = df[df["row_key"].notna() & (df["row_key"] != "")]
-            df = df.sort_values("row_key").drop_duplicates(subset=["row_key"], keep="last")
+            df = df.sort_values("row_key").drop_duplicates(
+                subset=["row_key"], keep="last"
+            )
             intrafile_dupes = before_dupes - len(df)
 
         # Map ODK choice values to labels for baby fields.
@@ -95,7 +99,9 @@ class Command(BaseCommand):
 
         outcome_map = {
             outcome.key: outcome
-            for outcome in PregnancyOutcome.objects.exclude(key__isnull=True).only("key")
+            for outcome in PregnancyOutcome.objects.exclude(key__isnull=True).only(
+                "key"
+            )
         }
 
         objects = []
@@ -122,14 +128,9 @@ class Command(BaseCommand):
             created = len(objects)
 
         self.stdout.write(
-            "Imported {created} pregnancy outcome baby detail records "
-            "(skipped {skipped} missing-parent rows, dropped {dropped_blank_parent} blank-parent rows, "
-            "{intrafile_dupes} intra-file duplicates by KEY).".format(
-                created=created,
-                skipped=len(skipped_rows),
-                dropped_blank_parent=dropped_blank_parent,
-                intrafile_dupes=intrafile_dupes,
-            )
+            f"Imported {created} pregnancy outcome baby detail records "
+            f"(skipped {len(skipped_rows)} missing-parent rows, dropped {dropped_blank_parent} blank-parent rows, "
+            f"{intrafile_dupes} intra-file duplicates by KEY)."
         )
 
         if skipped_rows:
@@ -139,6 +140,4 @@ class Command(BaseCommand):
                 log_dir, f"skipped_pregnancy_outcome_baby_details_{timestamp}.csv"
             )
             pd.DataFrame(skipped_rows).to_csv(log_file, index=False)
-            self.stdout.write(
-                self.style.WARNING(f"Logged skipped rows to {log_file}")
-            )
+            self.stdout.write(self.style.WARNING(f"Logged skipped rows to {log_file}"))

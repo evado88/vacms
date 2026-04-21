@@ -18,9 +18,8 @@ def _parse_datetime_or_none(value):
         return None
 
     dt = parse_datetime(raw)
-    if dt is None:
-        if raw.endswith("Z"):
-            dt = parse_datetime(raw.replace("Z", "+00:00"))
+    if dt is None and raw.endswith("Z"):
+        dt = parse_datetime(raw.replace("Z", "+00:00"))
     if dt is None:
         return None
 
@@ -124,7 +123,9 @@ class Command(BaseCommand):
                 required.add("algrorithm")
 
             if not required.issubset(headers):
-                raise CommandError(f"CSV must contain columns: {', '.join(sorted(required))}")
+                raise CommandError(
+                    f"CSV must contain columns: {', '.join(sorted(required))}"
+                )
 
             for row in reader:
                 cause = (row.get("cause") or "").strip()
@@ -140,7 +141,9 @@ class Command(BaseCommand):
                         skipped_samples["invalid_id_or_cause"].append(
                             {
                                 "cause": cause,
-                                "verbalautopsy_id": (verbalautopsy_id_raw or "").strip(),
+                                "verbalautopsy_id": (
+                                    verbalautopsy_id_raw or ""
+                                ).strip(),
                             }
                         )
                     continue
@@ -149,7 +152,9 @@ class Command(BaseCommand):
                     skipped_count += 1
                     skip_missing_va += 1
                     if len(skipped_samples["missing_verbalautopsy"]) < 5:
-                        skipped_samples["missing_verbalautopsy"].append(verbalautopsy_id)
+                        skipped_samples["missing_verbalautopsy"].append(
+                            verbalautopsy_id
+                        )
                     continue
 
                 settings = _parse_settings_or_none(settings_raw)
@@ -215,4 +220,6 @@ class Command(BaseCommand):
             self.stdout.write(f"Skip samples for {reason}: {samples}")
 
         if options["dry_run"]:
-            self.stdout.write(self.style.WARNING("Dry run enabled: no rows were inserted."))
+            self.stdout.write(
+                self.style.WARNING("Dry run enabled: no rows were inserted.")
+            )

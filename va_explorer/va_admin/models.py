@@ -32,7 +32,9 @@ class AdminPanelAlert(models.Model):
         related_name="admin_panel_alerts",
     )
     category = models.CharField(max_length=32, choices=CATEGORY_CHOICES, db_index=True)
-    severity = models.PositiveSmallIntegerField(choices=SEVERITY_CHOICES, default=MEDIUM, db_index=True)
+    severity = models.PositiveSmallIntegerField(
+        choices=SEVERITY_CHOICES, default=MEDIUM, db_index=True
+    )
     title = models.CharField(max_length=255)
     summary = models.CharField(max_length=512, blank=True)
     details = models.TextField(blank=True)

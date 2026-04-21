@@ -1,12 +1,11 @@
+from crispy_forms.helper import FormHelper
 from django import forms
 from django.core.exceptions import ValidationError
 from django.forms import Select, TextInput
 from django_filters import BooleanFilter, CharFilter, DateFilter, FilterSet
-from crispy_forms.helper import FormHelper
 from fuzzywuzzy import fuzz
 
-from .models import VerbalAutopsy, Pregnancy, Household, PregnancyOutcome, Death
-
+from .models import Death, Household, Pregnancy, PregnancyOutcome, VerbalAutopsy
 
 TRUE_FALSE_CHOICES = (
     (False, "No"),
@@ -250,4 +249,3 @@ class DeathFilter(GeoEnumeratorFilterSet):
     class Meta:
         model = Death
         fields = []
-

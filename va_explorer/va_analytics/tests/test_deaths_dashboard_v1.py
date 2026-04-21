@@ -20,13 +20,13 @@ class DeathsFilterParsingTests(TestCase):
         request = self.factory.get("/va_analytics/outcomes-dashboard/")
         state = get_deaths_filter_state(request)
 
-        self.assertEqual(state["time_preset"], "all_time")
-        self.assertEqual(state["start_datetime"], "")
-        self.assertEqual(state["end_datetime"], "")
-        self.assertEqual(state["sex"], "")
-        self.assertEqual(state["age_group"], "")
-        self.assertEqual(state["place_of_death"], "")
-        self.assertEqual(state["map_view"], "Province")
+        assert state["time_preset"] == "all_time"
+        assert state["start_datetime"] == ""
+        assert state["end_datetime"] == ""
+        assert state["sex"] == ""
+        assert state["age_group"] == ""
+        assert state["place_of_death"] == ""
+        assert state["map_view"] == "Province"
 
     def test_invalid_values_are_sanitized(self):
         request = self.factory.get(
@@ -35,9 +35,9 @@ class DeathsFilterParsingTests(TestCase):
         )
         state = get_deaths_filter_state(request)
 
-        self.assertEqual(state["time_preset"], "all_time")
-        self.assertEqual(state["age_group"], "")
-        self.assertEqual(state["map_view"], "Ward")
+        assert state["time_preset"] == "all_time"
+        assert state["age_group"] == ""
+        assert state["map_view"] == "Ward"
 
     def test_applies_user_location_restrictions(self):
         User = get_user_model()
@@ -55,7 +55,7 @@ class DeathsFilterParsingTests(TestCase):
         request.user = user
         qs = build_deaths_qs(request)
 
-        self.assertEqual(set(qs.values_list("key", flat=True)), {"death-south"})
+        assert set(qs.values_list("key", flat=True)) == {"death-south"}
 
 
 class DeathsUnder5CalculationTests(TestCase):
@@ -87,8 +87,8 @@ class DeathsUnder5CalculationTests(TestCase):
 
         payload = _build_deaths_summary_cards(Death.objects.all())
 
-        self.assertEqual(payload["death_card_total_events"], 3)
-        self.assertAlmostEqual(payload["death_card_under_5_pct"], 33.3, places=1)
+        assert payload["death_card_total_events"] == 3
+        assert abs(payload["death_card_under_5_pct"] - 33.3) < 0.05
 
 
 class DeathsApiSchemaTests(TestCase):
@@ -121,78 +121,90 @@ class DeathsApiSchemaTests(TestCase):
         )
 
     def test_death_endpoints_json_schema(self):
-        summary = self.client.get(reverse("va_analytics:outcomes-deaths-summary-api")).json()
-        self.assertEqual(
-            set(summary.keys()),
-            {
-                "death_card_last_data_update",
-                "death_card_last_death_date",
-                "death_card_total_events",
-                "death_card_mean_age",
-                "death_card_under_5_pct",
-                "death_card_median_delay_days",
-            },
-        )
+        summary = self.client.get(
+            reverse("va_analytics:outcomes-deaths-summary-api")
+        ).json()
+        assert set(summary.keys()) == {
+            "death_card_last_data_update",
+            "death_card_last_death_date",
+            "death_card_total_events",
+            "death_card_mean_age",
+            "death_card_under_5_pct",
+            "death_card_median_delay_days",
+        }
 
-        trend = self.client.get(reverse("va_analytics:outcomes-deaths-trend-api")).json()
-        self.assertEqual(set(trend.keys()), {"labels", "data"})
+        trend = self.client.get(
+            reverse("va_analytics:outcomes-deaths-trend-api")
+        ).json()
+        assert set(trend.keys()) == {"labels", "data"}
 
-        map_payload = self.client.get(reverse("va_analytics:outcomes-deaths-map-api")).json()
-        self.assertTrue(
-            {
-                "map_view",
-                "counts",
-                "province_counts",
-                "district_counts",
-                "constituency_counts",
-                "ward_counts",
-                "ea_counts",
-                "map_total_events",
-                "map_province_sums",
-                "map_district_sums",
-                "map_constituency_sums",
-                "map_ward_sums",
-                "map_ea_sums",
-            }.issubset(set(map_payload.keys()))
-        )
+        map_payload = self.client.get(
+            reverse("va_analytics:outcomes-deaths-map-api")
+        ).json()
+        assert {
+            "map_view",
+            "counts",
+            "province_counts",
+            "district_counts",
+            "constituency_counts",
+            "ward_counts",
+            "ea_counts",
+            "map_total_events",
+            "map_province_sums",
+            "map_district_sums",
+            "map_constituency_sums",
+            "map_ward_sums",
+            "map_ea_sums",
+        }.issubset(set(map_payload.keys()))
 
-        age_sex = self.client.get(reverse("va_analytics:outcomes-deaths-age-sex-api")).json()
-        self.assertEqual(set(age_sex.keys()), {"labels", "male", "female", "other"})
+        age_sex = self.client.get(
+            reverse("va_analytics:outcomes-deaths-age-sex-api")
+        ).json()
+        assert set(age_sex.keys()) == {"labels", "male", "female", "other"}
 
-        place = self.client.get(reverse("va_analytics:outcomes-deaths-place-api")).json()
-        self.assertEqual(set(place.keys()), {"labels", "count_data", "percentage_data"})
+        place = self.client.get(
+            reverse("va_analytics:outcomes-deaths-place-api")
+        ).json()
+        assert set(place.keys()) == {"labels", "count_data", "percentage_data"}
 
-        timeliness = self.client.get(reverse("va_analytics:outcomes-deaths-timeliness-api")).json()
-        self.assertEqual(set(timeliness.keys()), {"labels", "data", "median_delay_days"})
+        timeliness = self.client.get(
+            reverse("va_analytics:outcomes-deaths-timeliness-api")
+        ).json()
+        assert set(timeliness.keys()) == {"labels", "data", "median_delay_days"}
 
-        top_causes = self.client.get(reverse("va_analytics:outcomes-deaths-top-causes-api")).json()
-        self.assertEqual(
-            set(top_causes.keys()),
-            {"has_coded", "labels", "count_data", "percentage_data"},
-        )
+        top_causes = self.client.get(
+            reverse("va_analytics:outcomes-deaths-top-causes-api")
+        ).json()
+        assert set(top_causes.keys()) == {
+            "has_coded",
+            "labels",
+            "count_data",
+            "percentage_data",
+        }
 
-        cause_trend = self.client.get(reverse("va_analytics:outcomes-deaths-cause-trend-api")).json()
-        self.assertEqual(set(cause_trend.keys()), {"has_coded", "labels", "datasets"})
+        cause_trend = self.client.get(
+            reverse("va_analytics:outcomes-deaths-cause-trend-api")
+        ).json()
+        assert set(cause_trend.keys()) == {"has_coded", "labels", "datasets"}
 
-        signals = self.client.get(reverse("va_analytics:outcomes-deaths-signals-api")).json()
-        self.assertEqual(
-            set(signals.keys()),
-            {
-                "threshold_pct",
-                "baseline_min",
-                "all_deaths_7d",
-                "all_deaths_30d",
-                "under5_deaths_7d",
-                "under5_deaths_30d",
-            },
-        )
+        signals = self.client.get(
+            reverse("va_analytics:outcomes-deaths-signals-api")
+        ).json()
+        assert set(signals.keys()) == {
+            "threshold_pct",
+            "baseline_min",
+            "all_deaths_7d",
+            "all_deaths_30d",
+            "under5_deaths_7d",
+            "under5_deaths_30d",
+        }
 
     def test_non_death_tab_guard_on_death_endpoint(self):
         response = self.client.get(
             reverse("va_analytics:outcomes-deaths-summary-api"),
             {"tab": "pregnancy_outcomes"},
         )
-        self.assertEqual(response.status_code, 400)
+        assert response.status_code == 400
 
     def test_mortality_trend_hard_starts_at_january_2024(self):
         Death.objects.create(
@@ -220,10 +232,12 @@ class DeathsApiSchemaTests(TestCase):
             start="2024-01-11",
         )
 
-        trend = self.client.get(reverse("va_analytics:outcomes-deaths-trend-api")).json()
+        trend = self.client.get(
+            reverse("va_analytics:outcomes-deaths-trend-api")
+        ).json()
 
-        self.assertIn("Jan 2024", trend["labels"])
-        self.assertNotIn("Dec 2023", trend["labels"])
+        assert "Jan 2024" in trend["labels"]
+        assert "Dec 2023" not in trend["labels"]
 
 
 class OutcomesTabsIsolationTests(TestCase):
@@ -242,9 +256,11 @@ class OutcomesTabsIsolationTests(TestCase):
         self.client.force_login(user)
 
     def test_pregnancy_tabs_render_without_deaths_container(self):
-        response = self.client.get(reverse("va_analytics:outcomes-dashboard"), {"tab": "pregnancies"})
+        response = self.client.get(
+            reverse("va_analytics:outcomes-dashboard"), {"tab": "pregnancies"}
+        )
         content = response.content.decode("utf-8")
 
-        self.assertEqual(response.status_code, 200)
-        self.assertIn('id="pregnancyDashboardApp"', content)
-        self.assertNotIn('id="deathsDashboardApp"', content)
+        assert response.status_code == 200
+        assert 'id="pregnancyDashboardApp"' in content
+        assert 'id="deathsDashboardApp"' not in content

@@ -11,7 +11,6 @@ from va_explorer.tests.factories import (
     NewUserFactory,
     UserFactory,
 )
-from va_explorer.va_data_management.models import SRSClusterLocation
 from va_explorer.users.forms import (
     ExtendedUserCreationForm,
     UserChangePasswordForm,
@@ -19,15 +18,14 @@ from va_explorer.users.forms import (
     UserUpdateForm,
     process_user_data,
 )
+from va_explorer.va_data_management.models import SRSClusterLocation
 
 pytestmark = pytest.mark.django_db
 
 
 def create_matching_srs_location(name="Test Location", location_type="province"):
     location = LocationFactory.create(name=name, location_type=location_type)
-    srs_location = SRSClusterLocation.add_root(
-        name=name, location_type=location_type
-    )
+    srs_location = SRSClusterLocation.add_root(name=name, location_type=location_type)
     return location, srs_location
 
 

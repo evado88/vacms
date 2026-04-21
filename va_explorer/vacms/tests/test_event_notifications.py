@@ -4,19 +4,16 @@ from django.urls import reverse
 
 from va_explorer.tests.factories import UserFactory
 from va_explorer.users.models import UserMessage
+from va_explorer.va_data_management.models import Death
 from va_explorer.vacms.cmsmodels.events import Event
 from va_explorer.vacms.constants import VA_SCHEDULE_MESSAGE_SUBJECT
 from va_explorer.vacms.notifications import ensure_va_schedule_message
-from va_explorer.va_data_management.models import Death
-
 
 pytestmark = pytest.mark.django_db
 
 
 def test_assigning_va_creates_mailbox_message(client):
-    mso_group, _ = Group.objects.get_or_create(
-        name="Mortality Surveillance Officer"
-    )
+    mso_group, _ = Group.objects.get_or_create(name="Mortality Surveillance Officer")
 
     assigned_user = UserFactory()
     assigned_user.groups.add(mso_group)

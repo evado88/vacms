@@ -5,7 +5,6 @@ from django.core.management import call_command
 
 from va_explorer.va_data_management.models import Household, ODKFormChoice
 
-
 pytestmark = pytest.mark.django_db
 
 
@@ -21,11 +20,7 @@ def test_load_household_csv_skips_duplicate_keys(tmp_path):
 
     csv_path = Path(tmp_path) / "households.csv"
     csv_path.write_text(
-        "key,consent\n"
-        "existing,1\n"
-        "duplicate,1\n"
-        "duplicate,1\n"
-        "unique,0\n"
+        "key,consent\n" "existing,1\n" "duplicate,1\n" "duplicate,1\n" "unique,0\n"
     )
 
     call_command("load_household_csv", str(csv_path))

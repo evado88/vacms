@@ -194,7 +194,7 @@ now appear and function.
     - ``""``
     - Value identifying the project used to collect Verbal Autopsies within
       KoboToolbox. Typically found in the url when viewing the project on the
-      instance (Ex. ``{KOBO_HOST}/#/forms/uk8r5yolfuacxkjibsj7nw/summary``) 
+      instance (Ex. ``{KOBO_HOST}/#/forms/uk8r5yolfuacxkjibsj7nw/summary``)
       Defaults to an empty string. **Recommended to customize.**
 ````
 

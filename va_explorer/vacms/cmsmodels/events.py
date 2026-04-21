@@ -1,15 +1,14 @@
 from django.db import models
 from django.urls import reverse
 
+from va_explorer.users.models import User
 from va_explorer.va_data_management.models import (
     Death,
+    Household,
     Pregnancy,
     PregnancyOutcome,
-    Household,
     VerbalAutopsy,
 )
-
-from va_explorer.users.models import User
 
 
 class Event(models.Model):
@@ -143,19 +142,43 @@ class Event(models.Model):
 
     event_status = models.IntegerField(choices=EventStatus.choices, null=True)
 
-    data_collect_proposed_date = models.DateField("Data Collection Proposed Date", blank=True, null=True)
-    data_collect_scheduled_date = models.DateField("Data Collection Scheduled Date",blank=False, null=True)
-    data_collect_complete_date = models.DateField("Data Collection Complete Date",blank=False, null=True)
-    data_collect_contact_name = models.CharField("Data Collection Contact Name",max_length=255, blank=True, null=True)
-    data_collect_contact_tel = models.CharField("Data Collection Contact Phone",max_length=255, blank=True, null=True)
-    data_collect_comments = models.TextField("Data Collection Comments",max_length=255, blank=True, null=True)
+    data_collect_proposed_date = models.DateField(
+        "Data Collection Proposed Date", blank=True, null=True
+    )
+    data_collect_scheduled_date = models.DateField(
+        "Data Collection Scheduled Date", blank=False, null=True
+    )
+    data_collect_complete_date = models.DateField(
+        "Data Collection Complete Date", blank=False, null=True
+    )
+    data_collect_contact_name = models.CharField(
+        "Data Collection Contact Name", max_length=255, blank=True, null=True
+    )
+    data_collect_contact_tel = models.CharField(
+        "Data Collection Contact Phone", max_length=255, blank=True, null=True
+    )
+    data_collect_comments = models.TextField(
+        "Data Collection Comments", max_length=255, blank=True, null=True
+    )
 
-    interview_proposed_date = models.DateField("VA Interview Proposed Date",blank=True, null=True)
-    interview_scheduled_date = models.DateField("VA Interview Scheduled Date",blank=False, null=True)
-    interview_complete_date = models.DateField("VA Interview Complete Date",blank=False, null=True)
-    interview_contact_name = models.CharField("VA Interview Contact Name",max_length=255, blank=True, null=True)
-    interview_contact_tel = models.CharField("VA Interview Contact Phone",max_length=255, blank=True, null=True)
-    interview_comments = models.TextField("VA Interview Comments",max_length=255, blank=True, null=True)
+    interview_proposed_date = models.DateField(
+        "VA Interview Proposed Date", blank=True, null=True
+    )
+    interview_scheduled_date = models.DateField(
+        "VA Interview Scheduled Date", blank=False, null=True
+    )
+    interview_complete_date = models.DateField(
+        "VA Interview Complete Date", blank=False, null=True
+    )
+    interview_contact_name = models.CharField(
+        "VA Interview Contact Name", max_length=255, blank=True, null=True
+    )
+    interview_contact_tel = models.CharField(
+        "VA Interview Contact Phone", max_length=255, blank=True, null=True
+    )
+    interview_comments = models.TextField(
+        "VA Interview Comments", max_length=255, blank=True, null=True
+    )
     va_interview_status = models.CharField(
         "VA Interview Status",
         max_length=20,
@@ -176,8 +199,12 @@ class Event(models.Model):
         null=True,
     )
 
-    respondent_name = models.CharField("Respondent Name", max_length=255, blank=True, null=True)
-    respondent_phone = models.CharField("Respondent Phone",max_length=255, blank=True, null=True)
+    respondent_name = models.CharField(
+        "Respondent Name", max_length=255, blank=True, null=True
+    )
+    respondent_phone = models.CharField(
+        "Respondent Phone", max_length=255, blank=True, null=True
+    )
 
     submission_date = models.DateField(blank=True, null=True)
     completion_date = models.DateField(blank=True, null=True)

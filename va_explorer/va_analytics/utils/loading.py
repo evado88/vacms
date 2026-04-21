@@ -1,6 +1,6 @@
 import csv
-import json
 import itertools
+import json
 import os
 from datetime import date, datetime
 from functools import lru_cache
@@ -192,9 +192,7 @@ def _resolve_geo_name(value, level):
 
     lookup = _geojson_level_lookup().get(level, {})
     mapped = (
-        lookup.get(text.lower())
-        or lookup.get(text)
-        or lookup.get(_to_int_string(text))
+        lookup.get(text.lower()) or lookup.get(text) or lookup.get(_to_int_string(text))
     )
     return _strip_geo_suffix(mapped or text, level)
 
@@ -248,9 +246,15 @@ def _va_region_values(va, region_level):
     if mode == "community":
         cluster = context.get("cluster")
         if region_level == "Province":
-            return [context.get("province"), *_cluster_region_candidates(cluster, "Province")]
+            return [
+                context.get("province"),
+                *_cluster_region_candidates(cluster, "Province"),
+            ]
         if region_level == "District":
-            return [context.get("district"), *_cluster_region_candidates(cluster, "District")]
+            return [
+                context.get("district"),
+                *_cluster_region_candidates(cluster, "District"),
+            ]
         if region_level == "Constituency":
             return [
                 context.get("constituency"),
@@ -267,7 +271,10 @@ def _va_region_values(va, region_level):
 
     # Facility mode fallback keeps legacy behavior.
     if region_level == "Province":
-        return [context.get("province"), getattr(va, "province_name_from_location", None)]
+        return [
+            context.get("province"),
+            getattr(va, "province_name_from_location", None),
+        ]
     if region_level == "District":
         return [
             context.get("area"),
@@ -391,7 +398,10 @@ def _collapse_top_n_with_other(rows, label_key, value_key="count", top_n=10):
     rows = list(rows)
     top = rows[:top_n]
     other_total = sum((row.get(value_key) or 0) for row in rows[top_n:])
-    collapsed = [{label_key: row.get(label_key), value_key: row.get(value_key) or 0} for row in top]
+    collapsed = [
+        {label_key: row.get(label_key), value_key: row.get(value_key) or 0}
+        for row in top
+    ]
     if other_total > 0:
         collapsed.append({label_key: "Other", value_key: other_total})
     return collapsed
@@ -445,7 +455,7 @@ def _build_va_cause_trend_payload(filtered_qs, top_causes):
     cause_buckets = list(top_causes)
     if cause_buckets:
         cause_buckets.append("Other")
-    trend_map = {cause: {k: 0 for k in month_keys} for cause in cause_buckets}
+    trend_map = {cause: dict.fromkeys(month_keys, 0) for cause in cause_buckets}
 
     for row in rows:
         month = row.get("month")
@@ -536,7 +546,7 @@ def _build_regional_cod_comparison(filtered_qs, region_of_interest, top_causes):
         cause_name = getattr(va, "final_cause", None)
         bucket = cause_name if cause_name in top_causes else "Other"
         group_bucket = grouped_counts.setdefault(
-            group_name, {category: 0 for category in cod_categories}
+            group_name, dict.fromkeys(cod_categories, 0)
         )
         group_bucket[bucket] += 1
 
@@ -547,19 +557,27 @@ def _build_regional_cod_comparison(filtered_qs, region_of_interest, top_causes):
             "Adult (> 12 years)": 2,
             "Unknown": 3,
         }
-        groups = sorted(grouped_counts.keys(), key=lambda name: (order.get(name, 9), name))
+        groups = sorted(
+            grouped_counts.keys(), key=lambda name: (order.get(name, 9), name)
+        )
     elif compare_key == "source":
         order = {"Community VA": 0, "Facility VA": 1, "Unknown Source": 2}
-        groups = sorted(grouped_counts.keys(), key=lambda name: (order.get(name, 9), name))
+        groups = sorted(
+            grouped_counts.keys(), key=lambda name: (order.get(name, 9), name)
+        )
     else:
         groups = sorted(grouped_counts.keys(), key=lambda name: name.lower())
 
     matrix_percent = []
     for group in groups:
-        row_counts = [grouped_counts[group].get(category, 0) for category in cod_categories]
+        row_counts = [
+            grouped_counts[group].get(category, 0) for category in cod_categories
+        ]
         row_total = sum(row_counts)
         if row_total > 0:
-            matrix_percent.append([round((count / row_total) * 100, 1) for count in row_counts])
+            matrix_percent.append(
+                [round((count / row_total) * 100, 1) for count in row_counts]
+            )
         else:
             matrix_percent.append([0.0 for _ in cod_categories])
 
@@ -617,9 +635,25 @@ def _apply_source_filter(queryset, source):
     if source_key in {"all", "any", "*"}:
         return queryset
 
-    if source_key in {"community", "community_va", "community va", "yes", "y", "1", "true"}:
+    if source_key in {
+        "community",
+        "community_va",
+        "community va",
+        "yes",
+        "y",
+        "1",
+        "true",
+    }:
         return queryset.filter(community_va__iexact="yes")
-    if source_key in {"facility", "facility_va", "facility va", "no", "n", "0", "false"}:
+    if source_key in {
+        "facility",
+        "facility_va",
+        "facility va",
+        "no",
+        "n",
+        "0",
+        "false",
+    }:
         return queryset.filter(community_va__iexact="no")
     return queryset
 
@@ -831,7 +865,9 @@ def load_va_data(
         .order_by("-count")
     )
     cod_sums_rows = list(cod_sums_qs)
-    top_causes_for_trend = [row.get("cause") for row in cod_sums_rows[:5] if row.get("cause")]
+    top_causes_for_trend = [
+        row.get("cause") for row in cod_sums_rows[:5] if row.get("cause")
+    ]
     cod_total = sum((row.get("count") or 0) for row in cod_sums_rows)
     COD_sums = _collapse_top_n_with_other(
         cod_sums_rows,
@@ -898,13 +934,17 @@ def load_va_data(
         ea = geo["EA"]
 
         if province:
-            map_counts["Province"][province] = map_counts["Province"].get(province, 0) + 1
+            map_counts["Province"][province] = (
+                map_counts["Province"].get(province, 0) + 1
+            )
             if is_coded:
                 coded_geo_counts["Province"][province] = (
                     coded_geo_counts["Province"].get(province, 0) + 1
                 )
         if district:
-            map_counts["District"][district] = map_counts["District"].get(district, 0) + 1
+            map_counts["District"][district] = (
+                map_counts["District"].get(district, 0) + 1
+            )
             if is_coded:
                 coded_geo_counts["District"][district] = (
                     coded_geo_counts["District"].get(district, 0) + 1
@@ -939,8 +979,12 @@ def load_va_data(
         ],
         "va_cause_trend": va_cause_trend,
         "regional_cod_comparison": regional_cod_comparison,
-        "map_province_sums": _serialize_geo_counts(map_counts["Province"], "province_name"),
-        "map_district_sums": _serialize_geo_counts(map_counts["District"], "district_name"),
+        "map_province_sums": _serialize_geo_counts(
+            map_counts["Province"], "province_name"
+        ),
+        "map_district_sums": _serialize_geo_counts(
+            map_counts["District"], "district_name"
+        ),
         "map_constituency_sums": _serialize_geo_counts(
             map_counts["Constituency"], "constituency_name"
         ),

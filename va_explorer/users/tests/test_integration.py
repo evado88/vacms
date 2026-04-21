@@ -9,8 +9,8 @@ from va_explorer.tests.factories import (
     NewUserFactory,
     UserFactory,
 )
-from va_explorer.va_data_management.models import SRSClusterLocation
 from va_explorer.users.forms import ExtendedUserCreationForm, UserUpdateForm
+from va_explorer.va_data_management.models import SRSClusterLocation
 
 pytestmark = pytest.mark.django_db
 

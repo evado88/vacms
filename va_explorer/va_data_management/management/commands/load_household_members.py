@@ -1,16 +1,18 @@
 import argparse
-import pandas as pd
 import os
 from datetime import datetime
+
+import pandas as pd
 from django.core.management.base import BaseCommand, CommandError
+
 from va_explorer.va_data_management.models import (
-    ODKFormChoice,
     Household,
     HouseholdMember,
+    ODKFormChoice,
 )
 from va_explorer.va_data_management.utils.loading import (
-    normalize_string,
     normalize_dataframe_columns,
+    normalize_string,
     normalize_value,
 )
 
@@ -45,7 +47,9 @@ class Command(BaseCommand):
             df.rename(columns={"PARENT_KEY": "parent_key"}, inplace=True)
 
         if "parent_key" not in df.columns:
-            raise CommandError("CSV must contain a 'parent_key' column to relate to Household")
+            raise CommandError(
+                "CSV must contain a 'parent_key' column to relate to Household"
+            )
 
         # Map ODK values to labels
         odk_choices = ODKFormChoice.objects.filter(form_name=norm_form_name)
@@ -58,7 +62,14 @@ class Command(BaseCommand):
             odk_map[field][value] = choice.label
 
         odk_map_columns = [
-            'HH_04', 'HH_05', 'HH_06', 'HH_09', 'HH_11', 'HH_12', 'HH_13', 'HH_14'
+            "HH_04",
+            "HH_05",
+            "HH_06",
+            "HH_09",
+            "HH_11",
+            "HH_12",
+            "HH_13",
+            "HH_14",
         ]
 
         def apply_odk_map(col, val):
@@ -86,7 +97,11 @@ class Command(BaseCommand):
         for i, row in df.iterrows():
             parent_key = row.get("parent_key")
             if parent_key not in hh_map:
-                self.stderr.write(self.style.WARNING(f"Skipping row {i}: household key '{parent_key}' not found"))
+                self.stderr.write(
+                    self.style.WARNING(
+                        f"Skipping row {i}: household key '{parent_key}' not found"
+                    )
+                )
                 skipped_rows.append(row)
                 continue
 
@@ -98,13 +113,17 @@ class Command(BaseCommand):
 
         HouseholdMember.objects.bulk_create(objects)
 
-        self.stdout.write(self.style.SUCCESS(f"Imported {len(objects)} household members."))
+        self.stdout.write(
+            self.style.SUCCESS(f"Imported {len(objects)} household members.")
+        )
         self.stdout.write(self.style.WARNING(f"Skipped {len(skipped_rows)} row(s)."))
 
         # Save skipped rows to file
         if skipped_rows:
             os.makedirs(log_dir, exist_ok=True)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            log_file = os.path.join(log_dir, f"skipped_household_members_{timestamp}.csv")
+            log_file = os.path.join(
+                log_dir, f"skipped_household_members_{timestamp}.csv"
+            )
             pd.DataFrame(skipped_rows).to_csv(log_file, index=False)
             self.stdout.write(self.style.WARNING(f"Logged skipped rows to {log_file}"))

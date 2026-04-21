@@ -33,7 +33,9 @@ def get_odk_form_configs(
     normalized = []
     for config in source:
         item = normalize_form_config(
-            config, default_project_id=default_project_id or getattr(settings, "ODK_DEFAULT_PROJECT_ID", None)
+            config,
+            default_project_id=default_project_id
+            or getattr(settings, "ODK_DEFAULT_PROJECT_ID", None),
         )
         if item:
             normalized.append(item)
@@ -54,7 +56,8 @@ def resolve_odk_form_configs(
             for c in get_odk_form_configs(default_project_id=default_project_id)
         }
         return [
-            known.get(form_id) or {
+            known.get(form_id)
+            or {
                 "form_id": form_id,
                 "form_name": None,
                 "project_id": default_project_id,

@@ -14,13 +14,11 @@ overhead so later Tier 3/4 changes can demonstrate measurable wins.
 """
 
 import pytest
-from django.contrib.auth.models import Group, Permission
-from django.contrib.contenttypes.models import ContentType
+from django.contrib.auth.models import Permission
 from django.test import Client
 from django.urls import reverse
 
-from va_explorer.tests.factories import UserFactory, VerbalAutopsyFactory
-from va_explorer.va_data_management.models import VerbalAutopsy
+from va_explorer.tests.factories import UserFactory
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -28,6 +26,7 @@ pytestmark = pytest.mark.django_db(transaction=True)
 # ---------------------------------------------------------------------------
 # Shared fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(scope="module")
 def django_db_setup_module(django_db_setup, django_db_blocker):
@@ -46,7 +45,7 @@ def staff_client():
 @pytest.fixture
 def client_with_va_perms():
     """Client with permissions needed for the VA data-management views."""
-    from django.contrib.auth.models import Permission
+
     view_va = Permission.objects.filter(codename="view_verbalautopsy").first()
     view_pii = Permission.objects.filter(codename="view_pii").first()
     user = UserFactory.create()
@@ -63,6 +62,7 @@ def client_with_va_perms():
 # Benchmark: home dashboard index
 # ---------------------------------------------------------------------------
 
+
 def test_bench_home_index(benchmark, staff_client):
     """Baseline response time for the home dashboard (/)."""
     url = reverse("home:index")
@@ -78,6 +78,7 @@ def test_bench_home_index(benchmark, staff_client):
 # Benchmark: analytics dashboard
 # ---------------------------------------------------------------------------
 
+
 def test_bench_analytics_dashboard(benchmark, staff_client):
     """Baseline response time for the analytics dashboard (/va_analytics/dashboard/)."""
     url = reverse("va_analytics:dashboard")
@@ -92,6 +93,7 @@ def test_bench_analytics_dashboard(benchmark, staff_client):
 # ---------------------------------------------------------------------------
 # Benchmark: data cleanup index
 # ---------------------------------------------------------------------------
+
 
 def test_bench_data_cleanup_index(benchmark, staff_client):
     """Baseline response time for the data cleanup list (/va_data_cleanup/)."""

@@ -130,9 +130,9 @@ body {
   background-size: contain;
   margin-bottom: 10px;
   padding-bottom: 0px;
-  
 
-  
+
+
 }
 
 .auth-logo {
@@ -154,14 +154,14 @@ body {
 
 .auth-logo-3 {
   background-color: #fff;
-  max-height: 400px; 
+  max-height: 400px;
   max-width: 100%;
   border-radius: 10%;
 }
 
 @media (max-width: 768px) {
- 
-  
+
+
  .auth-logo-3 {
     background-color: #fff;
     max-height: auto !important;
@@ -233,7 +233,7 @@ body {
     margin-left: 5vw; /* Smaller margin on mobile */
     margin-top: -2vw;
   }
-  
+
   .auth-title-desc {
     margin-right: 5vw;
     margin-bottom: 8vw;
@@ -245,7 +245,7 @@ body {
     font-size: clamp(20px, 6vw, 36px); /* Slightly larger on very small screens */
     margin-left: 3vw;
   }
-  
+
   .auth-title-desc {
     font-size: clamp(14px, 4vw, 24px);
     margin-right: 3vw;
@@ -352,7 +352,7 @@ table.home-page-statistics th {
 
 .home-page-statistics canvas {
   max-height: 125px !important;
-  
+
 }
 :root {
     --sidebar-width: 230px;
@@ -682,19 +682,19 @@ a.link-default:hover {
         height: 100vh;
         transform: translateX(-100%);
     }
-    
+
     .sidebar-container.open {
         transform: translateX(0);
     }
-    
+
     .main-content {
         margin-left: 0;
     }
-    
+
     .sidebar-toggle {
         display: block;
     }
-    
+
     .collapse-toggle {
         display: none;
     }
@@ -705,7 +705,7 @@ a.link-default:hover {
     .sidebar-container {
         transform: translateX(0);
     }
-    
+
     .collapse-toggle {
         display: flex;
     }
@@ -856,7 +856,7 @@ table thead th,
 
 
 .title-container {
-    
+
     padding-top: 15px !important;
 }
 
@@ -875,7 +875,7 @@ table thead th,
 
 
 
-  
+
 
 #national-operational-view .national-operational-view-shell {
   background: #f3f4f6;
