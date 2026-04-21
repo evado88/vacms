@@ -498,14 +498,14 @@ def load_records_from_dataframe(record_df, random_locations=False, debug=False):
 
     # if random locations, assign random locations via a random field worker.
     if random_locations:
-        field_workers = [u for u in User.objects.all() if u.is_fieldworker()]
+        field_workers = list(User.objects.filter(groups__name="Field Workers"))
         if len(field_workers) <= 1:
             print(
                 "WARNING: no field workers in system. \
                 Generating random ones now..."
             )
             make_field_workers_for_facilities()
-            field_workers = [u for u in User.objects.all() if u.is_fieldworker()]
+            field_workers = list(User.objects.filter(groups__name="Field Workers"))
 
     # pull in all existing VA instanceIDs from db for de-duping purposes
     print("pulling in instance ids...")

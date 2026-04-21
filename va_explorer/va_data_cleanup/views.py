@@ -37,6 +37,24 @@ def _norm_ref(value):
     return normalized
 
 
+def _first_cause(va):
+    """Return the first coded cause string using the prefetched causes cache."""
+    causes = va.causes.all()
+    return causes[0].cause if causes else "Not Coded"
+
+
+def _issue_severity_counts(va):
+    """Count warnings and errors in a single pass over the prefetched coding issues."""
+    warnings = 0
+    errors = 0
+    for issue in va.coding_issues.all():
+        if issue.severity == "warning":
+            warnings += 1
+        elif issue.severity == "error":
+            errors += 1
+    return warnings, errors
+
+
 def _issue_label(issue):
     subtype = str((issue.details or {}).get("subtype") or "").strip()
     if subtype:
@@ -45,8 +63,10 @@ def _issue_label(issue):
 
 
 def _get_context_for_va_table(va_list, user):
-    context = [
-        {
+    context = []
+    for va in va_list:
+        warnings, errors = _issue_severity_counts(va)
+        context.append({
             "id": va.id,
             "deceased": f"{va.Id10017} {va.Id10018}",
             "interviewer": va.Id10010,
@@ -55,22 +75,10 @@ def _get_context_for_va_table(va_list, user):
             ),
             "dod": parse_date(va.Id10023) if (va.Id10023 != "dk") else "Unknown",
             "facility": va.location.name if va.location else "Not Provided",
-            "cause": (
-                va.causes.all()[0].cause if len(va.causes.all()) > 0 else "Not Coded"
-            ),
-            "warnings": len(
-                [
-                    issue
-                    for issue in va.coding_issues.all()
-                    if issue.severity == "warning"
-                ]
-            ),
-            "errors": len(
-                [issue for issue in va.coding_issues.all() if issue.severity == "error"]
-            ),
-        }
-        for va in va_list
-    ]
+            "cause": _first_cause(va),
+            "warnings": warnings,
+            "errors": errors,
+        })
     for item in context:
         if not user.can_view_pii:
             item["deceased"] = REDACTED_STRING
@@ -105,36 +113,20 @@ class DataCleanupIndexView(CustomAuthMixin, PermissionRequiredMixin, ListView):
         )
         context["va_data_cleanup"] = True
 
-        va_duplicate_rows = [
-            {
+        va_duplicate_rows = []
+        for va in context["object_list"]:
+            warnings, errors = _issue_severity_counts(va)
+            va_duplicate_rows.append({
                 "id": va.id,
                 "interviewer": va.Id10010,
                 "interviewed": parse_date(va.Id10012),
                 "dod": parse_date(va.Id10023) if (va.Id10023 != "dk") else "Unknown",
                 "facility": va.location.name if va.location else "Not Provided",
                 "deceased": va.deceased,
-                "cause": (
-                    va.causes.all()[0].cause
-                    if len(va.causes.all()) > 0
-                    else "Not Coded"
-                ),
-                "warnings": len(
-                    [
-                        issue
-                        for issue in va.coding_issues.all()
-                        if issue.severity == "warning"
-                    ]
-                ),
-                "errors": len(
-                    [
-                        issue
-                        for issue in va.coding_issues.all()
-                        if issue.severity == "error"
-                    ]
-                ),
-            }
-            for va in context["object_list"]
-        ]
+                "cause": _first_cause(va),
+                "warnings": warnings,
+                "errors": errors,
+            })
         context["object_list"] = va_duplicate_rows
         context["va_duplicate_rows"] = va_duplicate_rows
         # Keep parity with the former Home VA Statistics tables.

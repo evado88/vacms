@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 from django.contrib.auth.mixins import PermissionRequiredMixin
 from django.core.cache import cache
-from django.db.models import Count, OuterRef, Q, Subquery
+from django.db.models import Case, Count, IntegerField, OuterRef, Q, Subquery, When
 from django.db.models.functions import Substr
 from django.http import JsonResponse
 from django.utils import timezone
@@ -806,21 +806,27 @@ def _get_national_operational_view_data(
     }
 
     with timed_block("home.nov.people_aggregate", request=request):
-        people_total = (
-            HouseholdMember.objects.filter(household__key__in=list(household_keys_total)).count()
-            if household_keys_total
-            else 0
-        )
-        people_today = (
-            HouseholdMember.objects.filter(household__key__in=list(household_keys_today)).count()
-            if household_keys_today
-            else 0
-        )
-        people_week = (
-            HouseholdMember.objects.filter(household__key__in=list(household_keys_week)).count()
-            if household_keys_week
-            else 0
-        )
+        if not household_keys_total:
+            people_total = people_today = people_week = 0
+        else:
+            # Single aggregate query replaces three sequential COUNT queries.
+            # household_keys_today and _week are subsets of household_keys_total,
+            # so filtering once on the superset is sufficient.
+            agg_kwargs = {"total": Count("id")}
+            if household_keys_today:
+                agg_kwargs["today"] = Count(
+                    Case(When(household__key__in=household_keys_today, then=1), output_field=IntegerField())
+                )
+            if household_keys_week:
+                agg_kwargs["week"] = Count(
+                    Case(When(household__key__in=household_keys_week, then=1), output_field=IntegerField())
+                )
+            agg = HouseholdMember.objects.filter(
+                household__key__in=household_keys_total
+            ).aggregate(**agg_kwargs)
+            people_total = agg["total"]
+            people_today = agg.get("today", 0)
+            people_week = agg.get("week", 0)
 
     if include_chart_series:
         with timed_block("home.nov.chart_series", request=request):

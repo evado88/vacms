@@ -1,6 +1,7 @@
 from typing import Dict, Iterable, Optional, Set
 
 from django.db.models import Q
+from django.db.models.functions import Lower
 
 
 def _collect_related_nodes(location) -> Iterable:
@@ -69,6 +70,18 @@ def restrict_queryset_to_user_locations(queryset, user, field_mapping=None):
         location_type__iexact="province"
     ).exists()
 
+    # Annotate once with Lower() for each field we need to filter on.
+    # This lets us use a single __in lookup per field instead of a chain of
+    # __iexact OR conditions, reducing the Q-object tree depth considerably.
+    active_fields = {
+        field_name
+        for loc_type, field_name in mapping.items()
+        if allowed.get(loc_type)
+    }
+    annotations = {f"_rloc_{fn}": Lower(fn) for fn in active_fields}
+    if annotations:
+        queryset = queryset.annotate(**annotations)
+
     # Anchor by province when available to avoid cross-province leakage when
     # lower-level names overlap between provinces.
     combined_q = Q()
@@ -76,10 +89,8 @@ def restrict_queryset_to_user_locations(queryset, user, field_mapping=None):
     province_field = mapping.get("province")
     province_names = allowed.get("province") or set()
     if province_field and province_names:
-        province_q = Q()
-        for name in province_names:
-            province_q |= Q(**{f"{province_field}__iexact": name})
-        combined_q &= province_q
+        ann_key = f"_rloc_{province_field}"
+        combined_q &= Q(**{f"{ann_key}__in": [n.lower() for n in province_names]})
         has_any_filter = True
 
     lower_level_q = Q()
@@ -89,10 +100,8 @@ def restrict_queryset_to_user_locations(queryset, user, field_mapping=None):
         names = allowed.get(loc_type)
         if not names:
             continue
-        field_q = Q()
-        for name in names:
-            field_q |= Q(**{f"{field_name}__iexact": name})
-        lower_level_q |= field_q
+        ann_key = f"_rloc_{field_name}"
+        lower_level_q |= Q(**{f"{ann_key}__in": [n.lower() for n in names]})
 
     if lower_level_q.children:
         has_any_filter = True
@@ -133,14 +142,16 @@ def restrict_va_queryset_to_user_locations(queryset, user):
     facility_q = Q(location__in=location_nodes)
 
     # Community/admin path scoping using text geography fields.
+    # Annotate with Lower() once per field so we can use __in instead of
+    # a chain of __iexact OR conditions.
+    text_fields = {loc_type for loc_type, names in allowed.items() if names}
+    if text_fields:
+        queryset = queryset.annotate(**{f"_rloc_{f}": Lower(f) for f in text_fields})
     text_q = Q()
     for loc_type, names in allowed.items():
         if not names:
             continue
-        field_q = Q()
-        for name in names:
-            field_q |= Q(**{f"{loc_type}__iexact": name})
-        text_q |= field_q
+        text_q |= Q(**{f"_rloc_{loc_type}__in": [n.lower() for n in names]})
 
     combined_q = facility_q
     if text_q.children:
