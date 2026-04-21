@@ -1,0 +1,26 @@
+# Dev-only tooling — install alongside base.txt in local and CI environments.
+# None of these packages belong in production.
+#
+# Usage:
+#   Local dev:  pip install -r requirements/local.txt   (includes this file)
+#   CI:         pip install -r requirements/local.txt   (same)
+
+# Debug toolbar (local development only — gated by DJANGO_DEBUG in settings)
+django-debug-toolbar==3.7.0
+
+# Testing
+pytest==7.2.0
+pytest-django==4.5.2
+pytest-cov==4.1.0
+pytest-xdist==3.3.1
+coverage==7.0.1
+django-coverage-plugin==3.0.0
+factory-boy==3.2.1
+selenium==4.13.0
+requests-mock==1.10.0
+time-machine==2.8.2
+
+# Linting / formatting
+# ensure ruff version matches .pre-commit-config.yaml
+ruff==0.11.12
+pre-commit==2.20.0
