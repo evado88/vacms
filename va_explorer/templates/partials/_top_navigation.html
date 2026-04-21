@@ -1,5 +1,5 @@
 {% load va_explorer_tags %}
-{% load static i18n %}
+{% load static i18n cache %}
 
 <nav class="navbar navbar-expand-lg navbar-dark h-auto fixed-top">
   <div class="container-fluid">
@@ -101,6 +101,7 @@
         </li>
         
         {% if request.user.is_authenticated %}
+        {% cache 60 "topnav_notifications" request.user.pk %}
         <li class="nav-item dropdown">
           <a class="nav-link dropdown-toggle position-relative" href="#" id="notificationsDropdown" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false" title="{% trans 'Notifications' %}">
             <i class="fas fa-bell"></i>
@@ -129,6 +130,7 @@
             {% endif %}
           </div>
         </li>
+        {% endcache %}
         {% endif %}
         
         <!-- Help/Support -->

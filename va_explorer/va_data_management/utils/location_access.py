@@ -1,28 +1,62 @@
-from typing import Dict, Iterable, Optional, Set
+from typing import Dict, Iterable, List, Optional, Set
 
+from django.core.cache import cache
 from django.db.models import Q
 from django.db.models.functions import Lower
 
+_LOCATION_TREE_CACHE_VERSION_KEY = "location_tree:version"
+_LOCATION_TREE_NODE_CACHE_TTL = 86400  # 24 hours
 
-def _collect_related_nodes(location) -> Iterable:
-    """Yield the location, its descendants, and ancestors."""
-    yield location
-    for node in location.get_descendants():
-        yield node
-    for node in location.get_ancestors():
-        yield node
+
+def _location_tree_version() -> int:
+    v = cache.get(_LOCATION_TREE_CACHE_VERSION_KEY)
+    if v is None:
+        v = 1
+        cache.set(_LOCATION_TREE_CACHE_VERSION_KEY, v, timeout=None)
+    return int(v)
+
+
+def bump_location_tree_version() -> int:
+    """Invalidate all cached location-tree node lists. Called by Location signals."""
+    v = cache.get(_LOCATION_TREE_CACHE_VERSION_KEY)
+    next_v = int(v) + 1 if v is not None else 1
+    cache.set(_LOCATION_TREE_CACHE_VERSION_KEY, next_v, timeout=None)
+    return next_v
+
+
+def _collect_related_nodes(location) -> List:
+    """Return the location, its descendants, and ancestors (cached per location.pk)."""
+    version = _location_tree_version()
+    cache_key = f"location_tree:nodes:{location.pk}:v{version}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    nodes = [location]
+    nodes.extend(location.get_descendants())
+    nodes.extend(location.get_ancestors())
+
+    cache.set(cache_key, nodes, timeout=_LOCATION_TREE_NODE_CACHE_TTL)
+    return nodes
 
 
 def _allowed_location_names(user) -> Optional[Dict[str, Set[str]]]:
     if not user or not getattr(user, "is_authenticated", False):
         return None
 
+    # Per-request memoization: avoids recomputing on the same request
+    cached_on_user = getattr(user, "_allowed_location_names_cache", None)
+    if cached_on_user is not None:
+        return cached_on_user if cached_on_user else None
+
     locations = getattr(user, "location_restrictions", None)
     if not locations:
+        user._allowed_location_names_cache = {}
         return None
 
     locations = locations.all()
     if not locations.exists():
+        user._allowed_location_names_cache = {}
         return None
 
     allowed: Dict[str, Set[str]] = {
@@ -41,8 +75,10 @@ def _allowed_location_names(user) -> Optional[Dict[str, Set[str]]]:
                 allowed[loc_type].add(name.strip())
 
     if not any(allowed.values()):
+        user._allowed_location_names_cache = {}
         return None
 
+    user._allowed_location_names_cache = allowed
     return allowed
 
 

@@ -18,7 +18,10 @@ from django.utils.dateparse import parse_date as django_parse_date
 from django.utils.dateparse import parse_datetime as django_parse_datetime
 from django.views.generic import TemplateView, View
 
-from va_explorer.home.cache_utils import get_home_dashboard_fastpath_version
+from va_explorer.home.cache_utils import (
+    HOME_DASHBOARD_PREWARM_KEY,
+    get_home_dashboard_fastpath_version,
+)
 from va_explorer.home.model_trends import get_model_trends_data
 from va_explorer.home.va_trends import get_trends_data
 from va_explorer.utils.profiling import timed_block
@@ -865,9 +868,31 @@ HOME_FASTPATH_CACHE_TTL_SECONDS = 10 * 60
 HOME_FASTPATH_TABLE_CACHE_TTL_SECONDS = 5 * 60
 
 
+def _is_unrestricted_national_request(request, preset, location_level, location_value):
+    """True when the request qualifies for the prewarm cache (no user scoping, national/all-time)."""
+    user = getattr(request, "user", None)
+    if user is None or not getattr(user, "is_authenticated", False):
+        return False
+    if user.location_restrictions.exists():
+        return False
+    if preset != "all":
+        return False
+    if location_level not in (None, "", "national") or location_value not in (None, ""):
+        return False
+    return True
+
+
 def _get_cached_nov_payload(request):
     preset, start_dt, end_dt, has_custom_range = _parse_filter_range(request)
     location_level, location_value = _parse_location_filter(request)
+
+    # For unrestricted users requesting the default national/all-time view,
+    # serve from the prewarm cache populated by the Celery beat task (every 5 min).
+    if _is_unrestricted_national_request(request, preset, location_level, location_value):
+        prewarm_payload = cache.get(HOME_DASHBOARD_PREWARM_KEY)
+        if prewarm_payload is not None:
+            return prewarm_payload
+
     extra = {
         "component": "nov_bundle",
         "location_level": location_level,

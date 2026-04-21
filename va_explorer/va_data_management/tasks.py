@@ -48,6 +48,13 @@ def setup_periodic_tasks(sender, **kwargs):
         name="Assign death IDs to new deaths",
     )
 
+    # Pre-warm home dashboard cache every 5 minutes
+    sender.add_periodic_task(
+        300.0,
+        app.signature("va_explorer.home.tasks.prewarm_home_dashboard_cache"),
+        name="Pre-warm home dashboard cache",
+    )
+
 
 # Result of tasks need to be json serializable so return dicts.
 @app.task()
@@ -262,3 +269,5 @@ def assign_death_ids_task():
             "status": "error",
             "error": str(e)
         }
+
+

@@ -17,6 +17,8 @@ class VaDataManagementConfig(AppConfig):
     name = "va_explorer.va_data_management"
 
     def ready(self):
+        import va_explorer.va_data_management.signals  # noqa: F401
+
         # Disable via env flag
         flag = os.getenv("ODK_PULL_ON_STARTUP", "1").strip().lower()
         if flag in ("0", "false", "no", "off"):
