@@ -1,20 +1,23 @@
 import logging
+from collections import defaultdict
+from math import ceil
 
 from celery.schedules import crontab
+from django.conf import settings
+from django.db.models import Q
 
 from config.celery_app import app
 from config.settings.base import env
-from django.conf import settings
 from va_explorer.va_data_management.management.commands.import_from_kobo import (
     BATCH_SIZE,
 )
+from va_explorer.va_data_management.models import ClusterLocationCodes, Death, VerbalAutopsy
 from va_explorer.va_data_management.odk.config import get_odk_form_configs
 from va_explorer.va_data_management.odk.service import ODKPullService
 from va_explorer.va_data_management.utils import coding, kobo, odk
 from va_explorer.va_data_management.utils.loading import load_records_from_dataframe
-from collections import defaultdict
-from django.db.models import Q
-from va_explorer.va_data_management.models import Death, ClusterLocationCodes
+
+_CODING_BATCH_SIZE = 500
 
 logger = logging.getLogger(__name__)
 
@@ -41,9 +44,9 @@ def setup_periodic_tasks(sender, **kwargs):
             name=f"Pull ODK submissions ({schedule_key})",
         )
 
-    # Assign death IDs every 5 minutes (every 300 seconds)
+    # Assign death IDs every 15 minutes — on-create signal handles low-latency cases
     sender.add_periodic_task(
-        300.0,
+        900.0,
         assign_death_ids_task.s(),
         name="Assign death IDs to new deaths",
     )
@@ -59,12 +62,38 @@ def setup_periodic_tasks(sender, **kwargs):
 # Result of tasks need to be json serializable so return dicts.
 @app.task()
 def run_coding_algorithms():
-    results = coding.run_coding_algorithms()
-    return {
-        "num_coded": len(results["causes"]),
-        "num_total": len(results["verbal_autopsies"]),
-        "num_issues": len(results["issues"]),
-    }
+    """Orchestrator: snapshot uncoded VA IDs and dispatch one batch task per 500 VAs.
+
+    Splitting into independent sub-tasks prevents any single Celery call from
+    running longer than the worker's soft time limit on large backlogs.
+    """
+    va_ids = list(
+        VerbalAutopsy.objects.filter(causes__isnull=True).values_list("id", flat=True)
+    )
+    if not va_ids:
+        return {"num_batches": 0, "total_uncoded": 0}
+
+    num_batches = 0
+    for i in range(0, len(va_ids), _CODING_BATCH_SIZE):
+        batch_ids = va_ids[i : i + _CODING_BATCH_SIZE]
+        run_coding_algorithms_batch.delay(batch_ids)
+        num_batches += 1
+
+    logger.info("Coding orchestrator dispatched %d batch task(s) for %d VAs", num_batches, len(va_ids))
+    return {"num_batches": num_batches, "total_uncoded": len(va_ids)}
+
+
+@app.task()
+def run_coding_algorithms_batch(va_ids):
+    """Code a single batch of up to _CODING_BATCH_SIZE VAs identified by their PKs."""
+    verbal_autopsies = list(
+        VerbalAutopsy.objects.filter(id__in=va_ids, causes__isnull=True).order_by("id")
+    )
+    if not verbal_autopsies:
+        return {"num_coded": 0, "num_issues": 0}
+
+    causes, issues = coding.run_interva5(verbal_autopsies)
+    return {"num_coded": len(causes), "num_issues": len(issues)}
 
 
 @app.task()
@@ -73,7 +102,7 @@ def import_from_odk():
     return pull_odk_scheduled()
 
 
-@app.task()
+@app.task(rate_limit="10/m")
 def import_from_kobo():
     options = {
         "token": env("KOBO_API_TOKEN"),
@@ -126,7 +155,7 @@ def _odk_form_configs(schedule_key=None):
     return [cfg for cfg in configs if cfg.get("schedule_key") == schedule_key]
 
 
-@app.task()
+@app.task(rate_limit="10/m")
 def pull_odk_scheduled(schedule_key=None):
     service = ODKPullService(
         default_project_id=getattr(settings, "ODK_DEFAULT_PROJECT_ID", None)
