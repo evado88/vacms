@@ -6,11 +6,8 @@ from django.views.generic import ListView, DetailView, UpdateView, DeleteView, T
 from django.views.generic.detail import SingleObjectMixin
 from django.shortcuts import redirect
 
-from va_explorer.utils.mixins import CustomAuthMixin
+from va_explorer.utils.mixins import CustomAuthMixin, LocationRestrictedQuerySetMixin
 from va_explorer.va_data_management.models import Household
-from va_explorer.va_data_management.utils.location_access import (
-    restrict_queryset_to_user_locations,
-)
 from va_explorer.va_data_management.forms import HouseholdForm
 from va_explorer.va_data_management.filters import HouseholdFilter
 from django.contrib.contenttypes.models import ContentType
@@ -20,19 +17,17 @@ from va_explorer.va_data_management.models.data_quality import (
 )
 
 
-class HouseholdAccessMixin(SingleObjectMixin):
-    def get_queryset(self):
-        return restrict_queryset_to_user_locations(
-            Household.objects.all(),
-            self.request.user,
-        )
+class HouseholdAccessMixin(LocationRestrictedQuerySetMixin, SingleObjectMixin):
+    pass
 
 
-class Households(CustomAuthMixin, PermissionRequiredMixin, ListView):
+class Households(CustomAuthMixin, PermissionRequiredMixin, LocationRestrictedQuerySetMixin, ListView):
     permission_required = "va_data_management.view_household"
     model = Household
     template_name = "va_data_management/households.html"
     paginate_by = 15
+    # Household records only carry province-level geography
+    location_field_mapping = {"province": "province"}
 
     _SORT_FIELDS = {
         "id": "id",
@@ -45,15 +40,7 @@ class Households(CustomAuthMixin, PermissionRequiredMixin, ListView):
     }
 
     def get_queryset(self):
-        # Set up filter with GET params
-        base_qs = Household.objects.all()
-        base_qs = restrict_queryset_to_user_locations(
-            base_qs,
-            self.request.user,
-            {
-                "province": "province",
-            },
-        )
+        base_qs = super().get_queryset()
         self.filter = HouseholdFilter(self.request.GET, queryset=base_qs)
         order_by_raw = self.request.GET.get("order_by", "-id")
         direction = "-" if order_by_raw.startswith("-") else ""
@@ -117,18 +104,12 @@ class HouseholdEdit(CustomAuthMixin, PermissionRequiredMixin, HouseholdAccessMix
         return context
 
 
-class HouseholdDelete(CustomAuthMixin, PermissionRequiredMixin, DeleteView):
+class HouseholdDelete(CustomAuthMixin, PermissionRequiredMixin, LocationRestrictedQuerySetMixin, DeleteView):
     permission_required = "va_data_management.delete_household"
     model = Household
     success_url = reverse_lazy("va_data_management:households")
     template_name = "va_data_management/household_confirm_delete.html"
     success_message = "Household %(id)s was deleted successfully."
-
-    def get_queryset(self):
-        return restrict_queryset_to_user_locations(
-            Household.objects.all(),
-            self.request.user,
-        )
 
     def form_valid(self, form):
         messages.success(self.request, self.success_message % self.get_object().__dict__)

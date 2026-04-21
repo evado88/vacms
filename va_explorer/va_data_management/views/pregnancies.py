@@ -19,19 +19,13 @@ from django.views.generic.detail import SingleObjectMixin
 
 from django_filters.views import FilterView
 
-from va_explorer.utils.mixins import CustomAuthMixin
+from va_explorer.utils.mixins import CustomAuthMixin, LocationRestrictedQuerySetMixin
 from va_explorer.va_data_management.forms import PregnancyForm
 from va_explorer.va_data_management.models import Pregnancy
-from va_explorer.va_data_management.utils.location_access import (
-    restrict_queryset_to_user_locations,
-)
 from va_explorer.va_data_management.filters import PregnancyFilter
 
-# You can implement PregnancyFilter for advanced search/filtering if needed
-# from va_explorer.va_data_management.filters import PregnancyFilter
 
-
-class Pregnancies(CustomAuthMixin, PermissionRequiredMixin, FilterView):
+class Pregnancies(CustomAuthMixin, PermissionRequiredMixin, LocationRestrictedQuerySetMixin, FilterView):
     permission_required = "va_data_management.view_pregnancy"
     template_name = "va_data_management/pregnancies.html"
     filterset_class = PregnancyFilter
@@ -49,10 +43,7 @@ class Pregnancies(CustomAuthMixin, PermissionRequiredMixin, FilterView):
     }
 
     def get_queryset(self):
-        queryset = restrict_queryset_to_user_locations(
-            Pregnancy.objects.all(),
-            self.request.user,
-        )
+        queryset = super().get_queryset()
         self.filterset = PregnancyFilter(self.request.GET, queryset=queryset)
         order_by_raw = self.request.GET.get("order_by", "-id")
         direction = "-" if order_by_raw.startswith("-") else ""
@@ -65,16 +56,8 @@ class Pregnancies(CustomAuthMixin, PermissionRequiredMixin, FilterView):
         return context
 
 
-class PregnancyAccessMixin(SingleObjectMixin):
-    def get_queryset(self):
-        return restrict_queryset_to_user_locations(
-            Pregnancy.objects.all(),
-            self.request.user,
-        )
-
-
 class PregnancyDetail(
-    CustomAuthMixin, PregnancyAccessMixin, PermissionRequiredMixin, DetailView
+    CustomAuthMixin, PermissionRequiredMixin, LocationRestrictedQuerySetMixin, DetailView
 ):
     permission_required = "va_data_management.view_pregnancy"
     template_name = "va_data_management/pregnancy_detail.html"
@@ -92,7 +75,7 @@ class PregnancyDetail(
 class PregnancyEdit(
     CustomAuthMixin,
     PermissionRequiredMixin,
-    PregnancyAccessMixin,
+    LocationRestrictedQuerySetMixin,
     SuccessMessageMixin,
     UpdateView,
 ):
@@ -117,7 +100,7 @@ class PregnancyEdit(
         return context
 
 
-class PregnancyDelete(CustomAuthMixin, PermissionRequiredMixin, DeleteView):
+class PregnancyDelete(CustomAuthMixin, PermissionRequiredMixin, LocationRestrictedQuerySetMixin, DeleteView):
     permission_required = "va_data_management.delete_pregnancy"
     model = Pregnancy
     success_url = reverse_lazy("va_data_management:pregnancy_list")
@@ -125,12 +108,6 @@ class PregnancyDelete(CustomAuthMixin, PermissionRequiredMixin, DeleteView):
     error_message = (
         "Pregnancy %(id)s could not be deleted. This record doesn't exist or you don't have access."
     )
-
-    def get_queryset(self):
-        return restrict_queryset_to_user_locations(
-            Pregnancy.objects.all(),
-            self.request.user,
-        )
 
     def form_valid(self, form):
         obj = self.get_object()
