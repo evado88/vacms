@@ -51,9 +51,10 @@ class DashboardProfilingMiddleware:
 
         started = time.perf_counter()
         sql_started_at = time.perf_counter()
+        # Under DEBUG=True Django already captures connection.queries; we read
+        # the count before/after without forcing the debug cursor ourselves,
+        # which previously added overhead and grew per-thread memory.
         initial_query_count = len(connection.queries)
-        previous_debug_cursor = connection.force_debug_cursor
-        connection.force_debug_cursor = True
 
         response = self.get_response(request)
         response_ready_at = time.perf_counter()
@@ -94,7 +95,6 @@ class DashboardProfilingMiddleware:
                 step_summary,
             )
 
-            connection.force_debug_cursor = previous_debug_cursor
             return _response
 
         if hasattr(response, "add_post_render_callback"):

@@ -64,8 +64,9 @@
     const shouldReproject = crsName.includes("3857") || crsName.includes("102100");
     if (!shouldReproject) return geojson;
 
-    const next = JSON.parse(JSON.stringify(geojson));
-    next.features = next.features.map((feature) => {
+    // Mutate in-place: this runs once per file (result is cached in geojsonCache),
+    // so a deep-copy via JSON.parse/JSON.stringify is not needed here.
+    geojson.features = geojson.features.map((feature) => {
       const geometry = feature?.geometry;
       if (!geometry || !geometry.coordinates) return feature;
       return {
@@ -76,8 +77,8 @@
         },
       };
     });
-    delete next.crs;
-    return next;
+    delete geojson.crs;
+    return geojson;
   };
 
   const createHierarchicalDashboardMap = (options) => {
@@ -363,12 +364,15 @@
       }
 
       const parent = state.path[state.path.length - 1];
-      const filtered = JSON.parse(JSON.stringify(geojson));
-      filtered.features = filtered.features.filter((feature) => {
+      // Build a shallow wrapper with a filtered features array rather than a
+      // full deep-copy via JSON.parse/JSON.stringify. Leaflet only reads feature
+      // geometry and properties; it does not mutate them.
+      const filteredFeatures = geojson.features.filter((feature) => {
         if (state.path.length === 1 && level > 1) return true;
         if (level === 1) return feature?.properties?.parent_id == null;
         return String(feature?.properties?.parent_id) === String(parent.id);
       });
+      const filtered = { type: geojson.type, features: filteredFeatures };
 
       const rows = rowsForLevel(state.payload, level);
       const lookup = buildLookup(rows, level);
@@ -426,7 +430,7 @@
       renderLegend(bins);
       renderBreadcrumbs();
       fitLayerBounds();
-      setEmpty(filtered.features.length === 0 || rows.length === 0);
+      setEmpty(filteredFeatures.length === 0 || rows.length === 0);
     };
 
     const fetchPayload = async (filters) => {

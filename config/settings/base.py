@@ -237,9 +237,35 @@ MIDDLEWARE = [
 if env.bool("DJANGO_DEBUG", False):
     MIDDLEWARE.append("va_explorer.utils.middleware.DashboardProfilingMiddleware")
 
+
+def _show_debug_toolbar(request):
+    """Only show the toolbar for full HTML page loads, not AJAX/JSON fan-out."""
+    from django.conf import settings
+
+    if not settings.DEBUG:
+        return False
+    # Skip for AJAX requests (dashboard component loads, filter-data, trends, map-data)
+    if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+        return False
+    # Skip for paths that serve JSON — they receive no HTML to inject the toolbar into
+    _json_prefixes = (
+        "/national-operational/",
+        "/regional-operations/",
+        "/trends/",
+        "/components/",
+        "/va_analytics/api/",
+    )
+    if any(request.path.startswith(p) for p in _json_prefixes):
+        return False
+    from debug_toolbar.middleware import show_toolbar  # default check (INTERNAL_IPS)
+
+    return show_toolbar(request)
+
+
 DEBUG_TOOLBAR_CONFIG = {
     "DISABLE_PANELS": ["debug_toolbar.panels.redirects.RedirectsPanel"],
     "SHOW_TEMPLATE_CONTEXT": True,
+    "SHOW_TOOLBAR_CALLBACK": "config.settings.base._show_debug_toolbar",
 }
 
 # Static
@@ -370,6 +396,10 @@ CACHES = {
     "default": {
         "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
         "LOCATION": "",
+        "OPTIONS": {
+            "MAX_ENTRIES": 500,
+            "CULL_FREQUENCY": 4,
+        },
     }
 }
 

@@ -9,8 +9,21 @@ from datetime import date, datetime, time, timedelta
 import pandas as pd
 from django.contrib.auth.mixins import PermissionRequiredMixin
 from django.core.cache import cache
-from django.db.models import Case, Count, IntegerField, OuterRef, Q, Subquery, When
-from django.db.models.functions import Substr
+from django.db import transaction
+from django.db.models import (
+    Case,
+    Count,
+    F,
+    IntegerField,
+    Max,
+    OuterRef,
+    Q,
+    Subquery,
+    TextField,
+    Value,
+    When,
+)
+from django.db.models.functions import Cast, Greatest, NullIf, Substr
 from django.http import JsonResponse
 from django.utils import timezone
 from django.utils.dateparse import parse_date as django_parse_date
@@ -95,28 +108,48 @@ def _first_valid_timestamp(record, date_fields):
     return None
 
 
+def _build_date_expr(model, field_name):
+    """Return a text-typed ORM expression for a date field.
+
+    DateTimeField/DateField are cast to text so they're type-compatible with
+    TextField columns in a GREATEST call.  TextField columns use NullIf to
+    convert empty strings to NULL so GREATEST can skip them.
+    """
+    from django.db.models import CharField, DateField, DateTimeField
+
+    field = model._meta.get_field(field_name)
+    if isinstance(field, (DateField, DateTimeField, CharField)):
+        return Cast(F(field_name), output_field=TextField())
+    return NullIf(
+        F(field_name), Value("", output_field=TextField()), output_field=TextField()
+    )
+
+
 def _latest_timestamps_by_identifier(queryset, key_field, date_fields):
     filtered = queryset.exclude(**{f"{key_field}__isnull": True}).exclude(
         **{key_field: ""}
     )
+    # Push the per-key max down to the database using GREATEST over all date fields
+    # so that the DB returns one row per unique key instead of every raw row.
+    date_exprs = [_build_date_expr(queryset.model, f) for f in date_fields]
+    latest_expr = (
+        Greatest(*date_exprs, output_field=TextField())
+        if len(date_exprs) > 1
+        else date_exprs[0]
+    )
+    agg_rows = (
+        filtered.values(key_field)
+        .annotate(_latest_ts=Max(latest_expr))
+        .values_list(key_field, "_latest_ts")
+        .iterator()
+    )
     latest_by_key = {}
-    value_fields = list(date_fields) + [key_field]
-    # Use .values().iterator() to avoid model-instance construction overhead and
-    # to stream rows without caching the entire result set in the QuerySet.
-    for row in filtered.values(*value_fields).iterator(chunk_size=2000):
-        identifier = row.get(key_field)
-        if not identifier:
+    for identifier, raw_ts in agg_rows:
+        if not identifier or not raw_ts:
             continue
-        for field in date_fields:
-            val = row.get(field)
-            if not val:
-                continue
-            timestamp = _parse_submission_timestamp(val)
-            if timestamp is not None:
-                existing = latest_by_key.get(identifier)
-                if existing is None or timestamp > existing:
-                    latest_by_key[identifier] = timestamp
-                break
+        ts = _parse_submission_timestamp(raw_ts)
+        if ts is not None:
+            latest_by_key[identifier] = ts
     return latest_by_key
 
 
@@ -380,34 +413,63 @@ def _parse_home_map_filters(request):
 
 def _latest_geo_by_identifier(queryset, key_field, date_fields, start_dt, end_dt):
     geo_fields = ("province", "district", "constituency", "ward", "ea")
-    latest = {}
-    rows = (
-        queryset.exclude(**{f"{key_field}__isnull": True})
-        .exclude(**{key_field: ""})
-        .values(key_field, *date_fields, *geo_fields)
+    # Use DB-level GREATEST + GROUP BY to find the latest timestamp per identifier,
+    # then fetch geo fields from the row with that timestamp in a second pass.
+    # This avoids loading every raw row into Python.
+    date_exprs = [_build_date_expr(queryset.model, f) for f in date_fields]
+    latest_expr = (
+        Greatest(*date_exprs, output_field=TextField())
+        if len(date_exprs) > 1
+        else date_exprs[0]
     )
-    for row in rows.iterator():
+
+    base = queryset.exclude(**{f"{key_field}__isnull": True}).exclude(**{key_field: ""})
+
+    # Step 1: per-key max timestamp from DB
+    max_rows = (
+        base.values(key_field)
+        .annotate(_latest_ts=Max(latest_expr))
+        .values_list(key_field, "_latest_ts")
+        .iterator()
+    )
+    max_ts_by_key = {}
+    for identifier, raw_ts in max_rows:
+        if not identifier or not raw_ts:
+            continue
+        ts = _parse_submission_timestamp(raw_ts)
+        if ts is None:
+            continue
+        if start_dt and ts < start_dt:
+            continue
+        if end_dt and ts > end_dt:
+            continue
+        max_ts_by_key[identifier] = (ts, raw_ts)
+
+    if not max_ts_by_key:
+        return {}
+
+    # Step 2: fetch geo fields only for the matching rows
+    latest = {}
+    for row in (
+        base.filter(**{f"{key_field}__in": list(max_ts_by_key)})
+        .values(key_field, *date_fields, *geo_fields)
+        .iterator(chunk_size=2000)
+    ):
         identifier = row.get(key_field)
-        if not identifier:
+        if not identifier or identifier not in max_ts_by_key:
             continue
-
-        timestamp = None
-        for field_name in date_fields:
-            timestamp = _parse_submission_timestamp(row.get(field_name))
-            if timestamp is not None:
-                break
-        if timestamp is None:
+        target_ts, target_raw = max_ts_by_key[identifier]
+        # Pick the row whose leading date field matches the max raw value
+        row_raw = next(
+            (row.get(f) for f in date_fields if row.get(f)),
+            None,
+        )
+        if row_raw != target_raw:
             continue
-        if start_dt and timestamp < start_dt:
-            continue
-        if end_dt and timestamp > end_dt:
-            continue
-
-        existing = latest.get(identifier)
-        if existing is not None and timestamp <= existing[0]:
+        if identifier in latest:
             continue
         latest[identifier] = (
-            timestamp,
+            target_ts,
             {
                 "province": _normalize_geo_value(row.get("province")),
                 "district": _normalize_geo_value(row.get("district")),
@@ -704,31 +766,46 @@ def _paginate_list(items, page, page_size):
 
 
 def _latest_household_timestamps(queryset):
-    households_by_key = {}
-    eas_by_key = {}
-    rows = (
-        queryset.exclude(key__isnull=True)
-        .exclude(key="")
-        .values("key", "ea", "submissiondate", "start", "today")
+    date_fields = ("submissiondate", "start", "today")
+    latest_expr = Greatest(
+        *[_build_date_expr(queryset.model, f) for f in date_fields],
+        output_field=TextField(),
     )
-    for row in rows.iterator():
-        timestamp = (
-            _parse_submission_timestamp(row.get("submissiondate"))
-            or _parse_submission_timestamp(row.get("start"))
-            or _parse_submission_timestamp(row.get("today"))
-        )
-        if timestamp is None:
+
+    base = queryset.exclude(key__isnull=True).exclude(key="")
+
+    # Per-key max — one row per unique household key
+    key_rows = (
+        base.values("key")
+        .annotate(_latest_ts=Max(latest_expr))
+        .values_list("key", "_latest_ts")
+        .iterator()
+    )
+    households_by_key = {}
+    for key_value, raw_ts in key_rows:
+        if not key_value or not raw_ts:
             continue
-        key_value = row.get("key")
-        if key_value:
-            existing_key_ts = households_by_key.get(key_value)
-            if existing_key_ts is None or timestamp > existing_key_ts:
-                households_by_key[key_value] = timestamp
-        ea_value = row.get("ea")
-        if ea_value:
-            existing_ea_ts = eas_by_key.get(ea_value)
-            if existing_ea_ts is None or timestamp > existing_ea_ts:
-                eas_by_key[ea_value] = timestamp
+        ts = _parse_submission_timestamp(raw_ts)
+        if ts is not None:
+            households_by_key[key_value] = ts
+
+    # Per-EA max — one row per unique EA code (include non-key rows too for EA count)
+    ea_rows = (
+        queryset.exclude(ea__isnull=True)
+        .exclude(ea="")
+        .values("ea")
+        .annotate(_latest_ts=Max(latest_expr))
+        .values_list("ea", "_latest_ts")
+        .iterator()
+    )
+    eas_by_key = {}
+    for ea_value, raw_ts in ea_rows:
+        if not ea_value or not raw_ts:
+            continue
+        ts = _parse_submission_timestamp(raw_ts)
+        if ts is not None:
+            eas_by_key[ea_value] = ts
+
     return households_by_key, eas_by_key
 
 
@@ -1108,7 +1185,7 @@ class Trends(CustomAuthMixin, View):
         )
 
 
-trends_endpoint_view = Trends.as_view()
+trends_endpoint_view = transaction.non_atomic_requests(Trends.as_view())
 
 
 class NationalOperationalFilterData(CustomAuthMixin, View):
@@ -1122,7 +1199,9 @@ class NationalOperationalFilterData(CustomAuthMixin, View):
         return JsonResponse(payload)
 
 
-national_operational_filter_data_view = NationalOperationalFilterData.as_view()
+national_operational_filter_data_view = transaction.non_atomic_requests(
+    NationalOperationalFilterData.as_view()
+)
 
 
 class HomeOverviewMapData(CustomAuthMixin, View):
@@ -1139,7 +1218,9 @@ class HomeOverviewMapData(CustomAuthMixin, View):
         return JsonResponse(payload)
 
 
-home_overview_map_data_view = HomeOverviewMapData.as_view()
+home_overview_map_data_view = transaction.non_atomic_requests(
+    HomeOverviewMapData.as_view()
+)
 
 
 class HomeDashboardKpisAPIView(CustomAuthMixin, PermissionRequiredMixin, View):

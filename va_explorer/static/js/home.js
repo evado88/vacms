@@ -380,6 +380,8 @@ const updateNationalOperationalKpis = (kpis) => {
   setElementTextById("nov-kpi-total-vas", vas.total);
 }
 
+let _novKpiInflight = null;
+
 const requestNationalOperationalFilterData = (options = {}) => {
   const started = perfNow();
   const shouldInvalidate = Boolean(options.invalidateScope);
@@ -399,6 +401,13 @@ const requestNationalOperationalFilterData = (options = {}) => {
 
   const kpiEndpoint = root.dataset.filterUrl || "";
   if (kpiEndpoint) {
+    // Abort any in-flight KPI request before starting a new one so rapid
+    // filter changes or tab switches don't queue up stale server calls.
+    if (_novKpiInflight) {
+      _novKpiInflight.abort();
+    }
+    const controller = new AbortController();
+    _novKpiInflight = controller;
     const params = new URLSearchParams({
       kpis_only: "1",
       preset: selectedPreset,
@@ -411,8 +420,10 @@ const requestNationalOperationalFilterData = (options = {}) => {
       method: "GET",
       headers: { "X-Requested-With": "XMLHttpRequest" },
       credentials: "same-origin",
+      signal: controller.signal,
     })
       .then((response) => {
+        _novKpiInflight = null;
         if (!response.ok) throw new Error(`Failed to load overview filter data: ${response.status}`);
         return response.json();
       })
@@ -421,7 +432,9 @@ const requestNationalOperationalFilterData = (options = {}) => {
         updateNationalOperationalKpis(jsonResponse.kpis || {});
       })
       .catch((error) => {
-        console.error("[home] failed to fetch National Operational KPIs", error);
+        if (error.name !== "AbortError") {
+          console.error("[home] failed to fetch National Operational KPIs", error);
+        }
       });
   }
 
@@ -802,18 +815,10 @@ const detectActiveHomeTab = () =>
   document.querySelector(".dashboard-shell[data-shell='home'] .dashboard-tab-panel.show.active")?.dataset?.tabPanel
   || "overview";
 
+// dashboard_tabs.js dispatches "dashboard:refresh-tab" for the initial active tab,
+// so we rely on that event handler below instead of calling initHomeTab here.
+// This prevents the double-init that caused duplicate map-data/filter-data fetches.
 const initialStarted = perfNow();
-initHomeTab(detectActiveHomeTab())
-  .then(() => {
-    perfLog("initial.page_bootstrap", initialStarted, { activeTab: detectActiveHomeTab() });
-    if (!firstRenderMeasured) {
-      firstRenderMeasured = true;
-      console.log("[perf][acceptance] home.first_render_ms", {
-        durationMs: Number((perfNow() - initialStarted).toFixed(2)),
-      });
-    }
-  })
-  .catch((error) => console.error(error));
 
 document.querySelectorAll(".dashboard-shell[data-shell='home'] [data-tab]").forEach((tabLink) => {
   tabLink.addEventListener("click", () => {
@@ -871,6 +876,13 @@ document.addEventListener("dashboard:refresh-tab", (event) => {
   initHomeTab(tab)
     .then(() => {
       const durationMs = perfNow() - started;
+      if (!firstRenderMeasured) {
+        firstRenderMeasured = true;
+        perfLog("initial.page_bootstrap", initialStarted, { activeTab: tab });
+        console.log("[perf][acceptance] home.first_render_ms", {
+          durationMs: Number((perfNow() - initialStarted).toFixed(2)),
+        });
+      }
       if (tabWarmCache.has(tab)) {
         const nearInstantThresholdMs = 220;
         const pass = durationMs <= nearInstantThresholdMs;
