@@ -11,9 +11,12 @@
   var csaComponentEl = document.getElementById('regionalCsaComponent');
   var msoComponentEl = document.getElementById('regionalMsoComponent');
   var csaSearchInputEl = document.getElementById('csaNameSearch');
+  var csaSupervisorSearchInputEl = document.getElementById('csaSupervisorSearch');
+  var csaDistrictSearchInputEl = document.getElementById('csaDistrictSearch');
+  var csaWardSearchInputEl = document.getElementById('csaWardSearch');
   var msoSearchInputEl = document.getElementById('msoNameSearch');
   var focusState = {
-    restoreCsaSearch: false,
+    activeCsaSearchId: null,
     csaCaretPos: null,
     restoreMsoSearch: false,
     msoCaretPos: null
@@ -22,6 +25,9 @@
     csa_sort: 'visits',
     csa_dir: 'desc',
     csa_search: '',
+    csa_supervisor_search: '',
+    csa_district_search: '',
+    csa_ward_search: '',
     csa_page: '1',
     mso_sort: 'death_events',
     mso_dir: 'desc',
@@ -32,6 +38,9 @@
     csa_sort: csaComponentEl ? (csaComponentEl.getAttribute('data-csa-sort') || tableSortDefaults.csa_sort) : tableSortDefaults.csa_sort,
     csa_dir: csaComponentEl ? (csaComponentEl.getAttribute('data-csa-dir') || tableSortDefaults.csa_dir) : tableSortDefaults.csa_dir,
     csa_search: csaSearchInputEl ? (csaSearchInputEl.value || '') : '',
+    csa_supervisor_search: csaSupervisorSearchInputEl ? (csaSupervisorSearchInputEl.value || '') : '',
+    csa_district_search: csaDistrictSearchInputEl ? (csaDistrictSearchInputEl.value || '') : '',
+    csa_ward_search: csaWardSearchInputEl ? (csaWardSearchInputEl.value || '') : '',
     csa_page: csaComponentEl ? (csaComponentEl.getAttribute('data-csa-page') || tableSortDefaults.csa_page) : tableSortDefaults.csa_page,
     mso_sort: msoComponentEl ? (msoComponentEl.getAttribute('data-mso-sort') || tableSortDefaults.mso_sort) : tableSortDefaults.mso_sort,
     mso_dir: msoComponentEl ? (msoComponentEl.getAttribute('data-mso-dir') || tableSortDefaults.mso_dir) : tableSortDefaults.mso_dir,
@@ -87,6 +96,19 @@
     return getEl(baseId + suffix) || getEl(baseId);
   }
 
+  function isCsaSearchInputId(id) {
+    return ['csaNameSearch', 'csaSupervisorSearch', 'csaDistrictSearch', 'csaWardSearch'].indexOf(id) !== -1;
+  }
+
+  function getCsaSearchStateKey(id) {
+    return {
+      csaNameSearch: 'csa_search',
+      csaSupervisorSearch: 'csa_supervisor_search',
+      csaDistrictSearch: 'csa_district_search',
+      csaWardSearch: 'csa_ward_search'
+    }[id];
+  }
+
   function getSelectedPreset() {
     var suffix = getActiveFilterSuffix();
     return (
@@ -108,6 +130,9 @@
     var geoSelect = getFilterEl('geographyFilterSelect');
     var sourceSelect = getEl('msoSourceSelect');
     var csaSearchInput = getEl('csaNameSearch');
+    var csaSupervisorSearchInput = getEl('csaSupervisorSearch');
+    var csaDistrictSearchInput = getEl('csaDistrictSearch');
+    var csaWardSearchInput = getEl('csaWardSearch');
     var msoSearchInput = getEl('msoNameSearch');
     var selectedPreset = getSelectedPreset();
     var range = getDateRange();
@@ -118,10 +143,16 @@
     if (range.start) params.set('start_date', range.start);
     if (range.end) params.set('end_date', range.end);
     if (csaSearchInput) tableSortState.csa_search = csaSearchInput.value.trim();
+    if (csaSupervisorSearchInput) tableSortState.csa_supervisor_search = csaSupervisorSearchInput.value.trim();
+    if (csaDistrictSearchInput) tableSortState.csa_district_search = csaDistrictSearchInput.value.trim();
+    if (csaWardSearchInput) tableSortState.csa_ward_search = csaWardSearchInput.value.trim();
     if (msoSearchInput) tableSortState.mso_search = msoSearchInput.value.trim();
     if (tableSortState.csa_sort) params.set('csa_sort', tableSortState.csa_sort);
     if (tableSortState.csa_dir) params.set('csa_dir', tableSortState.csa_dir);
     if (tableSortState.csa_search) params.set('csa_search', tableSortState.csa_search);
+    if (tableSortState.csa_supervisor_search) params.set('csa_supervisor_search', tableSortState.csa_supervisor_search);
+    if (tableSortState.csa_district_search) params.set('csa_district_search', tableSortState.csa_district_search);
+    if (tableSortState.csa_ward_search) params.set('csa_ward_search', tableSortState.csa_ward_search);
     if (tableSortState.csa_page) params.set('csa_page', tableSortState.csa_page);
     if (tableSortState.mso_sort) params.set('mso_sort', tableSortState.mso_sort);
     if (tableSortState.mso_dir) params.set('mso_dir', tableSortState.mso_dir);
@@ -148,8 +179,8 @@
         // Keep data-loaded="1" in sync so DashboardLoader.loadComponentOnce
         // knows this slot is populated and skips re-fetching on tab switch.
         container.dataset.loaded = '1';
-        if (containerId === 'regionalCsaComponent' && focusState.restoreCsaSearch) {
-          var refreshedSearch = getEl('csaNameSearch');
+        if (containerId === 'regionalCsaComponent' && focusState.activeCsaSearchId) {
+          var refreshedSearch = getEl(focusState.activeCsaSearchId);
           if (refreshedSearch) {
             refreshedSearch.focus();
             var pos = typeof focusState.csaCaretPos === 'number'
@@ -338,6 +369,9 @@
     var endDateInput = getFilterEl('timeEndDate');
     var msoSourceSelect = getEl('msoSourceSelect');
     var csaSearchInput = getEl('csaNameSearch');
+    var csaSupervisorSearchInput = getEl('csaSupervisorSearch');
+    var csaDistrictSearchInput = getEl('csaDistrictSearch');
+    var csaWardSearchInput = getEl('csaWardSearch');
     var msoSearchInput = getEl('msoNameSearch');
 
     if (geoSelect) {
@@ -351,19 +385,25 @@
     if (endDateInput) endDateInput.value = '';
     if (msoSourceSelect) msoSourceSelect.value = 'community';
     if (csaSearchInput) csaSearchInput.value = '';
+    if (csaSupervisorSearchInput) csaSupervisorSearchInput.value = '';
+    if (csaDistrictSearchInput) csaDistrictSearchInput.value = '';
+    if (csaWardSearchInput) csaWardSearchInput.value = '';
     if (msoSearchInput) msoSearchInput.value = '';
 
     tableSortState = {
       csa_sort: tableSortDefaults.csa_sort,
       csa_dir: tableSortDefaults.csa_dir,
       csa_search: tableSortDefaults.csa_search,
+      csa_supervisor_search: tableSortDefaults.csa_supervisor_search,
+      csa_district_search: tableSortDefaults.csa_district_search,
+      csa_ward_search: tableSortDefaults.csa_ward_search,
       csa_page: tableSortDefaults.csa_page,
       mso_sort: tableSortDefaults.mso_sort,
       mso_dir: tableSortDefaults.mso_dir,
       mso_search: tableSortDefaults.mso_search,
       mso_page: tableSortDefaults.mso_page
     };
-    focusState.restoreCsaSearch = false;
+    focusState.activeCsaSearchId = null;
     focusState.csaCaretPos = null;
     focusState.restoreMsoSearch = false;
     focusState.msoCaretPos = null;
@@ -375,19 +415,19 @@
     document.addEventListener('pointerdown', function(event) {
       var target = event.target;
       if (!target) return;
-      if (target.id === 'csaNameSearch') {
-        focusState.restoreCsaSearch = true;
+      if (isCsaSearchInputId(target.id)) {
+        focusState.activeCsaSearchId = target.id;
         focusState.restoreMsoSearch = false;
         focusState.msoCaretPos = null;
         return;
       }
       if (target.id === 'msoNameSearch') {
         focusState.restoreMsoSearch = true;
-        focusState.restoreCsaSearch = false;
+        focusState.activeCsaSearchId = null;
         focusState.csaCaretPos = null;
         return;
       }
-      focusState.restoreCsaSearch = false;
+      focusState.activeCsaSearchId = null;
       focusState.csaCaretPos = null;
       focusState.restoreMsoSearch = false;
       focusState.msoCaretPos = null;
@@ -458,10 +498,11 @@
     document.addEventListener('input', function(event) {
       var target = event.target;
       if (!target) return;
-      if (target.id === 'csaNameSearch') {
-        tableSortState.csa_search = (target.value || '').trim();
+      if (isCsaSearchInputId(target.id)) {
+        var csaSearchKey = getCsaSearchStateKey(target.id);
+        if (csaSearchKey) tableSortState[csaSearchKey] = (target.value || '').trim();
         tableSortState.csa_page = '1';
-        focusState.restoreCsaSearch = true;
+        focusState.activeCsaSearchId = target.id;
         focusState.csaCaretPos = target.selectionStart;
         if (csaSearchTimer) clearTimeout(csaSearchTimer);
         csaSearchTimer = setTimeout(function() {

@@ -2,6 +2,9 @@ from django.db import models
 
 
 class CSASupervisorTargetMap(models.Model):
+    STATUS_ACTIVE = "active"
+    STATUS_INACTIVE = "inactive"
+
     csa_name_raw = models.TextField(blank=True, null=True)
     csa_display_name = models.TextField(db_index=True)
     csa_name_normalized = models.TextField(unique=True)
@@ -14,6 +17,15 @@ class CSASupervisorTargetMap(models.Model):
     # Used by the dashboard to compute the correct window length for
     # "all time" coverage calculations without querying tracker on every request.
     tracker_first_date = models.DateField(null=True, blank=True)
+    status = models.CharField(
+        max_length=10,
+        choices=[
+            (STATUS_ACTIVE, "Active"),
+            (STATUS_INACTIVE, "Inactive"),
+        ],
+        default=STATUS_INACTIVE,
+        db_index=True,
+    )
     created = models.DateTimeField(auto_now_add=True)
     updated = models.DateTimeField(auto_now=True)
 

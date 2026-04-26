@@ -1509,7 +1509,7 @@ class RegionalOperationsComponentContextMixin:
         {"value": "facility", "label": "Facility"},
     )
     csa_column_map = (
-        ("name", "CSA Name (Search)"),
+        ("name", "CSA Name"),
         ("district", "District"),
         ("ward", "Ward"),
         ("visits", "Visits"),
@@ -1524,6 +1524,7 @@ class RegionalOperationsComponentContextMixin:
         ("supervisor", "Supervisor"),
         ("csa_target", "CSA Target"),
         ("coverage_pct", "Coverage %"),
+        ("status", "Status"),
     )
     mso_column_map = (
         ("name", "MSO Name (Search)"),
@@ -1826,11 +1827,11 @@ class RegionalOperationsComponentContextMixin:
             }
 
         if selected_preset == "30":
-            start_dt = now_local - timedelta(days=30)
+            start_dt = now_local - timedelta(days=29)
             end_dt = now_local
             time_label = "Last 30 days"
         elif selected_preset == "7":
-            start_dt = now_local - timedelta(days=7)
+            start_dt = now_local - timedelta(days=6)
             end_dt = now_local
             time_label = "Last 7 days"
         elif selected_preset == "24":
@@ -2006,7 +2007,7 @@ class RegionalOperationsComponentContextMixin:
             return sorted(
                 rows, key=lambda r: str(r.get("name", "")).lower(), reverse=reverse
             )
-        if sort_key in {"district", "ward", "province", "supervisor"}:
+        if sort_key in {"district", "ward", "province", "supervisor", "status"}:
             return sorted(
                 rows, key=lambda r: str(r.get(sort_key, "")).lower(), reverse=reverse
             )
@@ -2068,10 +2069,15 @@ class RegionalOperationsComponentContextMixin:
 
     def _get_csa_target_supervisor_map(self):
         cache_attr = "_csa_target_supervisor_map_cache"
+        cache_meta = CSASupervisorTargetMap.objects.aggregate(
+            latest_updated=Max("updated"),
+            count=Count("id"),
+            latest_id=Max("id"),
+        )
         cache_version = (
-            CSASupervisorTargetMap.objects.order_by("-updated")
-            .values_list("updated", flat=True)
-            .first()
+            cache_meta["latest_updated"],
+            cache_meta["count"],
+            cache_meta["latest_id"],
         )
         cached = getattr(self.__class__, cache_attr, None)
         if cached and cached.get("version") == cache_version:
@@ -2084,6 +2090,7 @@ class RegionalOperationsComponentContextMixin:
             "supervisor_name",
             "csa_target",
             "tracker_first_date",
+            "status",
         ):
             csa_name = self._format_csa_display_name(row.get("csa_display_name"))
             normalized_key = row.get(
@@ -2098,6 +2105,7 @@ class RegionalOperationsComponentContextMixin:
                 "supervisor": (row.get("supervisor_name") or "").strip() or "—",
                 "csa_target": self._to_int(target_raw) if target_raw is not None else 0,
                 "tracker_first_date": row.get("tracker_first_date"),
+                "status": row.get("status") or CSASupervisorTargetMap.STATUS_INACTIVE,
             }
             if normalized_key:
                 mapping[normalized_key] = payload
@@ -2112,7 +2120,12 @@ class RegionalOperationsComponentContextMixin:
         return mapping
 
     def _build_csa_rows(
-        self, selected_geo, start_date_str, end_date_str, province_scope
+        self,
+        selected_geo,
+        start_date_str,
+        end_date_str,
+        province_scope,
+        selected_preset="all",
     ):
         counts_by_csa = defaultdict(
             lambda: {
@@ -2128,6 +2141,7 @@ class RegionalOperationsComponentContextMixin:
                 "overdue_without_interview": 0,
                 "supervisor": "—",
                 "csa_target": 0,
+                "status": CSASupervisorTargetMap.STATUS_INACTIVE,
                 "coverage_pct": None,
                 "coverage_band": "empty",
             }
@@ -2184,11 +2198,14 @@ class RegionalOperationsComponentContextMixin:
         # scaled to match the selected filter.
         # - 7-day preset   → window_days = 7  (scale = 1, target unchanged)
         # - 30-day preset  → window_days = 30 (scale = 30/7)
+        # - 24-hour preset → window_days = 1
         # - custom range   → window_days = (end - start + 1)
         # - "all time"     → window_days = None → resolved per-CSA in the loop
         #                    using tracker_first_date from CSASupervisorTargetMap
         today = date.today()
-        if start_date_str and end_date_str:
+        if selected_preset == "24":
+            window_days = 1
+        elif start_date_str and end_date_str:
             _cov_start = date.fromisoformat(start_date_str)
             _cov_end = date.fromisoformat(end_date_str)
             window_days = max(1, (_cov_end - _cov_start).days + 1)
@@ -2252,10 +2269,10 @@ class RegionalOperationsComponentContextMixin:
             )
 
             entry["supervisor"] = mapping_row.get("supervisor", "—")
-            weekly_target = self._to_int(mapping_row.get("csa_target"))
-            entry["csa_target"] = (
-                weekly_target  # always show the raw weekly target in the table
+            entry["status"] = mapping_row.get(
+                "status", CSASupervisorTargetMap.STATUS_INACTIVE
             )
+            weekly_target = self._to_int(mapping_row.get("csa_target"))
 
             # Resolve the effective window length for this CSA.
             # For "all time" (window_days is None) use the per-CSA tracker_first_date
@@ -2270,10 +2287,12 @@ class RegionalOperationsComponentContextMixin:
 
             if weekly_target > 0 and effective_window is not None:
                 scaled_target = weekly_target * (effective_window / 7)
+                entry["csa_target"] = round(scaled_target)
                 entry["coverage_pct"] = round(
                     (entry["visits"] / scaled_target) * 100, 1
                 )
             else:
+                entry["csa_target"] = weekly_target
                 entry["coverage_pct"] = None
             entry["coverage_band"] = self._coverage_band(entry["coverage_pct"])
 
@@ -2881,6 +2900,11 @@ class RegionalOperationsComponentContextMixin:
             self.request.GET.get("csa_dir", "desc"), {"asc", "desc"}, "desc"
         )
         csa_search = self.request.GET.get("csa_search", "").strip()
+        csa_supervisor_search = self.request.GET.get(
+            "csa_supervisor_search", ""
+        ).strip()
+        csa_district_search = self.request.GET.get("csa_district_search", "").strip()
+        csa_ward_search = self.request.GET.get("csa_ward_search", "").strip()
         csa_page = max(1, self._to_int(self.request.GET.get("csa_page", "1")))
 
         csa_rows = self._build_csa_rows(
@@ -2888,6 +2912,7 @@ class RegionalOperationsComponentContextMixin:
             time_window["start_date_str"],
             time_window["end_date_str"],
             province_scope,
+            time_window["selected_preset"],
         )
         if selected_geo and selected_geo != "national":
             csa_rows = [
@@ -2901,8 +2926,43 @@ class RegionalOperationsComponentContextMixin:
                 for row in csa_rows
                 if self._matches_name_search(row.get("name", ""), csa_search)
             ]
+        if csa_supervisor_search:
+            supervisor_query = csa_supervisor_search.lower()
+            csa_rows = [
+                row
+                for row in csa_rows
+                if supervisor_query in str(row.get("supervisor") or "").lower()
+            ]
+        if csa_district_search:
+            district_query = csa_district_search.lower()
+            csa_rows = [
+                row
+                for row in csa_rows
+                if district_query in str(row.get("district") or "").lower()
+            ]
+        if csa_ward_search:
+            ward_query = csa_ward_search.lower()
+            csa_rows = [
+                row
+                for row in csa_rows
+                if ward_query in str(row.get("ward") or "").lower()
+            ]
         csa_rows_sorted = self._sort_rows(csa_rows, csa_sort, csa_dir)
-        csa_pagination = self._paginate_rows(csa_rows_sorted, csa_page)
+        csa_sort_param = (self.request.GET.get("csa_sort") or "").strip().lower()
+        csa_dir_param = (self.request.GET.get("csa_dir") or "").strip().lower()
+        using_default_sort = csa_sort_param in {"", "visits"} and csa_dir_param in {
+            "",
+            "desc",
+        }
+        if using_default_sort:
+            csa_rows_sorted = sorted(
+                csa_rows_sorted,
+                key=lambda row: (
+                    str(row.get("status") or "").strip().lower()
+                    == CSASupervisorTargetMap.STATUS_INACTIVE
+                ),
+            )
+        csa_pagination = self._paginate_rows(csa_rows_sorted, csa_page, per_page=10)
 
         return {
             "csa_stats": csa_pagination["rows"],
@@ -2910,6 +2970,9 @@ class RegionalOperationsComponentContextMixin:
             "csa_sort": csa_sort,
             "csa_dir": csa_dir,
             "csa_search": csa_search,
+            "csa_supervisor_search": csa_supervisor_search,
+            "csa_district_search": csa_district_search,
+            "csa_ward_search": csa_ward_search,
             "csa_page": csa_pagination["page"],
             "csa_total_pages": csa_pagination["total_pages"],
             "csa_has_prev": csa_pagination["has_prev"],

@@ -8,6 +8,7 @@ from dateutil.relativedelta import relativedelta
 from dateutil.tz import gettz
 from django.contrib.auth.models import Permission
 from django.core.cache import cache
+from django.core.management import call_command
 from django.test import Client
 from django.urls import reverse
 
@@ -434,7 +435,8 @@ def test_regional_operations_components_refresh_independently(user: User):
         follow=True,
     )
     assert csa_response.status_code == 200
-    assert b"CSA Name (Search)" in csa_response.content
+    assert b"CSA Name" in csa_response.content
+    assert b'id="csaSupervisorSearch"' in csa_response.content
     assert b"regional-sort-link" in csa_response.content
     assert b"regional-page-link" in csa_response.content
 
@@ -559,6 +561,16 @@ def test_mso_uses_only_va_base_names_and_fuzzy_maps_event_aggregates(user: User)
     assert jane_row["va_scheduled"] > 0
 
 
+def test_regional_operations_filters_default_to_all_time(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    response = client.get("/regional-operations/components/filters/", follow=True)
+
+    assert response.status_code == 200
+    assert response.context["selected_time_preset"] == "timeAll"
+
+
 # Get the about page and make sure it returns successfully
 def test_about(user: User):
     client = Client()
@@ -578,10 +590,10 @@ def test_csa_component_enriches_supervisor_target_and_coverage(user: User):
         csa_name_normalized="alice",
         supervisor_name="Supervisor Alpha",
         csa_target=10,
+        status=CSASupervisorTargetMap.STATUS_ACTIVE,
     )
 
-    # CSA numerator for coverage uses the number of tracker visits in the rolling
-    # past 7 days, while the table's Visits column remains the full filtered count.
+    # Explicit rolling 7-day CSA supervision requests exclude older tracker rows.
     CSADailyTracker.objects.create(
         key="k1",
         enumerator="Alice_1",
@@ -605,7 +617,11 @@ def test_csa_component_enriches_supervisor_target_and_coverage(user: User):
         num_outcome="0",
     )
 
-    response = client.get("/regional-operations/components/csa/", follow=True)
+    response = client.get(
+        "/regional-operations/components/csa/",
+        {"time_preset": "time7"},
+        follow=True,
+    )
     assert response.status_code == 200
     assert b"Supervisor" in response.content
     assert b"CSA Target" in response.content
@@ -614,9 +630,82 @@ def test_csa_component_enriches_supervisor_target_and_coverage(user: User):
     rows = response.context["csa_stats"]
     alice = next(row for row in rows if row["name"] == "Alice")
     assert alice["supervisor"] == "Supervisor Alpha"
+    assert alice["status"] == CSASupervisorTargetMap.STATUS_ACTIVE
     assert alice["csa_target"] == 10
-    assert alice["visits"] == 2
+    assert alice["visits"] == 1
     assert alice["coverage_pct"] == 10.0
+
+
+@time_machine.travel(dt.datetime(2026, 3, 29, 12, 0, tzinfo=eastern_tz))
+def test_csa_component_scales_displayed_target_by_window(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    CSASupervisorTargetMap.objects.create(
+        csa_name_raw="Alice_1",
+        csa_display_name="Alice",
+        csa_name_normalized="alice",
+        supervisor_name="Supervisor Alpha",
+        csa_target=10,
+        tracker_first_date=date(2026, 3, 10),
+        status=CSASupervisorTargetMap.STATUS_ACTIVE,
+    )
+    for key, tracker_date in (("k1", "2026-03-28"), ("k2", "2026-03-10")):
+        CSADailyTracker.objects.create(
+            key=key,
+            enumerator="Alice_1",
+            province="Lusaka",
+            district="Lusaka",
+            ward="Ward 1",
+            today=tracker_date,
+            num_death="0",
+            num_preg="0",
+            num_outcome="0",
+        )
+
+    response_30 = client.get(
+        "/regional-operations/components/csa/",
+        {"time_preset": "time30"},
+        follow=True,
+    )
+    alice_30 = next(
+        row for row in response_30.context["csa_stats"] if row["name"] == "Alice"
+    )
+    assert alice_30["csa_target"] == 43
+    assert alice_30["coverage_pct"] == 4.7
+
+    response_24 = client.get(
+        "/regional-operations/components/csa/",
+        {"time_preset": "time24"},
+        follow=True,
+    )
+    alice_24 = next(
+        row for row in response_24.context["csa_stats"] if row["name"] == "Alice"
+    )
+    assert alice_24["csa_target"] == 1
+    assert alice_24["coverage_pct"] == 70.0
+
+    response_custom = client.get(
+        "/regional-operations/components/csa/",
+        {"start_date": "2026-03-20", "end_date": "2026-03-29"},
+        follow=True,
+    )
+    alice_custom = next(
+        row for row in response_custom.context["csa_stats"] if row["name"] == "Alice"
+    )
+    assert alice_custom["csa_target"] == 14
+    assert alice_custom["coverage_pct"] == 7.0
+
+    response_all = client.get(
+        "/regional-operations/components/csa/",
+        {"time_preset": "timeAll"},
+        follow=True,
+    )
+    alice_all = next(
+        row for row in response_all.context["csa_stats"] if row["name"] == "Alice"
+    )
+    assert alice_all["csa_target"] == 29
+    assert alice_all["coverage_pct"] == 7.0
 
 
 def test_csa_component_handles_unmatched_mapping_safely(user: User):
@@ -642,7 +731,28 @@ def test_csa_component_handles_unmatched_mapping_safely(user: User):
     row = next(r for r in rows if r["name"] == "No Map CSA")
     assert row["supervisor"] == "—"
     assert row["csa_target"] == 0
+    assert row["status"] == CSASupervisorTargetMap.STATUS_INACTIVE
     assert row["coverage_pct"] is None
+
+
+@time_machine.travel(dt.datetime(2026, 4, 26, 12, 0, tzinfo=eastern_tz))
+def test_csa_component_default_all_time_shows_available_tracker_rows(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    CSADailyTracker.objects.create(
+        key="older-default-row",
+        enumerator="Older_CSA_1",
+        province="Lusaka",
+        district="Lusaka",
+        ward="Ward 1",
+        today="2026-03-28",
+    )
+
+    response = client.get("/regional-operations/components/csa/", follow=True)
+
+    assert response.status_code == 200
+    assert any(row["name"] == "Older CSA" for row in response.context["csa_stats"])
 
 
 @time_machine.travel(dt.datetime(2026, 3, 29, 12, 0, tzinfo=eastern_tz))
@@ -672,7 +782,11 @@ def test_csa_component_matches_mapping_by_display_name_when_normalized_differs(
         num_outcome="0",
     )
 
-    response = client.get("/regional-operations/components/csa/", follow=True)
+    response = client.get(
+        "/regional-operations/components/csa/",
+        {"time_preset": "time7"},
+        follow=True,
+    )
     assert response.status_code == 200
 
     rows = response.context["csa_stats"]
@@ -680,3 +794,115 @@ def test_csa_component_matches_mapping_by_display_name_when_normalized_differs(
     assert alice["supervisor"] == "Supervisor Beta"
     assert alice["csa_target"] == 8
     assert alice["coverage_pct"] == 12.5
+
+
+def test_csa_component_filters_by_supervisor_district_and_ward(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    CSASupervisorTargetMap.objects.create(
+        csa_name_raw="Alice_1",
+        csa_display_name="Alice",
+        csa_name_normalized="alice",
+        supervisor_name="Supervisor Alpha",
+        csa_target=10,
+    )
+    CSASupervisorTargetMap.objects.create(
+        csa_name_raw="Bob_1",
+        csa_display_name="Bob",
+        csa_name_normalized="bob",
+        supervisor_name="Supervisor Beta",
+        csa_target=10,
+    )
+    CSADailyTracker.objects.create(
+        key="filter-a",
+        enumerator="Alice_1",
+        province="Lusaka",
+        district="Lusaka",
+        ward="Ward 1",
+        today=date.today().isoformat(),
+    )
+    CSADailyTracker.objects.create(
+        key="filter-b",
+        enumerator="Bob_1",
+        province="Lusaka",
+        district="Kafue",
+        ward="Ward 2",
+        today=date.today().isoformat(),
+    )
+
+    response = client.get(
+        "/regional-operations/components/csa/",
+        {
+            "csa_supervisor_search": "beta",
+            "csa_district_search": "kaf",
+            "csa_ward_search": "2",
+        },
+        follow=True,
+    )
+
+    assert response.status_code == 200
+    assert response.context["csa_supervisor_search"] == "beta"
+    assert response.context["csa_district_search"] == "kaf"
+    assert response.context["csa_ward_search"] == "2"
+    assert [row["name"] for row in response.context["csa_stats"]] == ["Bob"]
+
+
+def test_csa_component_paginates_ten_rows_per_page(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    for idx in range(11):
+        CSADailyTracker.objects.create(
+            key=f"page-{idx}",
+            enumerator=f"CSA_{idx}",
+            province="Lusaka",
+            district="Lusaka",
+            ward="Ward 1",
+            today=date.today().isoformat(),
+        )
+
+    response = client.get("/regional-operations/components/csa/", follow=True)
+
+    assert response.status_code == 200
+    assert response.context["csa_visible_count"] == 10
+    assert response.context["csa_total_count"] == 11
+    assert response.context["csa_total_pages"] == 2
+
+
+@time_machine.travel(dt.datetime(2026, 3, 29, 12, 0, tzinfo=eastern_tz))
+def test_refresh_csa_first_dates_sets_status_from_recent_tracker_dates(user: User):
+    CSASupervisorTargetMap.objects.create(
+        csa_name_raw="Active_1",
+        csa_display_name="Active",
+        csa_name_normalized="active",
+        supervisor_name="Supervisor Active",
+        csa_target=10,
+    )
+    CSASupervisorTargetMap.objects.create(
+        csa_name_raw="Inactive_1",
+        csa_display_name="Inactive",
+        csa_name_normalized="inactive",
+        supervisor_name="Supervisor Inactive",
+        csa_target=10,
+        status=CSASupervisorTargetMap.STATUS_ACTIVE,
+    )
+    CSADailyTracker.objects.create(
+        key="recent",
+        enumerator="Active_1",
+        today="2026-03-16",
+    )
+    CSADailyTracker.objects.create(
+        key="stale",
+        enumerator="Inactive_1",
+        today="2026-02-27",
+    )
+
+    call_command("refresh_csa_first_dates")
+
+    active = CSASupervisorTargetMap.objects.get(csa_name_normalized="active")
+    inactive = CSASupervisorTargetMap.objects.get(csa_name_normalized="inactive")
+    assert active.tracker_first_date == date(2026, 3, 16)
+    assert active.status == CSASupervisorTargetMap.STATUS_ACTIVE
+    assert inactive.tracker_first_date == date(2026, 2, 27)
+    assert inactive.status == CSASupervisorTargetMap.STATUS_INACTIVE
