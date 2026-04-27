@@ -300,7 +300,9 @@
     mapState.map.keyboard.disable();
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxZoom: 10,
-      attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+      // OSM public tile servers block requests when the browser omits Referer.
+      referrerPolicy: "strict-origin-when-cross-origin",
+      attribution: '&copy; OpenStreetMap contributors',
     }).addTo(mapState.map);
 
     const res = await fetch(`${window.location.origin}/static/data/zambia_geojson.json`);

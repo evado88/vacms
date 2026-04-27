@@ -841,7 +841,9 @@ const dashboard = new Vue({
 
             const tiles = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                 maxZoom: 19, // Allow deep zooming for EA level features
-                attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+                // OSM public tile servers block requests when the browser omits Referer.
+                referrerPolicy: "strict-origin-when-cross-origin",
+                attribution: '&copy; OpenStreetMap contributors'
             }).addTo(this.map);
 
             // Map-level click runs after feature hit-testing and applies the same invalid-click rule.

@@ -347,6 +347,8 @@ FIXTURE_DIRS = (str(APPS_DIR / "fixtures"),)
 SESSION_COOKIE_HTTPONLY = True
 CSRF_COOKIE_HTTPONLY = True
 SECURE_BROWSER_XSS_FILTER = True
+# OSM public tile servers block requests when the browser omits Referer.
+SECURE_REFERRER_POLICY = "strict-origin-when-cross-origin"
 DATA_UPLOAD_MAX_MEMORY_SIZE = 100 * 1024 * 1024  # 100 MB — prevent OOM on large imports
 
 # Email

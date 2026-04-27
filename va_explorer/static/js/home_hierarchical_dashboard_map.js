@@ -273,7 +273,9 @@
 
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         maxZoom: 19,
-        attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+        // OSM public tile servers block requests when the browser omits Referer.
+        referrerPolicy: "strict-origin-when-cross-origin",
+        attribution: '&copy; OpenStreetMap contributors',
       }).addTo(state.map);
 
       if (L.control && typeof L.control.fullscreen === "function") {
