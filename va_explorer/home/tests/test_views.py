@@ -26,6 +26,7 @@ from va_explorer.va_data_management.models import (
     CSASupervisorTargetMap,
     Death,
     Household,
+    HouseholdMember,
     Pregnancy,
     PregnancyOutcome,
 )
@@ -381,6 +382,77 @@ def test_home_dashboard_kpis_are_scoped_to_user_province():
     assert kpis["preg_outcomes"]["total"] == 1
     assert kpis["deaths"]["total"] == 1
     assert kpis["vas"]["total"] == 1
+
+
+@time_machine.travel(dt.datetime(2026, 4, 27, 12, 0, tzinfo=gettz("Africa/Lusaka")))
+def test_home_dashboard_kpis_include_last_30_days_counts():
+    cache.clear()
+    permission = Permission.objects.filter(codename="view_dashboard").first()
+    group = GroupFactory.create(permissions=[permission] if permission else [])
+    user = UserFactory.create(groups=[group])
+    client = Client()
+    client.force_login(user=user)
+
+    recent_dates = ("2026-04-27", "2026-04-17")
+    old_date = "2026-03-27"
+
+    for index, recorded_on in enumerate((*recent_dates, old_date), start=1):
+        household = Household.objects.create(
+            key=f"household-{index}",
+            ea=f"cluster-{index}",
+            submissiondate=recorded_on,
+            today=recorded_on,
+            start=recorded_on,
+        )
+        HouseholdMember.objects.create(
+            household=household,
+            first_name=f"Person {index}",
+        )
+        Pregnancy.objects.create(
+            key=f"pregnancy-{index}",
+            submissiondate=recorded_on,
+            today=recorded_on,
+            start=recorded_on,
+        )
+        PregnancyOutcome.objects.create(
+            key=f"pregnancy-outcome-{index}",
+            submissiondate=recorded_on,
+            today=recorded_on,
+            start=recorded_on,
+        )
+        Death.objects.create(
+            key=f"death-{index}",
+            submissiondate=recorded_on,
+            today=recorded_on,
+            start=recorded_on,
+        )
+        va = VerbalAutopsyFactory.create(
+            instanceid=f"va-{index}",
+            Id10012=recorded_on,
+            Id10023=recorded_on,
+            submissiondate=recorded_on,
+        )
+        type(va).objects.filter(pk=va.pk).update(
+            created=dt.datetime.fromisoformat(f"{recorded_on}T00:00:00+02:00")
+        )
+
+    response = client.get(reverse("va_analytics:home-dashboard-kpis-api"))
+    assert response.status_code == 200
+    kpis = response.json()["kpis"]
+
+    for key in (
+        "eas",
+        "households",
+        "people",
+        "pregnancies",
+        "preg_outcomes",
+        "deaths",
+        "vas",
+    ):
+        assert kpis[key]["today"] == 1
+        assert kpis[key]["week"] == 1
+        assert kpis[key]["last_30_days"] == 2
+        assert kpis[key]["total"] == 3
 
 
 def test_home_dashboard_overview_chart_is_scoped_to_user_province():

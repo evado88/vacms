@@ -175,18 +175,23 @@ def _filter_timestamps(timestamps, start_dt, end_dt):
 def _windowed_counts(timestamps, start_dt, end_dt):
     filtered = _filter_timestamps(timestamps, start_dt, end_dt)
     if not filtered:
-        return {"today": 0, "week": 0, "total": 0}
+        return {"today": 0, "week": 0, "last_30_days": 0, "total": 0}
 
     effective_end = end_dt or timezone.localtime(timezone.now())
     today_start = effective_end - timedelta(days=1)
     week_start = effective_end - timedelta(days=7)
+    last_30_days_start = effective_end - timedelta(days=30)
     if start_dt is not None:
         today_start = max(today_start, start_dt)
         week_start = max(week_start, start_dt)
+        last_30_days_start = max(last_30_days_start, start_dt)
 
     return {
         "today": sum(1 for ts in filtered if today_start <= ts <= effective_end),
         "week": sum(1 for ts in filtered if week_start <= ts <= effective_end),
+        "last_30_days": sum(
+            1 for ts in filtered if last_30_days_start <= ts <= effective_end
+        ),
         "total": len(filtered),
     }
 
@@ -949,13 +954,23 @@ def _get_national_operational_view_data(
             start_dt or datetime.min.replace(tzinfo=end_dt.tzinfo),
         )
     }
+    household_keys_last_30_days = {
+        key
+        for key, ts in households_by_key.items()
+        if ts <= end_dt
+        and ts
+        >= max(
+            end_dt - timedelta(days=30),
+            start_dt or datetime.min.replace(tzinfo=end_dt.tzinfo),
+        )
+    }
 
     with timed_block("home.nov.people_aggregate", request=request):
         if not household_keys_total:
-            people_total = people_today = people_week = 0
+            people_total = people_today = people_week = people_last_30_days = 0
         else:
             # Single aggregate query replaces three sequential COUNT queries.
-            # household_keys_today and _week are subsets of household_keys_total,
+            # Windowed household key sets are subsets of household_keys_total,
             # so filtering once on the superset is sufficient.
             agg_kwargs = {"total": Count("id")}
             if household_keys_today:
@@ -972,12 +987,20 @@ def _get_national_operational_view_data(
                         output_field=IntegerField(),
                     )
                 )
+            if household_keys_last_30_days:
+                agg_kwargs["last_30_days"] = Count(
+                    Case(
+                        When(household__key__in=household_keys_last_30_days, then=1),
+                        output_field=IntegerField(),
+                    )
+                )
             agg = HouseholdMember.objects.filter(
                 household__key__in=household_keys_total
             ).aggregate(**agg_kwargs)
             people_total = agg["total"]
             people_today = agg.get("today", 0)
             people_week = agg.get("week", 0)
+            people_last_30_days = agg.get("last_30_days", 0)
 
     if include_chart_series:
         with timed_block("home.nov.chart_series", request=request):
@@ -1001,7 +1024,12 @@ def _get_national_operational_view_data(
     kpis = {
         "eas": eas_totals,
         "households": households_totals,
-        "people": {"today": people_today, "week": people_week, "total": people_total},
+        "people": {
+            "today": people_today,
+            "week": people_week,
+            "last_30_days": people_last_30_days,
+            "total": people_total,
+        },
         "pregnancies": pregnancies_totals,
         "preg_outcomes": pregnancy_outcomes_totals,
         "deaths": deaths_totals,
@@ -1034,6 +1062,21 @@ def _is_unrestricted_national_request(request, preset, location_level, location_
     return location_level in (None, "", "national") and location_value in (None, "")
 
 
+def _kpis_have_last_30_days(kpis):
+    return all(
+        "last_30_days" in (kpis.get(key) or {})
+        for key in (
+            "eas",
+            "households",
+            "people",
+            "pregnancies",
+            "preg_outcomes",
+            "deaths",
+            "vas",
+        )
+    )
+
+
 def _get_cached_nov_payload(request):
     preset, start_dt, end_dt, has_custom_range = _parse_filter_range(request)
     location_level, location_value = _parse_location_filter(request)
@@ -1044,11 +1087,14 @@ def _get_cached_nov_payload(request):
         request, preset, location_level, location_value
     ):
         prewarm_payload = cache.get(HOME_DASHBOARD_PREWARM_KEY)
-        if prewarm_payload is not None:
+        if prewarm_payload is not None and _kpis_have_last_30_days(
+            prewarm_payload.get("kpis", {})
+        ):
             return prewarm_payload
 
     extra = {
         "component": "nov_bundle",
+        "schema_version": 2,
         "location_level": location_level,
         "location_value": location_value,
     }
@@ -1070,7 +1116,7 @@ def _get_cached_nov_payload(request):
 
 
 def _get_cached_home_kpis(request):
-    extra = {"component": "kpis"}
+    extra = {"component": "kpis", "schema_version": 2}
     cache_key = _fastpath_cache_key("home_dashboard_kpis", request, extra=extra)
     cached_payload = cache.get(cache_key)
     if cached_payload is not None:

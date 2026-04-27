@@ -353,30 +353,37 @@ const updateNationalOperationalKpis = (kpis) => {
 
   setElementTextById("nov-kpi-today-eas", eas.today);
   setElementTextById("nov-kpi-week-eas", eas.week);
+  setElementTextById("nov-kpi-30d-eas", eas.last_30_days);
   setElementTextById("nov-kpi-total-eas", eas.total);
 
   setElementTextById("nov-kpi-today-households", households.today);
   setElementTextById("nov-kpi-week-households", households.week);
+  setElementTextById("nov-kpi-30d-households", households.last_30_days);
   setElementTextById("nov-kpi-total-households", households.total);
 
   setElementTextById("nov-kpi-today-people", people.today);
   setElementTextById("nov-kpi-week-people", people.week);
+  setElementTextById("nov-kpi-30d-people", people.last_30_days);
   setElementTextById("nov-kpi-total-people", people.total);
 
   setElementTextById("nov-kpi-today-pregnancies", pregnancies.today);
   setElementTextById("nov-kpi-week-pregnancies", pregnancies.week);
+  setElementTextById("nov-kpi-30d-pregnancies", pregnancies.last_30_days);
   setElementTextById("nov-kpi-total-pregnancies", pregnancies.total);
 
   setElementTextById("nov-kpi-today-preg-outcomes", pregOutcomes.today);
   setElementTextById("nov-kpi-week-preg-outcomes", pregOutcomes.week);
+  setElementTextById("nov-kpi-30d-preg-outcomes", pregOutcomes.last_30_days);
   setElementTextById("nov-kpi-total-preg-outcomes", pregOutcomes.total);
 
   setElementTextById("nov-kpi-today-deaths", deaths.today);
   setElementTextById("nov-kpi-week-deaths", deaths.week);
+  setElementTextById("nov-kpi-30d-deaths", deaths.last_30_days);
   setElementTextById("nov-kpi-total-deaths", deaths.total);
 
   setElementTextById("nov-kpi-today-vas", vas.today);
   setElementTextById("nov-kpi-week-vas", vas.week);
+  setElementTextById("nov-kpi-30d-vas", vas.last_30_days);
   setElementTextById("nov-kpi-total-vas", vas.total);
 }
 
