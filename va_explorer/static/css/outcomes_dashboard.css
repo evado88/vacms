@@ -39,6 +39,7 @@
 #outcomesTabsContent {
   width: 100%;
   min-width: 0;
+  margin-top: 0;
 }
 #outcomesTabs {
   border-bottom: 1px solid var(--od-border-strong);
@@ -993,7 +994,7 @@
 }
 
 #outcomesTabs .nav-link {
-  font-weight: 400;
+  font-weight: 700;
   font-size: 0.875rem;
   padding: 0.5rem 1rem;
   line-height: 1.5;
@@ -1002,7 +1003,7 @@
 #outcomesTabs .nav-link:hover,
 #outcomesTabs .nav-link:focus,
 #outcomesTabs .nav-link.active {
-  color: #000 !important;
+  color: #009140 !important;
 }
 #outcomesTabs .nav-link.active {
   font-weight: 700;
