@@ -105,6 +105,7 @@ const dashboard = new Vue({
             vaRegionalCauseChart: null,
             vaSexAgePyramidChart: null,
             vaTabActivationHandler: null,
+            vaVisualRefreshTimer: null,
             // Fallback for environments where native dblclick can be unreliable in tab panes.
             featureClickState: { id: null, at: 0 },
             drillInFlight: false,
@@ -211,6 +212,22 @@ const dashboard = new Vue({
         this.resizeCharts();
         window.addEventListener('resize', this.resizeCharts);
 
+        this.vaTabActivationHandler = (event) => {
+            if (!this.isVerbalAutopsiesActivationEvent(event)) return;
+            this.scheduleVAVisualRefresh();
+        };
+        const vaTab = document.getElementById("verbal-autopsies-tab");
+        if (vaTab && this.vaTabActivationHandler) {
+            vaTab.addEventListener("click", this.vaTabActivationHandler);
+        }
+        if (this.vaTabActivationHandler) {
+            document.addEventListener("dashboard:refresh-tab", this.vaTabActivationHandler);
+            document.addEventListener("shown.bs.tab", this.vaTabActivationHandler);
+            if (window.jQuery) {
+                window.jQuery(document).on("shown.bs.tab", this.vaTabActivationHandler);
+            }
+        }
+
         if (typeof window.createHierarchicalDashboardMap === "function") {
             this.mapController = window.createHierarchicalDashboardMap({
                 containerId: "map",
@@ -233,37 +250,22 @@ const dashboard = new Vue({
                 fitToDataBounds: false,
                 noDataMessage: "No geographic VA data available for the selected filters.",
             });
-            await this.mapController.refresh({});
         }
-        // Ensure trend + comparison are hydrated and rendered on first load
-        // without requiring user interaction.
-        await this.runRegionalComparison();
 
-        // Charts can initialize while their tab pane is hidden, resulting in a
-        // zero-width canvas. Reflow both charts when the VA tab is activated.
-        this.vaTabActivationHandler = () => {
-            setTimeout(() => {
-                this.resizeCharts();
-                if (this.vaCauseTrendChart) {
-                    this.vaCauseTrendChart.resize();
-                    this.vaCauseTrendChart.update();
-                }
-                if (this.vaRegionalCauseChart) {
-                    this.vaRegionalCauseChart.resize();
-                    this.vaRegionalCauseChart.update();
-                }
-                if (this.vaSexAgePyramidChart) {
-                    this.vaSexAgePyramidChart.resize();
-                    this.vaSexAgePyramidChart.update();
-                }
-            }, 80);
-        };
-        const vaTab = document.getElementById("verbal-autopsies-tab");
-        if (vaTab && this.vaTabActivationHandler) {
-            vaTab.addEventListener("click", this.vaTabActivationHandler);
+        // Defer chart and map rendering until the VA pane is visible. Chart.js
+        // canvases initialised inside a display:none container come up at 0×0
+        // and chart.resize() does not reliably recover them, leaving every
+        // VA chart blank until the user reloads while the tab is already open.
+        // The vaTabActivationHandler registered above will fire
+        // scheduleVAVisualRefresh on first activation, which creates the
+        // charts on a correctly sized canvas.
+        if (this.isVerbalAutopsiesPaneActive()) {
+            if (this.mapController) await this.mapController.refresh({});
+            await this.runRegionalComparison();
+            await this.$nextTick();
+            this.resizeCharts();
+            this.scheduleVAVisualRefresh(0);
         }
-        await this.$nextTick();
-        this.resizeCharts();
     },
     beforeDestroy() {
         window.removeEventListener('resize', this.resizeCharts);
@@ -271,12 +273,75 @@ const dashboard = new Vue({
         if (vaTab && this.vaTabActivationHandler) {
             vaTab.removeEventListener("click", this.vaTabActivationHandler);
         }
+        if (this.vaTabActivationHandler) {
+            document.removeEventListener("dashboard:refresh-tab", this.vaTabActivationHandler);
+            document.removeEventListener("shown.bs.tab", this.vaTabActivationHandler);
+            if (window.jQuery) {
+                window.jQuery(document).off("shown.bs.tab", this.vaTabActivationHandler);
+            }
+        }
+        if (this.vaVisualRefreshTimer) {
+            window.clearTimeout(this.vaVisualRefreshTimer);
+            this.vaVisualRefreshTimer = null;
+        }
         if (this.vaSexAgePyramidChart) {
             this.vaSexAgePyramidChart.destroy();
             this.vaSexAgePyramidChart = null;
         }
     },
     methods: {
+        isVerbalAutopsiesActivationEvent(event) {
+            if (!event) return false;
+            if (event.type === "dashboard:refresh-tab") {
+                const detail = event.detail || {};
+                return detail.shell === "outcomes" && detail.tab === "verbal_autopsies";
+            }
+
+            const tabLink = event.target?.closest?.("[data-tab]");
+            if (tabLink?.dataset?.tab === "verbal_autopsies") return true;
+
+            const targetSelector =
+                event.target?.getAttribute?.("data-bs-target") ||
+                event.target?.getAttribute?.("data-target");
+            return targetSelector === "#verbal-autopsies-pane";
+        },
+        isVerbalAutopsiesPaneActive() {
+            const pane = document.getElementById("verbal-autopsies-pane");
+            if (!pane) return false;
+            return pane.classList.contains("active") || pane.getAttribute("aria-hidden") === "false";
+        },
+        scheduleVAVisualRefresh(delayMs = 120) {
+            if (this.vaVisualRefreshTimer) {
+                window.clearTimeout(this.vaVisualRefreshTimer);
+            }
+            this.vaVisualRefreshTimer = window.setTimeout(() => {
+                this.vaVisualRefreshTimer = null;
+                this.refreshVAVisuals().catch((error) => {
+                    console.error("Failed to refresh VA visuals after tab activation:", error);
+                });
+            }, delayMs);
+        },
+        async refreshVAVisuals() {
+            await this.$nextTick();
+            this.resizeCharts();
+            // Leaflet maps created on a hidden container need invalidateSize()
+            // once they become visible, otherwise tiles render in a clipped frame.
+            if (this.mapController && typeof this.mapController.resize === "function") {
+                this.mapController.resize();
+            }
+            await this.refreshMapOnly();
+            await this.refreshVACauseTrendChart();
+            this.renderRegionalCauseComparisonChart();
+            this.renderVASexAgePyramidChart();
+            await this.$nextTick();
+
+            [this.vaCauseTrendChart, this.vaRegionalCauseChart, this.vaSexAgePyramidChart]
+                .filter(Boolean)
+                .forEach((chart) => {
+                    chart.resize();
+                    chart.update();
+                });
+        },
         normalizeMapKey(value) {
             return String(value || "").trim().replace(/\s+/g, " ").toLowerCase();
         },
