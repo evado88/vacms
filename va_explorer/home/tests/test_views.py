@@ -633,6 +633,32 @@ def test_mso_uses_only_va_base_names_and_fuzzy_maps_event_aggregates(user: User)
     assert jane_row["va_scheduled"] > 0
 
 
+def test_mso_component_filters_by_province_search(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    VerbalAutopsyFactory.create(
+        Id10010="MSO Lusaka",
+        Id10012="2024-02-02",
+        province="Lusaka",
+    )
+    VerbalAutopsyFactory.create(
+        Id10010="MSO Copperbelt",
+        Id10012="2024-02-02",
+        province="Copperbelt",
+    )
+
+    response = client.get(
+        "/regional-operations/components/mso/",
+        {"mso_province_search": "lusa"},
+        follow=True,
+    )
+
+    assert response.status_code == 200
+    assert response.context["mso_province_search"] == "lusa"
+    assert [row["province"] for row in response.context["mso_stats"]] == ["Lusaka"]
+
+
 def test_regional_operations_filters_default_to_all_time(user: User):
     client = Client()
     client.force_login(user=user)
@@ -940,6 +966,27 @@ def test_csa_component_paginates_ten_rows_per_page(user: User):
     assert response.context["csa_visible_count"] == 10
     assert response.context["csa_total_count"] == 11
     assert response.context["csa_total_pages"] == 2
+
+
+def test_mso_component_paginates_ten_rows_per_page(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    for idx in range(11):
+        VerbalAutopsyFactory.create(
+            Id10010=f"MSO {idx}",
+            Id10012="2024-02-01",
+            Id10011="09:00:00",
+            Id10481="2024-02-01 09:30:00",
+            province="Lusaka",
+        )
+
+    response = client.get("/regional-operations/components/mso/", follow=True)
+
+    assert response.status_code == 200
+    assert response.context["mso_visible_count"] == 10
+    assert response.context["mso_total_count"] == 11
+    assert response.context["mso_total_pages"] == 2
 
 
 @time_machine.travel(dt.datetime(2026, 3, 29, 12, 0, tzinfo=eastern_tz))

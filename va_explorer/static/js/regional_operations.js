@@ -15,10 +15,11 @@
   var csaDistrictSearchInputEl = document.getElementById('csaDistrictSearch');
   var csaWardSearchInputEl = document.getElementById('csaWardSearch');
   var msoSearchInputEl = document.getElementById('msoNameSearch');
+  var msoProvinceSearchInputEl = document.getElementById('msoProvinceSearch');
   var focusState = {
     activeCsaSearchId: null,
     csaCaretPos: null,
-    restoreMsoSearch: false,
+    activeMsoSearchId: null,
     msoCaretPos: null
   };
   var tableSortDefaults = {
@@ -32,6 +33,7 @@
     mso_sort: 'death_events',
     mso_dir: 'desc',
     mso_search: '',
+    mso_province_search: '',
     mso_page: '1'
   };
   var tableSortState = {
@@ -45,6 +47,7 @@
     mso_sort: msoComponentEl ? (msoComponentEl.getAttribute('data-mso-sort') || tableSortDefaults.mso_sort) : tableSortDefaults.mso_sort,
     mso_dir: msoComponentEl ? (msoComponentEl.getAttribute('data-mso-dir') || tableSortDefaults.mso_dir) : tableSortDefaults.mso_dir,
     mso_search: msoSearchInputEl ? (msoSearchInputEl.value || '') : '',
+    mso_province_search: msoProvinceSearchInputEl ? (msoProvinceSearchInputEl.value || '') : '',
     mso_page: msoComponentEl ? (msoComponentEl.getAttribute('data-mso-page') || tableSortDefaults.mso_page) : tableSortDefaults.mso_page
   };
 
@@ -109,6 +112,17 @@
     }[id];
   }
 
+  function isMsoSearchInputId(id) {
+    return ['msoNameSearch', 'msoProvinceSearch'].indexOf(id) !== -1;
+  }
+
+  function getMsoSearchStateKey(id) {
+    return {
+      msoNameSearch: 'mso_search',
+      msoProvinceSearch: 'mso_province_search'
+    }[id];
+  }
+
   function getSelectedPreset() {
     var suffix = getActiveFilterSuffix();
     return (
@@ -134,6 +148,7 @@
     var csaDistrictSearchInput = getEl('csaDistrictSearch');
     var csaWardSearchInput = getEl('csaWardSearch');
     var msoSearchInput = getEl('msoNameSearch');
+    var msoProvinceSearchInput = getEl('msoProvinceSearch');
     var selectedPreset = getSelectedPreset();
     var range = getDateRange();
 
@@ -147,6 +162,7 @@
     if (csaDistrictSearchInput) tableSortState.csa_district_search = csaDistrictSearchInput.value.trim();
     if (csaWardSearchInput) tableSortState.csa_ward_search = csaWardSearchInput.value.trim();
     if (msoSearchInput) tableSortState.mso_search = msoSearchInput.value.trim();
+    if (msoProvinceSearchInput) tableSortState.mso_province_search = msoProvinceSearchInput.value.trim();
     if (tableSortState.csa_sort) params.set('csa_sort', tableSortState.csa_sort);
     if (tableSortState.csa_dir) params.set('csa_dir', tableSortState.csa_dir);
     if (tableSortState.csa_search) params.set('csa_search', tableSortState.csa_search);
@@ -157,6 +173,7 @@
     if (tableSortState.mso_sort) params.set('mso_sort', tableSortState.mso_sort);
     if (tableSortState.mso_dir) params.set('mso_dir', tableSortState.mso_dir);
     if (tableSortState.mso_search) params.set('mso_search', tableSortState.mso_search);
+    if (tableSortState.mso_province_search) params.set('mso_province_search', tableSortState.mso_province_search);
     if (tableSortState.mso_page) params.set('mso_page', tableSortState.mso_page);
 
     return params;
@@ -189,8 +206,8 @@
             refreshedSearch.setSelectionRange(pos, pos);
           }
         }
-        if (containerId === 'regionalMsoComponent' && focusState.restoreMsoSearch) {
-          var refreshedMsoSearch = getEl('msoNameSearch');
+        if (containerId === 'regionalMsoComponent' && focusState.activeMsoSearchId) {
+          var refreshedMsoSearch = getEl(focusState.activeMsoSearchId);
           if (refreshedMsoSearch) {
             refreshedMsoSearch.focus();
             var msoPos = typeof focusState.msoCaretPos === 'number'
@@ -373,6 +390,7 @@
     var csaDistrictSearchInput = getEl('csaDistrictSearch');
     var csaWardSearchInput = getEl('csaWardSearch');
     var msoSearchInput = getEl('msoNameSearch');
+    var msoProvinceSearchInput = getEl('msoProvinceSearch');
 
     if (geoSelect) {
       geoSelect.value = '';
@@ -383,12 +401,13 @@
     if (timeAllPreset) timeAllPreset.checked = true;
     if (startDateInput) startDateInput.value = '';
     if (endDateInput) endDateInput.value = '';
-    if (msoSourceSelect) msoSourceSelect.value = 'community';
+    if (msoSourceSelect) msoSourceSelect.value = '';
     if (csaSearchInput) csaSearchInput.value = '';
     if (csaSupervisorSearchInput) csaSupervisorSearchInput.value = '';
     if (csaDistrictSearchInput) csaDistrictSearchInput.value = '';
     if (csaWardSearchInput) csaWardSearchInput.value = '';
     if (msoSearchInput) msoSearchInput.value = '';
+    if (msoProvinceSearchInput) msoProvinceSearchInput.value = '';
 
     tableSortState = {
       csa_sort: tableSortDefaults.csa_sort,
@@ -401,11 +420,12 @@
       mso_sort: tableSortDefaults.mso_sort,
       mso_dir: tableSortDefaults.mso_dir,
       mso_search: tableSortDefaults.mso_search,
+      mso_province_search: tableSortDefaults.mso_province_search,
       mso_page: tableSortDefaults.mso_page
     };
     focusState.activeCsaSearchId = null;
     focusState.csaCaretPos = null;
-    focusState.restoreMsoSearch = false;
+    focusState.activeMsoSearchId = null;
     focusState.msoCaretPos = null;
   }
 
@@ -417,19 +437,19 @@
       if (!target) return;
       if (isCsaSearchInputId(target.id)) {
         focusState.activeCsaSearchId = target.id;
-        focusState.restoreMsoSearch = false;
+        focusState.activeMsoSearchId = null;
         focusState.msoCaretPos = null;
         return;
       }
-      if (target.id === 'msoNameSearch') {
-        focusState.restoreMsoSearch = true;
+      if (isMsoSearchInputId(target.id)) {
+        focusState.activeMsoSearchId = target.id;
         focusState.activeCsaSearchId = null;
         focusState.csaCaretPos = null;
         return;
       }
       focusState.activeCsaSearchId = null;
       focusState.csaCaretPos = null;
-      focusState.restoreMsoSearch = false;
+      focusState.activeMsoSearchId = null;
       focusState.msoCaretPos = null;
     });
 
@@ -511,10 +531,11 @@
         return;
       }
 
-      if (target.id === 'msoNameSearch') {
-        tableSortState.mso_search = (target.value || '').trim();
+      if (isMsoSearchInputId(target.id)) {
+        var msoSearchKey = getMsoSearchStateKey(target.id);
+        if (msoSearchKey) tableSortState[msoSearchKey] = (target.value || '').trim();
         tableSortState.mso_page = '1';
-        focusState.restoreMsoSearch = true;
+        focusState.activeMsoSearchId = target.id;
         focusState.msoCaretPos = target.selectionStart;
         if (msoSearchTimer) clearTimeout(msoSearchTimer);
         msoSearchTimer = setTimeout(function() {

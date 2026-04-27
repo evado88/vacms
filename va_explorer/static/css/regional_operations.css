@@ -185,6 +185,26 @@
   flex: 1 1 1;
 }
 
+/* MSO supervision tab: remove left-side lines on divider and panel cards. */
+#tab-5 .regional-ops-divider {
+  display: none;
+}
+
+#tab-5 .right-panel-section.filters-section,
+#tab-5 .right-panel-section.mso-section {
+  border-left: 0;
+}
+
+/* CSA supervision tab: remove left-side lines on divider and panel cards. */
+#tab-2 .regional-ops-divider {
+  display: none;
+}
+
+#tab-2 .right-panel-section.filters-section,
+#tab-2 .right-panel-section.csa-section {
+  border-left: 0;
+}
+
 .section-header {
   font-size: 1rem;
   font-weight: 600;
@@ -389,7 +409,7 @@
   align-items: center;
   gap: 12px;
   margin-bottom: 10px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 
 .mso-title {
@@ -399,14 +419,23 @@
   margin: 0;
 }
 
-.mso-source-label {
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: #4a596d;
+.mso-search-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-wrap: nowrap;
+}
+
+.mso-source-control,
+.mso-search {
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 .mso-source-select {
-  width: 140px;
+  width: 100%;
 }
 
 .mso-table-container {
@@ -473,8 +502,8 @@
 }
 
 .mso-search {
-  margin-top: 6px;
   position: relative;
+  margin-top: 0;
 }
 
 .mso-search input {

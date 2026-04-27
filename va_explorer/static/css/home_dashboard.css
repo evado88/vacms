@@ -398,6 +398,12 @@
   margin-bottom: 14px;
 }
 
+#tab-3.home-va-tab #homeVAStatisticsComponentSlot .row > .msg-header:first-of-type {
+  margin-left: 10px;
+  text-indent: 10px;
+  overflow: hidden;
+}
+
 #tab-3.home-va-tab .home-page-statistics,
 #tab-4.home-trends-tab .home-page-statistics {
   border-collapse: separate;

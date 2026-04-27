@@ -3035,10 +3035,10 @@ class RegionalOperationsComponentContextMixin:
         time_window = params["time_window"]
         province_scope = params["province_scope"]
 
-        selected_mso_source = self._pick(
-            self.request.GET.get("source", "community"),
-            {item["value"] for item in self.mso_source_options},
-            "community",
+        allowed_mso_sources = {item["value"] for item in self.mso_source_options}
+        requested_mso_source = (self.request.GET.get("source") or "").strip().lower()
+        selected_mso_source = (
+            requested_mso_source if requested_mso_source in allowed_mso_sources else ""
         )
         mso_sort = self._pick(
             self.request.GET.get("mso_sort", "death_events"),
@@ -3049,6 +3049,7 @@ class RegionalOperationsComponentContextMixin:
             self.request.GET.get("mso_dir", "desc"), {"asc", "desc"}, "desc"
         )
         mso_search = self.request.GET.get("mso_search", "").strip()
+        mso_province_search = self.request.GET.get("mso_province_search", "").strip()
         mso_page = max(1, self._to_int(self.request.GET.get("mso_page", "1")))
 
         va_queryset = self.request.user.verbal_autopsies().annotate(
@@ -3079,15 +3080,24 @@ class RegionalOperationsComponentContextMixin:
                 for row in mso_rows
                 if self._matches_geo_by_province(row.get("province"), selected_geo)
             ]
+
+        def matches_mso_filter(value, query):
+            return query.lower() in str(value or "").lower()
+
         if mso_search:
-            mso_search_lower = mso_search.lower()
             mso_rows = [
                 row
                 for row in mso_rows
-                if mso_search_lower in str(row.get("name", "")).lower()
+                if matches_mso_filter(row.get("name"), mso_search)
+            ]
+        if mso_province_search:
+            mso_rows = [
+                row
+                for row in mso_rows
+                if matches_mso_filter(row.get("province"), mso_province_search)
             ]
         mso_rows_sorted = self._sort_rows(mso_rows, mso_sort, mso_dir)
-        mso_pagination = self._paginate_rows(mso_rows_sorted, mso_page)
+        mso_pagination = self._paginate_rows(mso_rows_sorted, mso_page, per_page=10)
 
         return {
             "mso_source_options": self.mso_source_options,
@@ -3097,6 +3107,7 @@ class RegionalOperationsComponentContextMixin:
             "mso_sort": mso_sort,
             "mso_dir": mso_dir,
             "mso_search": mso_search,
+            "mso_province_search": mso_province_search,
             "mso_page": mso_pagination["page"],
             "mso_total_pages": mso_pagination["total_pages"],
             "mso_has_prev": mso_pagination["has_prev"],
