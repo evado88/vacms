@@ -123,6 +123,7 @@ def import_from_kobo():
     num_created = len(results["created"])
     num_ignored = len(results["ignored"])
     num_outdated = len(results["outdated"])
+    num_enriched = len(results["enriched"])
     num_corrected = len(results["corrected"])
     num_invalid = len(results["removed"])
 
@@ -135,6 +136,7 @@ def import_from_kobo():
         num_created = num_created + len(results["created"])
         num_ignored = num_ignored + len(results["ignored"])
         num_outdated = num_outdated + len(results["outdated"])
+        num_enriched = num_enriched + len(results["enriched"])
         num_corrected = num_corrected + len(results["corrected"])
         num_invalid = num_invalid + len(results["removed"])
 
@@ -142,6 +144,7 @@ def import_from_kobo():
         "num_ignored": num_ignored,
         "num_outdated": num_outdated,
         "num_created": num_created,
+        "num_enriched": num_enriched,
         "num_corrected": num_corrected,
         "num_removed": num_invalid,
     }

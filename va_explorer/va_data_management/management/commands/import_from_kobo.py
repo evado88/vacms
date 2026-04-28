@@ -44,6 +44,7 @@ class Command(BaseCommand):
         num_created = len(results["created"])
         num_ignored = len(results["ignored"])
         num_outdated = len(results["outdated"])
+        num_enriched = len(results["enriched"])
         num_corrected = len(results["corrected"])
         num_invalid = len(results["removed"])
         pages_processed = 1
@@ -56,6 +57,7 @@ class Command(BaseCommand):
             num_created = num_created + len(results["created"])
             num_ignored = num_ignored + len(results["ignored"])
             num_outdated = num_outdated + len(results["outdated"])
+            num_enriched = num_enriched + len(results["enriched"])
             num_corrected = num_corrected + len(results["corrected"])
             num_invalid = num_invalid + len(results["removed"])
             pages_processed = pages_processed + 1
@@ -66,6 +68,7 @@ class Command(BaseCommand):
         self.stdout.write(
             f"Loaded {num_created} verbal autopsies from Kobo "
             f"{num_corrected} required correction in order to import "
-            f"({num_ignored} ignored, {num_outdated} overwritten, "
+            f"({num_ignored} ignored, {num_enriched} enriched, "
+            f"{num_outdated} overwritten, "
             f"{num_invalid} removed as invalid)"
         )

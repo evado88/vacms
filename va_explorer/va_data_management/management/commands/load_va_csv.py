@@ -22,6 +22,7 @@ class Command(BaseCommand):
         num_created = len(results["created"])
         num_ignored = len(results["ignored"])
         num_outdated = len(results["outdated"])
+        num_enriched = len(results["enriched"])
         created_community = sum(
             1 for va in results["created"] if va.community_va_normalized == "yes"
         )
@@ -42,7 +43,8 @@ class Command(BaseCommand):
 
         self.stdout.write(
             f"Loaded {num_created} verbal autopsies from CSV "
-            f"({num_ignored} ignored, {num_outdated} removed as outdated)"
+            f"({num_ignored} ignored, {num_enriched} enriched, "
+            f"{num_outdated} removed as outdated)"
         )
         self.stdout.write(
             "Created mix: "

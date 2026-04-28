@@ -7,7 +7,7 @@ import pandas as pd
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.db.models import Count, Max, Q
-from simple_history.utils import bulk_create_with_history
+from simple_history.utils import bulk_create_with_history, bulk_update_with_history
 
 from va_explorer.users.utils.demo_users import make_field_workers_for_facilities
 from va_explorer.va_data_management.models import (
@@ -17,6 +17,10 @@ from va_explorer.va_data_management.models import (
 )
 from va_explorer.va_data_management.odk.normalization import build_odk_rename_map
 from va_explorer.va_data_management.utils.date_parsing import parse_date
+from va_explorer.va_data_management.utils.geopoint import (
+    compose_geopoint,
+    find_geopoint_columns,
+)
 from va_explorer.va_data_management.utils.location_assignment import (
     assign_va_location,
 )
@@ -66,6 +70,27 @@ def _has_meaningful_value(value):
         return False
     normalized = normalize_string(value).lower()
     return normalized not in {"", "nan", "none", "null"}
+
+
+def merge_geopoint_columns(df):
+    geopoint_columns = find_geopoint_columns(df.columns)
+    if not geopoint_columns:
+        return df
+
+    df = df.copy()
+    derived_geopoint = df.apply(compose_geopoint, axis=1)
+
+    if "geopoint" not in df.columns:
+        df["geopoint"] = ""
+
+    existing_geopoint_empty = ~df["geopoint"].apply(_has_meaningful_value)
+    should_set_geopoint = (
+        derived_geopoint.apply(_has_meaningful_value) & existing_geopoint_empty
+    )
+    df.loc[should_set_geopoint, "geopoint"] = derived_geopoint[should_set_geopoint]
+    df.loc[~df["geopoint"].apply(_has_meaningful_value), "geopoint"] = ""
+
+    return df.drop(columns=list(geopoint_columns.values()))
 
 
 def normalize_community_va_value(
@@ -371,6 +396,8 @@ def load_records_from_dataframe(record_df, random_locations=False, debug=False):
         header = "=" * 10 + "DATA INGEST" + "=" * 10
         logger.info(header)
 
+    record_df = merge_geopoint_columns(record_df)
+
     # CSV can prefix column names with a strings and a dash or more. Examples:
     #     presets-Id10004
     #     respondent-backgr-Id10008
@@ -490,6 +517,7 @@ def load_records_from_dataframe(record_df, random_locations=False, debug=False):
     ignored_vas = []
     outdated_vas = []
     created_vas = []
+    enriched_vas = []
     location_map = {}
 
     # build location mapper to map csv locations to known db locations
@@ -520,6 +548,16 @@ def load_records_from_dataframe(record_df, random_locations=False, debug=False):
     va_instance_names = set(
         VerbalAutopsy.objects.values_list("instancename", flat=True)
     )
+    incoming_instance_ids = [
+        instanceid
+        for instanceid in record_df["instanceid"].dropna().unique().tolist()
+        if _has_meaningful_value(instanceid)
+    ]
+    existing_empty_geopoint_by_instanceid = {
+        va.instanceid: va
+        for va in VerbalAutopsy.objects.filter(instanceid__in=incoming_instance_ids)
+        if not _has_meaningful_value(va.geopoint)
+    }
 
     if debug:
         print(
@@ -540,6 +578,17 @@ def load_records_from_dataframe(record_df, random_locations=False, debug=False):
         if row["instanceid"]:
             va_exists = row["instanceid"] in va_instance_ids
             if va_exists:
+                if (
+                    _has_meaningful_value(row.get("geopoint"))
+                    and row["instanceid"] in existing_empty_geopoint_by_instanceid
+                ):
+                    existing_va = existing_empty_geopoint_by_instanceid.pop(
+                        row["instanceid"]
+                    )
+                    existing_va.geopoint = row["geopoint"]
+                    enriched_vas.append(existing_va)
+                    continue
+
                 ignored_vas.append(va)
                 continue
             else:
@@ -551,6 +600,19 @@ def load_records_from_dataframe(record_df, random_locations=False, debug=False):
                     outdated_va = VerbalAutopsy.objects.filter(
                         instancename=row["instancename"]
                     )
+                    if not _has_meaningful_value(va.geopoint):
+                        existing_geopoint = next(
+                            (
+                                geopoint
+                                for geopoint in outdated_va.values_list(
+                                    "geopoint", flat=True
+                                )
+                                if _has_meaningful_value(geopoint)
+                            ),
+                            None,
+                        )
+                        if existing_geopoint:
+                            va.geopoint = existing_geopoint
                     outdated_vas.append(outdated_va)
                     outdated_va.delete()
 
@@ -611,6 +673,13 @@ def load_records_from_dataframe(record_df, random_locations=False, debug=False):
 
     print("populating DB...")
     new_vas = bulk_create_with_history(created_vas, VerbalAutopsy)
+    if enriched_vas:
+        bulk_update_with_history(
+            enriched_vas,
+            VerbalAutopsy,
+            fields=["geopoint"],
+            batch_size=500,
+        )
 
     print("Validating VAs...")
     # Add any errors to the db
@@ -625,6 +694,7 @@ def load_records_from_dataframe(record_df, random_locations=False, debug=False):
         "ignored": ignored_vas,
         "outdated": outdated_vas,
         "created": created_vas,
+        "enriched": enriched_vas,
         "corrected": corrected_vas,
         "removed": invalid_vas,
     }

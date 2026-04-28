@@ -566,7 +566,7 @@ def test_load_va_csv_command():
     output_text = output.getvalue().strip()
     assert (
         "Loaded 3 verbal autopsies from CSV "
-        "(0 ignored, 0 removed as outdated)" in output_text
+        "(0 ignored, 0 enriched, 0 removed as outdated)" in output_text
     )
     assert "Created mix:" in output_text
     assert VerbalAutopsy.objects.get(instanceid="instance1").Id10007 == "name1"

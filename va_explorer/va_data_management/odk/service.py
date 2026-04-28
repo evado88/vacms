@@ -432,6 +432,7 @@ class ODKPullService:
             "created": len(results["created"]),
             "ignored": len(results["ignored"]),
             "outdated": len(results["outdated"]),
+            "enriched": len(results.get("enriched", [])),
             "corrected": len(results.get("corrected", [])),
         }
 
