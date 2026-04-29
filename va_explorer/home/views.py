@@ -39,6 +39,7 @@ from va_explorer.home.model_trends import get_model_trends_data
 from va_explorer.home.va_trends import get_trends_data
 from va_explorer.utils.mixins import CustomAuthMixin
 from va_explorer.utils.profiling import timed_block
+from va_explorer.va_analytics.utils.loading import _resolve_geo_name
 from va_explorer.va_data_management.models import (
     CauseCodingIssue,
     CauseOfDeath,
@@ -329,12 +330,23 @@ def _apply_text_geography_filter(queryset, model, level, value):
     return queryset.filter(**{f"{level}__iexact": value})
 
 
-def _normalize_geo_value(value):
+HOME_GEO_LEVEL_LABELS = {
+    "province": "Province",
+    "district": "District",
+    "constituency": "Constituency",
+    "ward": "Ward",
+    "ea": "EA",
+}
+
+
+def _normalize_geo_value(value, level=None):
     normalized = " ".join(str(value or "").split()).strip()
     if not normalized:
         return ""
     if normalized.lower() in {"nan", "none", "null", "na", "n/a"}:
         return ""
+    if level:
+        return _resolve_geo_name(normalized, level)
     return normalized
 
 
@@ -476,11 +488,19 @@ def _latest_geo_by_identifier(queryset, key_field, date_fields, start_dt, end_dt
         latest[identifier] = (
             target_ts,
             {
-                "province": _normalize_geo_value(row.get("province")),
-                "district": _normalize_geo_value(row.get("district")),
-                "constituency": _normalize_geo_value(row.get("constituency")),
-                "ward": _normalize_geo_value(row.get("ward")),
-                "ea": _normalize_geo_value(row.get("ea")),
+                "province": _normalize_geo_value(
+                    row.get("province"), HOME_GEO_LEVEL_LABELS["province"]
+                ),
+                "district": _normalize_geo_value(
+                    row.get("district"), HOME_GEO_LEVEL_LABELS["district"]
+                ),
+                "constituency": _normalize_geo_value(
+                    row.get("constituency"), HOME_GEO_LEVEL_LABELS["constituency"]
+                ),
+                "ward": _normalize_geo_value(
+                    row.get("ward"), HOME_GEO_LEVEL_LABELS["ward"]
+                ),
+                "ea": _normalize_geo_value(row.get("ea"), HOME_GEO_LEVEL_LABELS["ea"]),
             },
         )
     return latest
@@ -659,7 +679,7 @@ def _build_home_combined_map_payload(request):
         "EA": [{"name": row["ea_name"], "count": row["count"]} for row in ea_sums],
     }
 
-    return {
+    payload = {
         "map_view": filters["map_view"],
         "counts": counts_by_view.get(filters["map_view"], counts_by_view["Province"]),
         "province_counts": counts_by_view["Province"],
@@ -674,6 +694,74 @@ def _build_home_combined_map_payload(request):
         "map_ward_sums": ward_sums,
         "map_ea_sums": ea_sums,
     }
+
+    _attach_home_gps_payload(
+        payload,
+        request,
+        pregnancies_qs=pregnancies_qs,
+        outcomes_qs=outcomes_qs,
+        deaths_qs=deaths_qs,
+        vas_qs=vas_qs,
+    )
+    return payload
+
+
+def _attach_home_gps_payload(
+    payload, request, *, pregnancies_qs, outcomes_qs, deaths_qs, vas_qs
+):
+    """Attach combined GPS points (across all 4 models) to the home payload."""
+    from va_explorer.va_analytics.views import (
+        GPS_DEFAULT_LIMIT,
+        _build_gps_points,
+        _gps_request_params,
+        _qs_cache_signature,
+    )
+
+    include, limit, offset = _gps_request_params(request)
+    if not include:
+        return
+    user = getattr(request, "user", None)
+    if not (user and user.is_authenticated and user.has_perm("va_analytics.view_pii")):
+        logger.info(
+            "PII GPS access denied for home overview",
+            extra={"user_id": getattr(user, "id", None), "path": request.path},
+        )
+        payload["gps_points"] = []
+        payload["gps_total"] = 0
+        payload["gps_truncated"] = False
+        payload["gps_pii_denied"] = True
+        return
+
+    sources = (
+        (pregnancies_qs, "PE_25", "pregnancy"),
+        (outcomes_qs, "gps", "pregnancy_outcome"),
+        (deaths_qs, "DE_34", "death"),
+        (vas_qs, "geopoint", "verbal_autopsy"),
+    )
+    combined_points = []
+    combined_total = 0
+    truncated_any = False
+    remaining = max(0, min(limit, GPS_DEFAULT_LIMIT))
+    for qs, gps_field, event_type in sources:
+        per_model_limit = remaining if remaining > 0 else 0
+        points, total, truncated = _build_gps_points(
+            qs,
+            gps_field=gps_field,
+            event_type=event_type,
+            limit=per_model_limit,
+            offset=0,
+            cache_signature=_qs_cache_signature(qs),
+        )
+        combined_total += total
+        if truncated:
+            truncated_any = True
+        if points:
+            combined_points.extend(points)
+            remaining = max(0, remaining - len(points))
+    payload["gps_points"] = combined_points
+    payload["gps_total"] = combined_total
+    payload["gps_truncated"] = truncated_any or combined_total > len(combined_points)
+    payload["gps_pii_denied"] = False
 
 
 def _scope_fingerprint(user):

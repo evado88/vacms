@@ -191,8 +191,19 @@ def _resolve_geo_name(value, level):
         return ""
 
     lookup = _geojson_level_lookup().get(level, {})
-    mapped = (
-        lookup.get(text.lower()) or lookup.get(text) or lookup.get(_to_int_string(text))
+    lookup_keys = [text.lower(), text, _to_int_string(text)]
+    if level == "EA":
+        digit_token = "".join(char for char in text if char.isdigit())
+        if digit_token:
+            lookup_keys.extend(
+                [
+                    digit_token,
+                    digit_token.lstrip("0"),
+                    _to_int_string(digit_token),
+                ]
+            )
+    mapped = next(
+        (lookup.get(key) for key in lookup_keys if key and lookup.get(key)), None
     )
     return _strip_geo_suffix(mapped or text, level)
 

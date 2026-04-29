@@ -87,6 +87,7 @@
     return response.json();
   };
 
+  const userCanViewPII = (app.dataset.userPii || "").toLowerCase() === "true";
   const mapController =
     typeof window.createHierarchicalDashboardMap === "function"
       ? window.createHierarchicalDashboardMap({
@@ -107,6 +108,8 @@
           styleVariant: "va",
           fitToDataBounds: false,
           noDataMessage: "No mapped deaths in current filter range.",
+          userCanViewPII,
+          gpsLayerIdPrefix: "deaths",
         })
       : null;
 

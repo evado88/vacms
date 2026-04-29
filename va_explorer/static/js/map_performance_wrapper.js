@@ -66,7 +66,15 @@
 
       const publicController = {
         refresh: async (filters) => {
-          const relevantFilters = pickMapRelevantFilters(filters);
+          const selection =
+            typeof baseController.getSelection === "function"
+              ? baseController.getSelection()
+              : {};
+          const relevantFilters = pickMapRelevantFilters({
+            ...(filters || {}),
+            geography_level: selection.geography_level || filters?.geography_level || "",
+            geography_value: selection.geography_value || filters?.geography_value || "",
+          });
           const nextSignature = stableStringify(relevantFilters);
           if (state.initialized && nextSignature === state.lastFilterSignature) {
             return state.lastRefreshPromise || Promise.resolve();
@@ -89,6 +97,17 @@
           if (typeof baseController.resetDrill === "function") {
             await baseController.resetDrill();
             state.lastFilterSignature = "";
+          }
+        },
+        getSelection: () => {
+          if (typeof baseController.getSelection === "function") {
+            return baseController.getSelection();
+          }
+          return { geography_level: "", geography_value: "" };
+        },
+        hideGPSLayer: () => {
+          if (typeof baseController.hideGPSLayer === "function") {
+            baseController.hideGPSLayer();
           }
         },
       };

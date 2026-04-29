@@ -74,6 +74,46 @@ def compose_geopoint(row):
         return None
 
 
+def parse_geopoint(value):
+    """Parse an ODK geopoint string into structured coordinates.
+
+    Accepts ``"lat lon"``, ``"lat lon alt"`` or ``"lat lon alt acc"`` (whitespace-separated).
+    Returns ``{"latitude": float, "longitude": float, "altitude": float|None, "accuracy": float|None}``
+    on success, or ``None`` for empty/invalid input or out-of-range coordinates.
+    """
+    if not _has_meaningful_value(value):
+        return None
+    try:
+        tokens = str(value).strip().split()
+    except Exception:
+        return None
+    if len(tokens) < 2:
+        return None
+    try:
+        lat = float(tokens[0])
+        lon = float(tokens[1])
+    except (TypeError, ValueError):
+        return None
+    if not (math.isfinite(lat) and math.isfinite(lon)):
+        return None
+    if not (-90.0 <= lat <= 90.0) or not (-180.0 <= lon <= 180.0):
+        return None
+    result = {"latitude": lat, "longitude": lon, "altitude": None, "accuracy": None}
+    if len(tokens) >= 3:
+        try:
+            alt = float(tokens[2])
+            result["altitude"] = alt if math.isfinite(alt) else None
+        except (TypeError, ValueError):
+            result["altitude"] = None
+    if len(tokens) >= 4:
+        try:
+            acc = float(tokens[3])
+            result["accuracy"] = acc if math.isfinite(acc) else None
+        except (TypeError, ValueError):
+            result["accuracy"] = None
+    return result
+
+
 def find_geopoint_columns_for_prefix(columns, source_prefix):
     """Return {component: column_name} for GPS split columns matching source_prefix."""
     target = source_prefix.lower().replace("_", "-")

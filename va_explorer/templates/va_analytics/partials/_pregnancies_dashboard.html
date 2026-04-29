@@ -7,6 +7,7 @@
   data-gestational-age-endpoint="{% url 'va_analytics:pregnancy-ga-detection-api' %}"
   data-anc-visits-endpoint="{% url 'va_analytics:pregnancy-ga-anc-api' %}"
   data-map-endpoint="{% url 'va_analytics:pregnancy-map-api' %}"
+  data-user-pii="{% if perms.va_analytics.view_pii %}true{% else %}false{% endif %}"
 >
   <!-- Row 1: KPIs -->
   <div class="pe-top-row">

@@ -10,6 +10,8 @@
   <link rel="stylesheet" href="{% static 'css/outcomes_dashboard.css' %}?v=20260225v">
   <link rel="stylesheet" href="{% static 'vendor/vuesalize-0.2.0/vuesalize.css' %}">
   <link rel="stylesheet" href="{% static 'vendor/leaflet-1.9.2/leaflet.css' %}">
+  <link rel="stylesheet" href="{% static 'vendor/leaflet-markercluster-1.5.3/MarkerCluster.css' %}">
+  <link rel="stylesheet" href="{% static 'vendor/leaflet-markercluster-1.5.3/MarkerCluster.Default.css' %}">
   <link rel="stylesheet" href="https://unpkg.com/leaflet.fullscreen/dist/Control.FullScreen.css" />
   <style>
     .breadcrumb-container {
@@ -150,11 +152,13 @@
   <script type="text/javascript" src="{% static 'vendor/d3-array-3.2.0/d3-array.min.js' %}"></script>
   <script type="text/javascript" src="{% static 'vendor/chartjs-3.7.1/chart.min.js' %}"></script>
   <script type="text/javascript" src="{% static 'vendor/leaflet-1.9.2/leaflet.js' %}"></script>
+  <script type="text/javascript" src="{% static 'vendor/leaflet-markercluster-1.5.3/leaflet.markercluster.js' %}"></script>
   <script type="text/javascript" src="{% static 'vendor/leaflet-fullscreen/Control.FullScreen.umd.js' %}"></script>
-  <script type="text/javascript" src="{% static 'js/hierarchical_dashboard_map.js' %}?v=20260427a"></script>
-  <script type="text/javascript" src="{% static 'js/map_performance_wrapper.js' %}"></script>
-  <script type="text/javascript" src="{% static 'js/outcomes_dashboard.js' %}?v=20260225a"></script>
-  <script type="text/javascript" src="{% static 'js/pregnancy_dashboard.js' %}?v=20260225d"></script>
-  <script type="text/javascript" src="{% static 'js/deaths_dashboard.js' %}?v=20260220c"></script>
-  <script type="text/javascript" src="{% static 'js/dashboard_map.js' %}?v=20260427b"></script>
+  <script type="text/javascript" src="{% static 'js/dashboard_gps_layer.js' %}?v=20260429c"></script>
+  <script type="text/javascript" src="{% static 'js/hierarchical_dashboard_map.js' %}?v=20260429c"></script>
+  <script type="text/javascript" src="{% static 'js/map_performance_wrapper.js' %}?v=20260429c"></script>
+  <script type="text/javascript" src="{% static 'js/outcomes_dashboard.js' %}?v=20260429c"></script>
+  <script type="text/javascript" src="{% static 'js/pregnancy_dashboard.js' %}?v=20260429c"></script>
+  <script type="text/javascript" src="{% static 'js/deaths_dashboard.js' %}?v=20260429c"></script>
+  <script type="text/javascript" src="{% static 'js/dashboard_map.js' %}?v=20260429c"></script>
 {% endblock %}

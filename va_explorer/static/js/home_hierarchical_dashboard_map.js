@@ -99,6 +99,8 @@
       initialView = "Province",
       styleVariant = "default",
       fitToDataBounds = true,
+      userCanViewPII = false,
+      gpsLayerIdPrefix = "home",
     } = options;
 
     const state = {
@@ -474,6 +476,35 @@
       return response.json();
     };
 
+    let gpsLayerCtl = null;
+
+    const ensureGPSLayer = () => {
+      if (gpsLayerCtl || !userCanViewPII) return gpsLayerCtl;
+      if (!state.map || !window.DashboardGPSLayer) return null;
+      const legendEl = document.getElementById(legendId);
+      if (!legendEl) return null;
+      gpsLayerCtl = window.DashboardGPSLayer.attachGPSLayer(state.map, {
+        legendEl,
+        userCanViewPII: true,
+        idPrefix: gpsLayerIdPrefix,
+        fetchPoints: async () => {
+          const params = buildParams(state.filters || {});
+          params.set("include_gps_points", "true");
+          const requestUrl = params.toString()
+            ? `${endpoint}?${params.toString()}`
+            : endpoint;
+          const response = await fetch(requestUrl, {
+            method: "GET",
+            headers: { "X-Requested-With": "XMLHttpRequest" },
+            credentials: "same-origin",
+          });
+          if (!response.ok) throw new Error(`GPS request failed: ${requestUrl}`);
+          return response.json();
+        },
+      });
+      return gpsLayerCtl;
+    };
+
     const refresh = async (filters) => {
       state.filters = { ...(filters || {}) };
       const nextView = filters?.map_view || state.activeView || "Province";
@@ -485,6 +516,10 @@
       state.activeView = nextView;
       state.payload = await fetchPayload(state.filters);
       await render();
+      if (userCanViewPII) {
+        const layer = gpsLayerCtl || ensureGPSLayer();
+        if (layer) layer.refresh();
+      }
     };
 
     return {
@@ -499,6 +534,9 @@
         await refresh(state.filters);
       },
       getSelection: () => ({ ...currentSelection() }),
+      hideGPSLayer: () => {
+        if (gpsLayerCtl) gpsLayerCtl.hide();
+      },
     };
   };
 

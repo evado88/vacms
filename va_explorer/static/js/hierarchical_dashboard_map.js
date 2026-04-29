@@ -11,26 +11,18 @@
     5: { label: "EA", file: "level_5_ea.geojson", key: "ea_name" },
   };
 
-  const DEFAULT_COLORS = [
-    "#4575b4",
-    "#74add1",
-    "#abd9e9",
-    "#e0f3f8",
-    "#fee090",
-    "#fdae61",
-    "#f46d43",
-    "#d73027",
-  ];
-  const VA_COLORS = [
-    "#4575b4",
-    "#74add1",
-    "#abd9e9",
-    "#e0f3f8",
-    "#ffffbf",
-    "#fee090",
-    "#fdae61",
-    "#f46d43",
-    "#d73027",
+  // Sequential warm palette (ColorBrewer OrRd). Lightest → darkest maps to
+  // lowest → highest counts, providing strong visual contrast against the
+  // teal-green GPS dot overlay drawn on top.
+  const SEQUENTIAL_COLORS = [
+    "#fff7ec",
+    "#fee8c8",
+    "#fdd49e",
+    "#fdbb84",
+    "#fc8d59",
+    "#ef6548",
+    "#d7301f",
+    "#990000",
   ];
 
   const toTitleCase = (value) =>
@@ -97,6 +89,9 @@
       styleVariant = "default",
       fitToDataBounds = true,
       includeSelectionInRequest = true,
+      userCanViewPII = false,
+      enableDrilldown = true,
+      gpsLayerIdPrefix = "dashboard",
     } = options;
 
     const state = {
@@ -107,9 +102,7 @@
       filters: {},
       activeView: initialView,
       path: [{ id: "ZM", name: "Zambia", levelLabel: "Country", levelIndex: 0 }],
-      colors: (
-        colors && colors.length ? colors : (styleVariant === "va" ? VA_COLORS : DEFAULT_COLORS)
-      ).slice(),
+      colors: (colors && colors.length ? colors : SEQUENTIAL_COLORS).slice(),
       selectionKey: "",
       selectedNode: null,
     };
@@ -205,11 +198,16 @@
       return state.colors[Math.min(bins.length - 2, state.colors.length - 1)];
     };
 
+    const gpsLegendRow = () =>
+      userCanViewPII
+        ? `<div class="legend-gps-row"><span class="legend-gps-swatch"></span>GPS records</div>`
+        : "";
+
     const renderLegend = (bins) => {
       const legend = document.getElementById(legendId);
       if (!legend) return;
       if (!bins || bins.length <= 1) {
-        legend.innerHTML = `<div>${noDataMessage || "No map data available for the selected filters."}</div>`;
+        legend.innerHTML = `<div>${noDataMessage || "No map data available for the selected filters."}</div>${gpsLegendRow()}`;
         setEmpty(true);
         return;
       }
@@ -218,6 +216,7 @@
         const label = i === bins.length - 2 ? `${bins[i]}+` : `${bins[i]} - ${bins[i + 1]}`;
         html += `<div><svg width='18' height='14'><rect fill='${state.colors[i]}' width='14' height='14'></rect></svg>${label}</div>`;
       }
+      html += gpsLegendRow();
       legend.innerHTML = html;
       setEmpty(false);
     };
@@ -400,11 +399,12 @@
           const areaName = feature?.properties?.area_name || "";
           const count = lookupCount(lookup, level, feature);
           const levelLabel = toTitleCase(feature?.properties?.area_level_label || LEVEL_CONFIG[level]?.label || "");
-          const canDrill = level < 5;
+          const canDrill = enableDrilldown && level < 5;
           layer.bindTooltip(
             `<div class="mapTooltip"><h4>${areaName} ${levelLabel}</h4><p>${count}</p>${canDrill ? "<small>Click to drill down</small>" : ""}</div>`
           );
           layer.on("click", async () => {
+            if (!canDrill) return;
             const selectedNode = {
               id: feature?.properties?.area_id,
               name: areaName,
@@ -414,7 +414,6 @@
             state.selectedNode = selectedNode;
             emitSelectionChange();
 
-            if (!canDrill) return;
             const nextNode = {
               id: feature?.properties?.area_id,
               name: areaName,
@@ -453,6 +452,39 @@
       return response.json();
     };
 
+    let gpsLayerCtl = null;
+
+    const ensureGPSLayer = () => {
+      if (gpsLayerCtl || !userCanViewPII) return gpsLayerCtl;
+      if (!state.map || !window.DashboardGPSLayer) return null;
+      const legendEl = document.getElementById(legendId);
+      if (!legendEl) return null;
+      gpsLayerCtl = window.DashboardGPSLayer.attachGPSLayer(state.map, {
+        legendEl,
+        userCanViewPII: true,
+        idPrefix: gpsLayerIdPrefix,
+        fetchPoints: async () => {
+          const params = buildParams(state.filters || {});
+          if (!includeSelectionInRequest) {
+            params.delete("geography_level");
+            params.delete("geography_value");
+          }
+          params.set("include_gps_points", "true");
+          const requestUrl = params.toString()
+            ? `${endpoint}?${params.toString()}`
+            : endpoint;
+          const response = await fetch(requestUrl, {
+            method: "GET",
+            headers: { "X-Requested-With": "XMLHttpRequest" },
+            credentials: "same-origin",
+          });
+          if (!response.ok) throw new Error(`GPS request failed: ${requestUrl}`);
+          return response.json();
+        },
+      });
+      return gpsLayerCtl;
+    };
+
     const refresh = async (filters) => {
       state.filters = { ...(filters || {}) };
       const nextView = filters?.map_view || state.activeView || "Province";
@@ -464,6 +496,10 @@
       state.activeView = nextView;
       state.payload = await fetchPayload(state.filters);
       await render();
+      if (userCanViewPII) {
+        const layer = gpsLayerCtl || ensureGPSLayer();
+        if (layer) layer.refresh();
+      }
     };
 
     return {
@@ -478,6 +514,9 @@
         await refresh(state.filters);
       },
       getSelection: () => ({ ...currentSelection() }),
+      hideGPSLayer: () => {
+        if (gpsLayerCtl) gpsLayerCtl.hide();
+      },
     };
   };
 

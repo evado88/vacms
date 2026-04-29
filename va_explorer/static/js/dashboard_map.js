@@ -40,6 +40,9 @@ const dashboard = new Vue({
             mapEndpoint: (typeof document !== "undefined" && document.getElementById("dashboardApp"))
                 ? document.getElementById("dashboardApp").dataset.mapEndpoint
                 : "",
+            userCanViewPII: (typeof document !== "undefined" && document.getElementById("dashboardApp"))
+                ? (document.getElementById("dashboardApp").dataset.userPii === "true")
+                : false,
             mapController: null,
             mapSelection: { geography_level: "", geography_value: "" },
             drill: {
@@ -249,6 +252,8 @@ const dashboard = new Vue({
                 // Keep VA dashboard default view aligned to the baseline dashboard zoom.
                 fitToDataBounds: false,
                 noDataMessage: "No geographic VA data available for the selected filters.",
+                userCanViewPII: this.userCanViewPII,
+                gpsLayerIdPrefix: "va",
             });
         }
 

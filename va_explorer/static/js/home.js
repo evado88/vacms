@@ -453,6 +453,7 @@ const requestNationalOperationalFilterData = (options = {}) => {
   if (!homeOverviewMapController) {
     const endpoint = mapPanel.dataset.mapEndpoint || "";
     if (!endpoint) return;
+    const userCanViewPII = (mapPanel.dataset.userPii || "").toLowerCase() === "true";
     homeOverviewMapController = createMapFactory({
       containerId: "homeOverviewMapContainer",
       legendId: "homeOverviewMapLegend",
@@ -475,6 +476,8 @@ const requestNationalOperationalFilterData = (options = {}) => {
       fitToDataBounds: true,
       styleVariant: "va",
       noDataMessage: "No geographic pregnancy data available for the selected filters.",
+      userCanViewPII,
+      gpsLayerIdPrefix: "home",
     });
   }
 

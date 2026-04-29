@@ -1,8 +1,12 @@
+import hashlib
+import json
+import logging
 from datetime import date, datetime, time, timedelta
 from statistics import median
 
 import pandas as pd
 from django.contrib.auth.mixins import PermissionRequiredMixin
+from django.core.cache import cache
 from django.db.models import (
     Case,
     CharField,
@@ -34,11 +38,17 @@ from va_explorer.va_data_management.utils.date_parsing import (
     get_interview_dates,
     parse_date,
 )
+from va_explorer.va_data_management.utils.geopoint import parse_geopoint
 from va_explorer.va_data_management.utils.location_access import (
     restrict_queryset_to_user_locations,
 )
 
-from .utils.loading import get_filtered_va_queryset, load_va_data
+from .utils.loading import _resolve_geo_name, get_filtered_va_queryset, load_va_data
+
+logger = logging.getLogger(__name__)
+
+GPS_DEFAULT_LIMIT = 2000
+GPS_CACHE_TIMEOUT = 3600  # 1 hour
 
 DEATHS_TREND_HARD_START_DATE = date(2024, 1, 1)
 PREGNANCY_TREND_HARD_START_DATE = date(2024, 9, 1)
@@ -489,7 +499,17 @@ def _build_place_of_birth_distribution(filtered_qs):
     return labels, count_data, percentage_data
 
 
+GEO_LEVEL_LABELS = {
+    "province": "Province",
+    "district": "District",
+    "constituency": "Constituency",
+    "ward": "Ward",
+    "ea": "EA",
+}
+
+
 def _build_geo_level_counts(filtered_qs, *, field_name, output_key):
+    level_label = GEO_LEVEL_LABELS.get(field_name)
     rows = (
         filtered_qs.exclude(**{f"{field_name}__isnull": True})
         .exclude(**{field_name: ""})
@@ -504,6 +524,8 @@ def _build_geo_level_counts(filtered_qs, *, field_name, output_key):
         normalized_lc = normalized.lower()
         if not normalized or normalized_lc in {"nan", "none", "null", "na", "n/a"}:
             continue
+        if level_label:
+            normalized = _resolve_geo_name(normalized, level_label)
         counts[normalized] = counts.get(normalized, 0) + (row.get("count") or 0)
     return [
         {output_key: name, "count": count}
@@ -548,6 +570,164 @@ def _build_map_counts(filtered_qs):
         for row in hierarchy["map_district_sums"]
     ]
     return province_data, district_data
+
+
+def _gps_cache_key(*, event_type, qs_signature, limit, offset, pii):
+    """Build a PII-aware cache key for a GPS points response."""
+    raw = json.dumps(
+        {
+            "et": event_type,
+            "qs": qs_signature,
+            "limit": limit,
+            "offset": offset,
+            "pii": bool(pii),
+        },
+        sort_keys=True,
+        default=str,
+    )
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()
+    return f"gps_points:{event_type}:{digest}"
+
+
+def _build_gps_points(
+    filtered_qs,
+    *,
+    gps_field,
+    event_type,
+    limit=GPS_DEFAULT_LIMIT,
+    offset=0,
+    cache_signature=None,
+):
+    """Extract parsed GPS points from a queryset.
+
+    Returns a tuple ``(points, total_count, truncated)``.
+    Each point is a dict with id/event_type/latitude/longitude/altitude/accuracy
+    plus province/district/ward/ea (when those columns exist on the model).
+    """
+    try:
+        limit = max(0, int(limit))
+    except (TypeError, ValueError):
+        limit = GPS_DEFAULT_LIMIT
+    try:
+        offset = max(0, int(offset))
+    except (TypeError, ValueError):
+        offset = 0
+
+    if cache_signature is not None:
+        cache_key = _gps_cache_key(
+            event_type=event_type,
+            qs_signature=cache_signature,
+            limit=limit,
+            offset=offset,
+            pii=True,
+        )
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+    else:
+        cache_key = None
+
+    model = filtered_qs.model
+    model_field_names = {f.name for f in model._meta.get_fields()}
+    geo_fields = [
+        f for f in ("province", "district", "ward", "ea") if f in model_field_names
+    ]
+    only_fields = ["id", gps_field] + geo_fields
+
+    qs = filtered_qs.exclude(**{f"{gps_field}__isnull": True}).exclude(
+        **{gps_field: ""}
+    )
+    total_with_gps = qs.count()
+    # Clear any select_related so .only() doesn't collide with traversed FKs
+    # (e.g. PregnancyOutcome's `cluster` FK). GPS extraction needs only scalar fields.
+    qs = qs.select_related(None).only(*only_fields).order_by("id")
+    if offset:
+        qs = qs[offset:]
+    # Iterate in chunks; collect up to limit valid (parseable) points.
+    points = []
+    for record in qs.iterator(chunk_size=500):
+        if len(points) >= limit:
+            break
+        raw = getattr(record, gps_field, None)
+        parsed = parse_geopoint(raw)
+        if not parsed:
+            continue
+        point = {
+            "id": f"{event_type}_{record.pk}",
+            "event_type": event_type,
+            "latitude": parsed["latitude"],
+            "longitude": parsed["longitude"],
+        }
+        if parsed.get("altitude") is not None:
+            point["altitude"] = parsed["altitude"]
+        if parsed.get("accuracy") is not None:
+            point["accuracy"] = parsed["accuracy"]
+        for f in geo_fields:
+            point[f] = (getattr(record, f, "") or "").strip()
+        points.append(point)
+
+    truncated = total_with_gps > (offset + len(points))
+    result = (points, total_with_gps, truncated)
+    if cache_key:
+        cache.set(cache_key, result, timeout=GPS_CACHE_TIMEOUT)
+    return result
+
+
+def _gps_request_params(request):
+    """Parse common GPS query parameters from a request."""
+    include = (request.GET.get("include_gps_points") or "").lower() == "true"
+    try:
+        limit = int(request.GET.get("gps_limit") or GPS_DEFAULT_LIMIT)
+    except (TypeError, ValueError):
+        limit = GPS_DEFAULT_LIMIT
+    try:
+        offset = int(request.GET.get("gps_offset") or 0)
+    except (TypeError, ValueError):
+        offset = 0
+    return include, max(0, min(limit, GPS_DEFAULT_LIMIT)), max(0, offset)
+
+
+def _qs_cache_signature(filtered_qs):
+    """Build a deterministic signature for a queryset to use in cache keys."""
+    try:
+        return str(filtered_qs.query)
+    except Exception:
+        return None
+
+
+def _attach_gps_payload(payload, request, filtered_qs, *, gps_field, event_type):
+    """Attach GPS-related fields to a map API payload, applying PII gating."""
+    include, limit, offset = _gps_request_params(request)
+    if not include:
+        return payload
+    user = getattr(request, "user", None)
+    if not (user and user.is_authenticated and user.has_perm("va_analytics.view_pii")):
+        logger.info(
+            "PII GPS access denied",
+            extra={
+                "user_id": getattr(user, "id", None),
+                "path": request.path,
+                "event_type": event_type,
+            },
+        )
+        payload["gps_points"] = []
+        payload["gps_total"] = 0
+        payload["gps_truncated"] = False
+        payload["gps_pii_denied"] = True
+        return payload
+    points, total, truncated = _build_gps_points(
+        filtered_qs,
+        gps_field=gps_field,
+        event_type=event_type,
+        limit=limit,
+        offset=offset,
+        cache_signature=_qs_cache_signature(filtered_qs),
+    )
+    payload["gps_points"] = points
+    payload["gps_total"] = total
+    payload["gps_truncated"] = truncated
+    payload["gps_pii_denied"] = False
+    return payload
 
 
 def _apply_geography_filter(qs, filter_state):
@@ -1142,6 +1322,13 @@ class DashboardAPIView(APIView):
             compare_by=compare_by,
             filtered_qs=filtered_qs,
         )
+        _attach_gps_payload(
+            data,
+            request,
+            filtered_qs,
+            gps_field="geopoint",
+            event_type="verbal_autopsy",
+        )
         return Response(data)
 
 
@@ -1353,10 +1540,14 @@ class PregnancyOutcomesPlaceOfBirthAPIView(_PregnancyOutcomesBaseAPIView):
 
 
 class PregnancyOutcomesMapAPIView(_PregnancyOutcomesBaseAPIView):
+    gps_field = "gps"
+    gps_event_type = "pregnancy_outcome"
+
     def get(self, request, format=None):
         filter_state = get_pregnancy_outcomes_filter_state(request)
+        filtered_qs = self._qs(request)
         with timed_block("outcomes.api.map_hierarchy", request=request):
-            hierarchy = _build_map_hierarchy_counts(self._qs(request))
+            hierarchy = _build_map_hierarchy_counts(filtered_qs)
         province_counts = [
             {"name": row.get("province_name") or "", "count": row.get("count") or 0}
             for row in hierarchy["map_province_sums"]
@@ -1385,18 +1576,24 @@ class PregnancyOutcomesMapAPIView(_PregnancyOutcomesBaseAPIView):
             "EA": ea_counts,
         }
         counts = counts_by_view.get(filter_state["map_view"], province_counts)
-        return Response(
-            {
-                "map_view": filter_state["map_view"],
-                "counts": counts,
-                "province_counts": province_counts,
-                "district_counts": district_counts,
-                "constituency_counts": constituency_counts,
-                "ward_counts": ward_counts,
-                "ea_counts": ea_counts,
-                **hierarchy,
-            }
+        payload = {
+            "map_view": filter_state["map_view"],
+            "counts": counts,
+            "province_counts": province_counts,
+            "district_counts": district_counts,
+            "constituency_counts": constituency_counts,
+            "ward_counts": ward_counts,
+            "ea_counts": ea_counts,
+            **hierarchy,
+        }
+        _attach_gps_payload(
+            payload,
+            request,
+            filtered_qs,
+            gps_field=self.gps_field,
+            event_type=self.gps_event_type,
         )
+        return Response(payload)
 
 
 class PregnancyDashboardView(OutcomesDashboardView):
@@ -1465,9 +1662,13 @@ class PregnancyGestationalAgeAncAPIView(PregnancyOutcomesAncVisitsAPIView):
 
 
 class PregnancyMapAPIView(PregnancyOutcomesMapAPIView):
+    gps_field = "PE_25"
+    gps_event_type = "pregnancy"
+
     def get(self, request, format=None):
         filter_state = get_pregnancy_outcomes_filter_state(request)
-        hierarchy = _build_map_hierarchy_counts(build_pregnancy_qs(request))
+        filtered_qs = build_pregnancy_qs(request)
+        hierarchy = _build_map_hierarchy_counts(filtered_qs)
         province_counts = [
             {"name": row.get("province_name") or "", "count": row.get("count") or 0}
             for row in hierarchy["map_province_sums"]
@@ -1496,18 +1697,24 @@ class PregnancyMapAPIView(PregnancyOutcomesMapAPIView):
             "EA": ea_counts,
         }
         counts = counts_by_view.get(filter_state["map_view"], province_counts)
-        return Response(
-            {
-                "map_view": filter_state["map_view"],
-                "counts": counts,
-                "province_counts": province_counts,
-                "district_counts": district_counts,
-                "constituency_counts": constituency_counts,
-                "ward_counts": ward_counts,
-                "ea_counts": ea_counts,
-                **hierarchy,
-            }
+        payload = {
+            "map_view": filter_state["map_view"],
+            "counts": counts,
+            "province_counts": province_counts,
+            "district_counts": district_counts,
+            "constituency_counts": constituency_counts,
+            "ward_counts": ward_counts,
+            "ea_counts": ea_counts,
+            **hierarchy,
+        }
+        _attach_gps_payload(
+            payload,
+            request,
+            filtered_qs,
+            gps_field=self.gps_field,
+            event_type=self.gps_event_type,
         )
+        return Response(payload)
 
 
 class PregnancyEventsDashboardView(OutcomesDashboardView):
@@ -1577,6 +1784,9 @@ class DeathsSummaryAPIView(APIView):
 
 
 class DeathsMapAPIView(APIView):
+    gps_field = "DE_34"
+    gps_event_type = "death"
+
     def get(self, request, format=None):
         invalid_tab_response = _validate_deaths_tab(request)
         if invalid_tab_response is not None:
@@ -1586,8 +1796,9 @@ class DeathsMapAPIView(APIView):
             map_view = "Province"
         if map_view == "Ea":
             map_view = "EA"
+        filtered_qs = build_deaths_qs(request)
         with timed_block("outcomes.deaths.map_hierarchy", request=request):
-            hierarchy = _build_map_hierarchy_counts(build_deaths_qs(request))
+            hierarchy = _build_map_hierarchy_counts(filtered_qs)
         province_counts = [
             {"name": row.get("province_name") or "", "count": row.get("count") or 0}
             for row in hierarchy["map_province_sums"]
@@ -1616,18 +1827,24 @@ class DeathsMapAPIView(APIView):
             "EA": ea_counts,
         }
         counts = counts_by_view.get(map_view, province_counts)
-        return Response(
-            {
-                "map_view": map_view,
-                "counts": counts,
-                "province_counts": province_counts,
-                "district_counts": district_counts,
-                "constituency_counts": constituency_counts,
-                "ward_counts": ward_counts,
-                "ea_counts": ea_counts,
-                **hierarchy,
-            }
+        payload = {
+            "map_view": map_view,
+            "counts": counts,
+            "province_counts": province_counts,
+            "district_counts": district_counts,
+            "constituency_counts": constituency_counts,
+            "ward_counts": ward_counts,
+            "ea_counts": ea_counts,
+            **hierarchy,
+        }
+        _attach_gps_payload(
+            payload,
+            request,
+            filtered_qs,
+            gps_field=self.gps_field,
+            event_type=self.gps_event_type,
         )
+        return Response(payload)
 
 
 def _build_deaths_age_sex_profile(filtered_qs):

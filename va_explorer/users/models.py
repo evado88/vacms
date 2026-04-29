@@ -150,6 +150,8 @@ class User(AbstractUser):
 
     @property
     def can_view_pii(self):
+        # Gates personally identifiable information including names, contact details,
+        # and precise GPS coordinates surfaced on dashboard maps.
         return self.has_perm("va_analytics.view_pii")
 
     @can_view_pii.setter
