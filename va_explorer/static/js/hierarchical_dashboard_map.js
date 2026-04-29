@@ -338,7 +338,8 @@
       if (!state.map || !state.layer) return;
       try {
         state.map.invalidateSize();
-        if (!fitToDataBounds) {
+        const shouldFitLayer = fitToDataBounds || state.path.length > 1;
+        if (!shouldFitLayer) {
           state.map.fitBounds(ZAMBIA_BOUNDS, { padding: [10, 10] });
           return;
         }
