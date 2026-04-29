@@ -4,6 +4,7 @@ import pandas as pd
 from django.core.management.base import BaseCommand, CommandError
 
 from va_explorer.va_data_management.models import Death, ODKFormChoice
+from va_explorer.va_data_management.utils.geopoint import merge_geopoint_into
 from va_explorer.va_data_management.utils.loading import (
     load_odk_csv_to_model,
     normalize_dataframe_columns,
@@ -29,6 +30,9 @@ class Command(BaseCommand):
             raise CommandError("Definition for form 'death' has not been loaded")
 
         df = pd.read_csv(csv_file)
+
+        df = merge_geopoint_into(df, source_prefix="DE-34", target_field="DE_34")
+
         df = normalize_dataframe_columns(df, Death)
 
         # Ensure `key` exists

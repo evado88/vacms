@@ -17,6 +17,12 @@ from va_explorer.va_data_management.models import (
     ODKPullLock,
     ODKPullState,
 )
+from va_explorer.va_data_management.utils.geopoint import (
+    _has_meaningful_value as _gp_meaningful,
+)
+from va_explorer.va_data_management.utils.geopoint import (
+    merge_geopoint_into,
+)
 from va_explorer.va_data_management.utils.loading import (
     load_records_from_dataframe,
     normalize_dataframe_columns,
@@ -33,6 +39,15 @@ FORM_UNIQUE_FIELD_MAP = {
     "pregnancy_outcome": "key",
     "death": "key",
     "csa_daily_tracker": "key",
+}
+
+# Maps form_name → (ODK split-column prefix, single target model field).
+# The four ODK component columns (e.g. PE-25-Latitude/Longitude/Altitude/Accuracy)
+# are composed into the existing single GPS TextField before column normalisation.
+FORM_GEOPOINT_MAP = {
+    "pregnancy": ("PE-25", "PE_25"),
+    "pregnancy_outcome": ("gps", "gps"),
+    "death": ("DE-34", "DE_34"),
 }
 
 
@@ -94,6 +109,13 @@ def import_dataframe_records(form_name: str, df: pd.DataFrame) -> Dict[str, int]
                 lambda value, _map=mapping: _map.get(normalize_value(value), value)
             )
 
+    geopoint_cfg = FORM_GEOPOINT_MAP.get(form_name)
+    if geopoint_cfg:
+        source_prefix, gps_field = geopoint_cfg
+        df = merge_geopoint_into(
+            df, source_prefix=source_prefix, target_field=gps_field
+        )
+
     model = FORM_MODEL_MAP[form_name]
     df = normalize_dataframe_columns(df, model)
     df = df.loc[:, ~df.columns.duplicated()]
@@ -150,6 +172,8 @@ def import_dataframe_records(form_name: str, df: pd.DataFrame) -> Dict[str, int]
         for obj in model.objects.filter(**{f"{unique_field}__in": keys})
     }
 
+    gps_target = FORM_GEOPOINT_MAP.get(form_name, (None, None))[1]
+
     to_create = []
     to_update = []
     for record in records:
@@ -160,7 +184,14 @@ def import_dataframe_records(form_name: str, df: pd.DataFrame) -> Dict[str, int]
             continue
 
         for field in update_fields:
-            setattr(existing, field, record.get(field))
+            new_val = record.get(field)
+            if (
+                field == gps_target
+                and not _gp_meaningful(new_val)
+                and _gp_meaningful(getattr(existing, field, None))
+            ):
+                continue
+            setattr(existing, field, new_val)
         to_update.append(existing)
 
     with transaction.atomic():

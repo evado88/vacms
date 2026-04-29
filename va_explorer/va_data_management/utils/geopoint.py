@@ -6,6 +6,11 @@ GEOPOINT_COMPONENT_RE = re.compile(
     re.IGNORECASE,
 )
 
+_PREFIX_COMPONENT_RE = re.compile(
+    r"^(.+)[-_.](?P<component>latitude|longitude|altitude|accuracy)$",
+    re.IGNORECASE,
+)
+
 
 def geopoint_component_name(column):
     match = GEOPOINT_COMPONENT_RE.match(str(column))
@@ -67,3 +72,72 @@ def compose_geopoint(row):
         return " ".join(values).rstrip()
     except Exception:
         return None
+
+
+def find_geopoint_columns_for_prefix(columns, source_prefix):
+    """Return {component: column_name} for GPS split columns matching source_prefix."""
+    target = source_prefix.lower().replace("_", "-")
+    found = {}
+    for col in columns:
+        match = _PREFIX_COMPONENT_RE.match(str(col))
+        if not match:
+            continue
+        prefix_norm = match.group(1).lower().replace("_", "-")
+        if prefix_norm != target:
+            continue
+        component = match.group("component").lower()
+        if component not in found:
+            found[component] = str(col)
+    return found
+
+
+def compose_geopoint_for_prefix(row, source_prefix):
+    """Compose an ODK geopoint string from split columns for an arbitrary prefix."""
+    cols = find_geopoint_columns_for_prefix(row.keys(), source_prefix)
+    if not cols:
+        return None
+    lat_col = cols.get("latitude")
+    lon_col = cols.get("longitude")
+    lat = row.get(lat_col) if lat_col else None
+    lon = row.get(lon_col) if lon_col else None
+    if not (_has_meaningful_value(lat) and _has_meaningful_value(lon)):
+        return None
+    try:
+        values = [_format_geopoint_number(lat), _format_geopoint_number(lon)]
+        for component in ("altitude", "accuracy"):
+            col = cols.get(component)
+            val = row.get(col) if col else None
+            values.append(
+                _format_geopoint_number(val) if _has_meaningful_value(val) else ""
+            )
+        return " ".join(values).rstrip()
+    except Exception:
+        return None
+
+
+def merge_geopoint_into(df, *, source_prefix, target_field):
+    """Merge split GPS component columns into a single ODK-format target field.
+
+    Only fills target_field where it is currently empty (anti-clobber).
+    Drops the source component columns from the returned DataFrame.
+    """
+    cols = find_geopoint_columns_for_prefix(df.columns, source_prefix)
+    if not cols:
+        return df
+
+    df = df.copy()
+    if target_field not in df.columns:
+        df[target_field] = None
+
+    composed = df.apply(
+        lambda r: compose_geopoint_for_prefix(r.to_dict(), source_prefix),
+        axis=1,
+    )
+
+    needs_fill = df[target_field].apply(lambda v: not _has_meaningful_value(v))
+    has_new_value = composed.notna()
+    df.loc[needs_fill & has_new_value, target_field] = composed[
+        needs_fill & has_new_value
+    ]
+
+    return df.drop(columns=list(cols.values()))
