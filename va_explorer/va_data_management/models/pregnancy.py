@@ -123,6 +123,8 @@ class Pregnancy(models.Model):
             # Optimise date-range filtering in analytics views
             models.Index(fields=["today"], name="pregnancy_today_idx"),
             models.Index(fields=["created"], name="pregnancy_created_idx"),
+            # Submission date used for trend series grouping
+            models.Index(fields=["submissiondate"], name="pregnancy_submission_idx"),
         ]
 
     def __str__(self):

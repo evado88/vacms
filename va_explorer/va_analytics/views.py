@@ -1,7 +1,7 @@
 import hashlib
 import json
 import logging
-from datetime import date, datetime, time, timedelta
+from datetime import datetime, time, timedelta
 from statistics import median
 
 import pandas as pd
@@ -18,7 +18,7 @@ from django.db.models import (
     Value,
     When,
 )
-from django.db.models.functions import Cast, Lower, Substr, Trim, TruncMonth
+from django.db.models.functions import Cast, Lower, Substr, Trim
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_date as django_parse_date
@@ -50,8 +50,7 @@ logger = logging.getLogger(__name__)
 GPS_DEFAULT_LIMIT = 2000
 GPS_CACHE_TIMEOUT = 3600  # 1 hour
 
-DEATHS_TREND_HARD_START_DATE = date(2024, 1, 1)
-PREGNANCY_TREND_HARD_START_DATE = date(2024, 9, 1)
+TREND_SUBMISSION_HARD_START_DATE = "2024-01-01"
 
 
 def get_pregnancy_outcomes_filter_state(request):
@@ -214,16 +213,22 @@ def _build_outcomes_summary_cards(filtered_qs):
     }
 
 
-def _build_pregnancy_outcomes_trend_series(filtered_qs):
+def _build_submission_trend_series(filtered_qs):
+    """Group any model queryset by submissiondate month and return (labels, counts)."""
     month_rows = (
-        filtered_qs.exclude(PO_41__isnull=True)
-        .exclude(PO_41="")
-        .annotate(month_key=Substr("PO_41", 1, 7))
+        filtered_qs.exclude(submissiondate__isnull=True)
+        .exclude(submissiondate="")
+        .exclude(submissiondate__iexact="nan")
+        .exclude(submissiondate__iexact="nat")
+        .exclude(submissiondate__iexact="none")
+        .exclude(submissiondate__iexact="null")
+        .filter(submissiondate__regex=r"^\d{4}-\d{2}-\d{2}")
+        .filter(submissiondate__gte=TREND_SUBMISSION_HARD_START_DATE)
+        .annotate(month_key=Substr("submissiondate", 1, 7))
         .values("month_key")
         .annotate(count=Count("pk"))
         .order_by("month_key")
     )
-
     labels = []
     counts = []
     for row in month_rows:
@@ -234,6 +239,10 @@ def _build_pregnancy_outcomes_trend_series(filtered_qs):
         except ValueError:
             continue
     return labels, counts
+
+
+def _build_pregnancy_outcomes_trend_series(filtered_qs):
+    return _build_submission_trend_series(filtered_qs)
 
 
 def _normalize_birth_outcome_category(value):
@@ -855,14 +864,19 @@ def build_pregnancy_qs(request):
             start_dt, end_dt = end_dt, start_dt
 
     if start_dt or end_dt:
-        # Pregnancy model LMP field currently mapped to PE_09A.
-        qs = qs.exclude(PE_09A__isnull=True).exclude(PE_09A="")
+        date_fields = ("submissiondate", "today", "start")
         if start_dt:
             start_token = start_dt.strftime("%Y-%m-%d")
-            qs = qs.filter(PE_09A__gte=start_token)
+            start_filter = Q()
+            for field_name in date_fields:
+                start_filter |= Q(**{f"{field_name}__gte": start_token})
+            qs = qs.filter(start_filter)
         if end_dt:
             end_token = (end_dt + timedelta(days=1)).strftime("%Y-%m-%d")
-            qs = qs.filter(PE_09A__lt=end_token)
+            end_filter = Q()
+            for field_name in date_fields:
+                end_filter |= Q(**{f"{field_name}__lt": end_token})
+            qs = qs.filter(end_filter)
 
     return qs
 
@@ -989,13 +1003,19 @@ def build_deaths_qs(request, *, apply_time_filter=True):
                 start_dt, end_dt = end_dt, start_dt
 
         if start_dt or end_dt:
-            qs = qs.exclude(DE_06__isnull=True).exclude(DE_06="")
+            date_fields = ("submissiondate", "today", "start")
             if start_dt:
-                qs = qs.filter(DE_06__gte=start_dt.strftime("%Y-%m-%d"))
+                start_token = start_dt.strftime("%Y-%m-%d")
+                start_filter = Q()
+                for field_name in date_fields:
+                    start_filter |= Q(**{f"{field_name}__gte": start_token})
+                qs = qs.filter(start_filter)
             if end_dt:
-                qs = qs.filter(
-                    DE_06__lt=(end_dt + timedelta(days=1)).strftime("%Y-%m-%d")
-                )
+                end_token = (end_dt + timedelta(days=1)).strftime("%Y-%m-%d")
+                end_filter = Q()
+                for field_name in date_fields:
+                    end_filter |= Q(**{f"{field_name}__lt": end_token})
+                qs = qs.filter(end_filter)
 
     age_group = filter_state["age_group"]
     if age_group in {"neonate", "child", "adult"}:
@@ -1093,26 +1113,7 @@ def _with_valid_death_date(qs, *, source_field="DE_06", alias="death_date"):
 
 
 def _build_deaths_trend_series(filtered_qs):
-    # DE_06 is stored as text; normalize to YYYY-MM-DD then group with TruncMonth.
-    month_rows = (
-        _with_valid_death_date(filtered_qs, source_field="DE_06", alias="death_date")
-        .filter(death_date__gte=DEATHS_TREND_HARD_START_DATE)
-        .annotate(month=TruncMonth("death_date"))
-        .values("month")
-        .annotate(count=Count("pk"))
-        .order_by("month")
-    )
-
-    labels = []
-    counts = []
-    for row in month_rows:
-        month = row.get("month")
-        if month is None:
-            continue
-        labels.append(month.strftime("%b %Y"))
-        counts.append(row.get("count") or 0)
-
-    return labels, counts
+    return _build_submission_trend_series(filtered_qs)
 
 
 def _build_pregnancy_summary_cards(filtered_qs):
@@ -1148,25 +1149,7 @@ def _build_pregnancy_summary_cards(filtered_qs):
 
 
 def _build_pregnancy_trend_series(filtered_qs):
-    month_rows = (
-        filtered_qs.exclude(PE_09A__isnull=True)
-        .exclude(PE_09A="")
-        .filter(PE_09A__gte=PREGNANCY_TREND_HARD_START_DATE.strftime("%Y-%m-%d"))
-        .annotate(month_key=Substr("PE_09A", 1, 7))
-        .values("month_key")
-        .annotate(count=Count("pk"))
-        .order_by("month_key")
-    )
-    labels = []
-    counts = []
-    for row in month_rows:
-        month = row.get("month_key") or ""
-        try:
-            labels.append(datetime.strptime(month, "%Y-%m").strftime("%b %Y"))
-            counts.append(row["count"])
-        except ValueError:
-            continue
-    return labels, counts
+    return _build_submission_trend_series(filtered_qs)
 
 
 def _build_pregnancy_ga_anc_points(filtered_qs):
@@ -2044,30 +2027,38 @@ def _build_deaths_cause_trend(filtered_qs):
     )
 
     monthly_rows = (
-        _with_valid_death_date(
-            coded_qs.filter(DE_15__in=top_causes),
-            source_field="DE_06",
-            alias="death_date",
-        )
-        .annotate(month=TruncMonth("death_date"))
-        .values("month", "DE_15")
+        coded_qs.filter(DE_15__in=top_causes)
+        .exclude(submissiondate__isnull=True)
+        .exclude(submissiondate="")
+        .exclude(submissiondate__iexact="nan")
+        .exclude(submissiondate__iexact="nat")
+        .exclude(submissiondate__iexact="none")
+        .exclude(submissiondate__iexact="null")
+        .filter(submissiondate__regex=r"^\d{4}-\d{2}-\d{2}")
+        .filter(submissiondate__gte=TREND_SUBMISSION_HARD_START_DATE)
+        .annotate(month_key=Substr("submissiondate", 1, 7))
+        .values("month_key", "DE_15")
         .annotate(count=Count("pk"))
-        .order_by("month")
+        .order_by("month_key")
     )
 
-    months = sorted(
-        {row["month"] for row in monthly_rows if row.get("month") is not None}
+    month_keys = sorted(
+        {row["month_key"] for row in monthly_rows if row.get("month_key")}
     )
-    month_keys = [m.strftime("%Y-%m") for m in months]
-    month_labels = [m.strftime("%b %Y") for m in months]
+    month_labels = []
+    for mk in month_keys:
+        try:
+            month_labels.append(datetime.strptime(mk, "%Y-%m").strftime("%b %Y"))
+        except ValueError:
+            month_labels.append(mk)
 
     cause_map = {cause: dict.fromkeys(month_keys, 0) for cause in top_causes}
     for row in monthly_rows:
-        month = row.get("month")
+        mk = row.get("month_key")
         cause = row.get("DE_15")
-        if month is None or cause not in cause_map:
+        if mk is None or cause not in cause_map:
             continue
-        cause_map[cause][month.strftime("%Y-%m")] = row.get("count") or 0
+        cause_map[cause][mk] = row.get("count") or 0
 
     datasets = []
     for cause in top_causes:

@@ -11,7 +11,6 @@ from django.db.models import (
     Case,
     CharField,
     Count,
-    DateField,
     F,
     OuterRef,
     Q,
@@ -19,7 +18,7 @@ from django.db.models import (
     Value,
     When,
 )
-from django.db.models.functions import Cast, Substr, TruncMonth
+from django.db.models.functions import Substr
 
 from va_explorer.va_data_management.models import (
     CauseOfDeath,
@@ -434,20 +433,27 @@ def _month_starts_between(start_month, end_month):
 
 
 def _build_va_cause_trend_payload(filtered_qs, top_causes):
+    start_key = COD_TREND_START_MONTH.strftime("%Y-%m")
     rows = (
         filtered_qs.exclude(final_cause__isnull=True)
         .exclude(final_cause="")
-        .annotate(month=TruncMonth(Cast("Id10023", output_field=DateField())))
-        .exclude(month__lt=COD_TREND_START_MONTH)
-        .exclude(month__isnull=True)
-        .values("month", cause=F("final_cause"))
+        .exclude(submissiondate__isnull=True)
+        .exclude(submissiondate="")
+        .filter(submissiondate__regex=r"^\d{4}-\d{2}-\d{2}")
+        .filter(submissiondate__gte=COD_TREND_START_MONTH.strftime("%Y-%m-%d"))
+        .annotate(month_key=Substr("submissiondate", 1, 7))
+        .filter(month_key__gte=start_key)
+        .values("month_key", cause=F("final_cause"))
         .annotate(count=Count("pk"))
-        .order_by("month")
+        .order_by("month_key")
     )
 
-    row_months = sorted({row["month"] for row in rows if row.get("month")})
-    if row_months:
-        month_range = _month_starts_between(COD_TREND_START_MONTH, row_months[-1])
+    row_month_keys = sorted({row["month_key"] for row in rows if row.get("month_key")})
+    if row_month_keys:
+        last_month = (
+            datetime.strptime(row_month_keys[-1], "%Y-%m").date().replace(day=1)
+        )
+        month_range = _month_starts_between(COD_TREND_START_MONTH, last_month)
     else:
         month_range = []
 
@@ -469,15 +475,14 @@ def _build_va_cause_trend_payload(filtered_qs, top_causes):
     trend_map = {cause: dict.fromkeys(month_keys, 0) for cause in cause_buckets}
 
     for row in rows:
-        month = row.get("month")
-        if not month:
+        mk = row.get("month_key")
+        if not mk:
             continue
         cause = row.get("cause")
-        month_key = month.strftime("%Y-%m")
         bucket = cause if cause in top_causes else "Other"
         if bucket not in trend_map:
             continue
-        trend_map[bucket][month_key] += row.get("count") or 0
+        trend_map[bucket][mk] += row.get("count") or 0
 
     series_rows = []
     datasets = []
@@ -889,14 +894,15 @@ def load_va_data(
     COD_sums = [{**row, "total": cod_total} for row in COD_sums]
 
     COD_trend = (
-        user_vas_filtered.annotate(
-            month=TruncMonth(Cast("Id10023", output_field=DateField()))
-        )
-        .exclude(month__lt=COD_TREND_START_MONTH)
-        .filter(causes__isnull=False)
-        .values("month")
+        user_vas_filtered.filter(causes__isnull=False)
+        .exclude(submissiondate__isnull=True)
+        .exclude(submissiondate="")
+        .filter(submissiondate__regex=r"^\d{4}-\d{2}-\d{2}")
+        .filter(submissiondate__gte=COD_TREND_START_MONTH.strftime("%Y-%m-%d"))
+        .annotate(month_key=Substr("submissiondate", 1, 7))
+        .values("month_key")
         .annotate(count=Count("pk"))
-        .order_by("month")
+        .order_by("month_key")
     )
     va_cause_trend = _build_va_cause_trend_payload(
         user_vas_filtered, top_causes_for_trend

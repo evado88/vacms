@@ -228,26 +228,8 @@
       });
     }
 
-    const MIN_TREND_YEAR = 2024, MIN_TREND_MONTH = 12;
-    const parseLabelDate = (label) => {
-      const ym = String(label).match(/^(\d{4})-(\d{2})/);
-      if (ym) return new Date(parseInt(ym[1]), parseInt(ym[2]) - 1, 1);
-      const d = new Date(label);
-      return isNaN(d) ? null : d;
-    };
-    const allLabels = payload.labels || [];
-    const allData = payload.data || [];
-    const filteredLabels = [];
-    const filteredData = [];
-    allLabels.forEach((label, i) => {
-      const d = parseLabelDate(label);
-      if (d && (d.getFullYear() > MIN_TREND_YEAR || (d.getFullYear() === MIN_TREND_YEAR && d.getMonth() + 1 >= MIN_TREND_MONTH))) {
-        filteredLabels.push(label);
-        filteredData.push(allData[i]);
-      }
-    });
-    trendChart.data.labels = filteredLabels;
-    trendChart.data.datasets[0].data = filteredData;
+    trendChart.data.labels = payload.labels || [];
+    trendChart.data.datasets[0].data = payload.data || [];
     trendChart.update();
 
     const total = (payload.data || []).reduce((acc, value) => acc + Number(value || 0), 0);

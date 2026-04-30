@@ -212,6 +212,8 @@ class PregnancyOutcome(models.Model):
             models.Index(fields=["today"], name="pregnancy_outcome_today_idx"),
             # Delivery date used for outcome reporting
             models.Index(fields=["PO_41"], name="pregnancy_outcome_delivery_idx"),
+            # Submission date used for trend series grouping
+            models.Index(fields=["submissiondate"], name="po_submissiondate_idx"),
         ]
 
 
