@@ -45,6 +45,11 @@
           MSO Supervision
         </a>
       </li>
+      <li class="nav-item" role="presentation">
+        <a class="nav-link {% if home_active_tab == 'rumor_surveillance' %}active{% endif %}" id="tab-6-tab" data-tab="rumor_surveillance" href="?tab=rumor_surveillance" role="tab" aria-controls="tab-6" aria-selected="{% if home_active_tab == 'rumor_surveillance' %}true{% else %}false{% endif %}">
+          Rumor Surveillance
+        </a>
+      </li>
     </ul>
 
     <!-- Tab panes -->
@@ -212,6 +217,21 @@
                   data-cache="off"
                 >
                   <div class="home-panel home-panel-placeholder">Loading MSO table...</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+      <div class="tab-pane dashboard-tab-panel fade {% if home_active_tab == 'rumor_surveillance' %}show active{% endif %}" id="tab-6" data-tab-panel="rumor_surveillance" role="tabpanel" aria-labelledby="tab-6-tab">
+        <section class="regional-ops-layout">
+          <div class="regional-ops-divider" aria-hidden="true"></div>
+          <div class="regional-ops-panel right-panel">
+            <div class="right-panel-sections">
+              <div class="right-panel-section ou-card">
+                <div class="home-panel">
+                  <h5 class="mb-2">Rumor Surveillance</h5>
+                  <p class="text-muted mb-0">No rumor surveillance data available.</p>
                 </div>
               </div>
             </div>

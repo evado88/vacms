@@ -587,6 +587,18 @@ def test_regional_operations_page_loads(user: User):
     assert b'id="regionalMsoComponent"' in response.content
 
 
+def test_operational_dashboard_includes_rumor_surveillance_tab(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    response = client.get("/", {"tab": "rumor_surveillance"}, follow=True)
+
+    assert response.status_code == 200
+    assert b"Rumor Surveillance" in response.content
+    assert b'data-tab="rumor_surveillance"' in response.content
+    assert b'data-tab-panel="rumor_surveillance"' in response.content
+
+
 def test_regional_operations_components_refresh_independently(user: User):
     client = Client()
     client.force_login(user=user)
