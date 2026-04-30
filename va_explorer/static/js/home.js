@@ -477,7 +477,6 @@ const requestNationalOperationalFilterData = (options = {}) => {
       styleVariant: "va",
       noDataMessage: "No geographic pregnancy data available for the selected filters.",
       userCanViewPII,
-      gpsLayerIdPrefix: "home",
     });
   }
 

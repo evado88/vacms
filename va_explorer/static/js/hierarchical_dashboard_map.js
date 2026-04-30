@@ -91,7 +91,6 @@
       includeSelectionInRequest = true,
       userCanViewPII = false,
       enableDrilldown = true,
-      gpsLayerIdPrefix = "dashboard",
     } = options;
 
     const state = {
@@ -458,12 +457,8 @@
     const ensureGPSLayer = () => {
       if (gpsLayerCtl || !userCanViewPII) return gpsLayerCtl;
       if (!state.map || !window.DashboardGPSLayer) return null;
-      const legendEl = document.getElementById(legendId);
-      if (!legendEl) return null;
       gpsLayerCtl = window.DashboardGPSLayer.attachGPSLayer(state.map, {
-        legendEl,
         userCanViewPII: true,
-        idPrefix: gpsLayerIdPrefix,
         fetchPoints: async () => {
           const params = buildParams(state.filters || {});
           if (!includeSelectionInRequest) {

@@ -159,7 +159,6 @@
           styleVariant: "va",
           noDataMessage: "No mapped outcomes in current filter range.",
           userCanViewPII,
-          gpsLayerIdPrefix: "po",
         })
       : null;
 
