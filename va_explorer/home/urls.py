@@ -45,6 +45,36 @@ urlpatterns = [
         name="home_overview_map_data",
     ),
     path(
+        "rumor-surveillance/summary/",
+        views.rumor_surveillance_summary_api_view,
+        name="rumor_surveillance_summary_api",
+    ),
+    path(
+        "rumor-surveillance/trend/",
+        views.rumor_surveillance_trend_api_view,
+        name="rumor_surveillance_trend_api",
+    ),
+    path(
+        "rumor-surveillance/detection/",
+        views.rumor_surveillance_detection_api_view,
+        name="rumor_surveillance_detection_api",
+    ),
+    path(
+        "rumor-surveillance/follow-up/",
+        views.rumor_surveillance_follow_up_api_view,
+        name="rumor_surveillance_follow_up_api",
+    ),
+    path(
+        "rumor-surveillance/map/",
+        views.rumor_surveillance_map_api_view,
+        name="rumor_surveillance_map_api",
+    ),
+    path(
+        "rumor-surveillance/word-cloud/",
+        views.rumor_surveillance_word_cloud_api_view,
+        name="rumor_surveillance_word_cloud_api",
+    ),
+    path(
         "components/overview/events/",
         views.home_overview_events_component_view,
         name="home_overview_events_component",

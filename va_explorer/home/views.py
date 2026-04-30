@@ -3,6 +3,7 @@ import hashlib
 import json
 import logging
 import re
+import string
 from collections import Counter, defaultdict
 from datetime import date, datetime, time, timedelta
 
@@ -1491,6 +1492,532 @@ class HomeOverviewMapData(CustomAuthMixin, View):
 
 home_overview_map_data_view = transaction.non_atomic_requests(
     HomeOverviewMapData.as_view()
+)
+
+
+# ---------------------------------------------------------------------------
+# Rumor Surveillance – real CSA Daily Tracker implementation
+# ---------------------------------------------------------------------------
+
+RUMOR_SOURCE_LABELS = {
+    "01": "Social Media",
+    "1": "Social Media",
+    "02": "Community Group",
+    "2": "Community Group",
+    "03": "Offline Media",
+    "3": "Offline Media",
+    "04": "Other",
+    "4": "Other",
+}
+
+_RUMOR_POSITIVE = {"01", "1", "yes", "true"}
+_RUMOR_NEGATIVE = {"02", "0", "2", "no", "false"}
+
+_WORD_CLOUD_STOP_WORDS = frozenset(
+    {
+        "the",
+        "and",
+        "is",
+        "of",
+        "to",
+        "in",
+        "a",
+        "an",
+        "for",
+        "with",
+        "on",
+        "that",
+        "rumor",
+        "rumour",
+        "said",
+        "people",
+        "community",
+        "reported",
+        "was",
+        "are",
+        "has",
+        "have",
+        "been",
+        "be",
+        "were",
+        "it",
+        "this",
+        "they",
+        "from",
+        "by",
+        "at",
+        "but",
+        "not",
+        "no",
+        "as",
+        "or",
+        "about",
+        "there",
+    }
+)
+
+
+def _is_rumor_positive(value):
+    v = (value or "").strip().lower()
+    return v in _RUMOR_POSITIVE
+
+
+def _rumor_date_str(row):
+    """Return the best available date string for a CSADailyTracker row dict."""
+    for field in ("today", "submissiondate", "start"):
+        val = row.get(field)
+        if val and str(val).strip() not in {"", "nan", "none", "null"}:
+            return str(val).strip()
+    return None
+
+
+def _parse_rumor_date(value):
+    if not value:
+        return None
+    raw = str(value).strip()
+    if not raw or raw.lower() in {"nan", "none", "null", "nat"}:
+        return None
+    dt = django_parse_datetime(raw.replace("Z", "+00:00"))
+    if dt:
+        return timezone.localtime(dt).date() if timezone.is_aware(dt) else dt.date()
+    d = django_parse_date(raw[:10])
+    return d
+
+
+def _build_csa_rumor_filter_state(request):
+    time_preset = (request.GET.get("time_preset") or "all_time").strip()
+    if time_preset not in {
+        "all_time",
+        "last_30_days",
+        "last_7_days",
+        "last_24_hours",
+        "custom",
+    }:
+        time_preset = "all_time"
+    map_view = (request.GET.get("map_view") or "Province").strip().title()
+    if map_view not in {"Province", "District", "Constituency", "Ward", "Ea", "EA"}:
+        map_view = "Province"
+    if map_view == "Ea":
+        map_view = "EA"
+    return {
+        "time_preset": time_preset,
+        "start_datetime": (request.GET.get("start_datetime") or "").strip(),
+        "end_datetime": (request.GET.get("end_datetime") or "").strip(),
+        "map_view": map_view,
+        "geography_level": (request.GET.get("geography_level") or "").strip().lower(),
+        "geography_value": (
+            request.GET.get("geography_value")
+            or request.GET.get("geography")
+            or request.GET.get("location")
+            or ""
+        ).strip(),
+    }
+
+
+def _build_csa_rumor_queryset(request):
+    qs = CSADailyTracker.objects.all()
+    qs = restrict_queryset_to_user_locations(qs, getattr(request, "user", None))
+
+    # Filter to only positive rumor reports
+    qs = qs.filter(rum__iregex=r"^(01|1|yes|true)$")
+
+    filter_state = _build_csa_rumor_filter_state(request)
+
+    # Geography drill-down
+    geo_field_map = {
+        "province": "province",
+        "district": "district",
+        "constituency": "constituency",
+        "ward": "ward",
+        "ea": "ea",
+    }
+    geo_level = filter_state["geography_level"]
+    geo_value = filter_state["geography_value"]
+    if geo_field_map.get(geo_level) and geo_value:
+        qs = qs.filter(**{f"{geo_field_map[geo_level]}__iexact": geo_value})
+
+    # Date range filter using today → submissiondate → start
+    now = timezone.localtime(timezone.now())
+    start_dt = end_dt = None
+    preset = filter_state["time_preset"]
+    if preset == "last_30_days":
+        start_dt, end_dt = now - timedelta(days=30), now
+    elif preset == "last_7_days":
+        start_dt, end_dt = now - timedelta(days=7), now
+    elif preset == "last_24_hours":
+        start_dt, end_dt = now - timedelta(hours=24), now
+    elif preset == "custom":
+        raw_start = filter_state["start_datetime"]
+        raw_end = filter_state["end_datetime"]
+        if raw_start:
+            d = django_parse_date(raw_start)
+            if d:
+                start_dt = timezone.make_aware(datetime.combine(d, time.min))
+        if raw_end:
+            d = django_parse_date(raw_end)
+            if d:
+                end_dt = timezone.make_aware(datetime.combine(d, time.max))
+
+    if start_dt or end_dt:
+        date_fields = ("today", "submissiondate", "start")
+        if start_dt:
+            tok = start_dt.strftime("%Y-%m-%d")
+            sq = Q()
+            for f in date_fields:
+                sq |= Q(**{f"{f}__gte": tok})
+            qs = qs.filter(sq)
+        if end_dt:
+            tok = (end_dt + timedelta(days=1)).strftime("%Y-%m-%d")
+            sq = Q()
+            for f in date_fields:
+                sq |= Q(**{f"{f}__lt": tok})
+            qs = qs.filter(sq)
+
+    return qs
+
+
+def _build_rumor_summary_data(qs):
+    agg = qs.aggregate(
+        total=Count("pk"),
+        latest_today=Max("today"),
+        latest_sub=Max("submissiondate"),
+    )
+    total = agg.get("total") or 0
+    latest_date = agg.get("latest_today") or agg.get("latest_sub")
+    if latest_date:
+        d = _parse_rumor_date(latest_date)
+        latest_str = d.strftime("%Y-%m-%d") if d else "N/A"
+    else:
+        latest_str = "N/A"
+
+    provinces = (
+        qs.exclude(province__isnull=True)
+        .exclude(province="")
+        .values_list("province", flat=True)
+        .distinct()
+        .count()
+    )
+    districts = (
+        qs.exclude(district__isnull=True)
+        .exclude(district="")
+        .values_list("district", flat=True)
+        .distinct()
+        .count()
+    )
+    eas = (
+        qs.exclude(ea__isnull=True)
+        .exclude(ea="")
+        .values_list("ea", flat=True)
+        .distinct()
+        .count()
+    )
+    enumerators = (
+        qs.exclude(enumerator__isnull=True)
+        .exclude(enumerator="")
+        .values_list("enumerator", flat=True)
+        .distinct()
+        .count()
+    )
+    with_gps = (
+        qs.exclude(hh_gps_latitude__isnull=True).exclude(hh_gps_latitude="").count()
+    )
+    missing_gps = total - with_gps
+
+    source_row = (
+        qs.exclude(sorce_rum__isnull=True)
+        .exclude(sorce_rum="")
+        .values("sorce_rum")
+        .annotate(n=Count("pk"))
+        .order_by("-n")
+        .first()
+    )
+    top_source_code = (source_row or {}).get("sorce_rum") or ""
+    top_source = RUMOR_SOURCE_LABELS.get(top_source_code, top_source_code or "Unknown")
+
+    return {
+        "card_last_data_update": latest_str,
+        "card_number_of_events": total,
+        "card_provinces_reporting": provinces,
+        "card_districts_reporting": districts,
+        "card_eas_reporting": eas,
+        "card_enumerators": enumerators,
+        "card_with_gps": with_gps,
+        "card_missing_gps": missing_gps,
+        "card_top_source": top_source,
+    }
+
+
+def _build_rumor_trend_data(qs):
+    month_rows = (
+        qs.exclude(today__isnull=True)
+        .exclude(today="")
+        .exclude(today__iexact="nan")
+        .exclude(today__iexact="none")
+        .filter(today__regex=r"^\d{4}-\d{2}-\d{2}")
+        .annotate(month_key=Substr("today", 1, 7))
+        .values("month_key")
+        .annotate(count=Count("pk"))
+        .order_by("month_key")
+    )
+    labels, counts = [], []
+    for row in month_rows:
+        mk = row.get("month_key") or ""
+        try:
+            labels.append(datetime.strptime(mk, "%Y-%m").strftime("%b %Y"))
+            counts.append(row["count"])
+        except ValueError:
+            continue
+    return labels, counts
+
+
+def _build_rumor_source_distribution(qs):
+    source_rows = (
+        qs.exclude(sorce_rum__isnull=True)
+        .exclude(sorce_rum="")
+        .values("sorce_rum")
+        .annotate(count=Count("pk"))
+        .order_by("-count")
+    )
+    labels, counts = [], []
+    for row in source_rows:
+        code = (row.get("sorce_rum") or "").strip()
+        label = RUMOR_SOURCE_LABELS.get(code, f"Other ({code})" if code else "Unknown")
+        labels.append(label)
+        counts.append(row.get("count") or 0)
+    # Add Unknown bucket for null/empty
+    unknown_count = qs.filter(Q(sorce_rum__isnull=True) | Q(sorce_rum="")).count()
+    if unknown_count:
+        labels.append("Unknown")
+        counts.append(unknown_count)
+    return labels, counts
+
+
+def _build_rumor_completeness_stats(qs):
+    today_date = timezone.localdate()
+    total = qs.count()
+
+    def _recent(days):
+        cutoff = (today_date - timedelta(days=days)).strftime("%Y-%m-%d")
+        return qs.filter(Q(today__gte=cutoff) | Q(submissiondate__gte=cutoff)).count()
+
+    missing_gps = qs.filter(
+        Q(hh_gps_latitude__isnull=True) | Q(hh_gps_latitude="")
+    ).count()
+    missing_desc = qs.filter(Q(desci__isnull=True) | Q(desci="")).count()
+    missing_source = qs.filter(Q(sorce_rum__isnull=True) | Q(sorce_rum="")).count()
+
+    return {
+        "total": total,
+        "recent_7_days": _recent(7),
+        "recent_30_days": _recent(30),
+        "with_gps": total - missing_gps,
+        "missing_gps": missing_gps,
+        "missing_description": missing_desc,
+        "missing_source": missing_source,
+    }
+
+
+def _build_rumor_word_cloud_data(qs, *, top_n=60):
+    punct_re = re.compile(r"[^\w\s]")
+    freq: Counter = Counter()
+    for desci_val in (
+        qs.exclude(desci__isnull=True)
+        .exclude(desci="")
+        .values_list("desci", flat=True)
+        .iterator()
+    ):
+        text = punct_re.sub(" ", (desci_val or "").lower())
+        for word in text.split():
+            word = word.strip(string.punctuation)
+            if len(word) >= 3 and word not in _WORD_CLOUD_STOP_WORDS:
+                freq[word] += 1
+    words = [{"text": w, "value": c} for w, c in freq.most_common(top_n)]
+    return {"words": words}
+
+
+def _build_rumor_map_payload(request):
+    from va_explorer.va_analytics.views import _build_map_hierarchy_counts
+
+    filter_state = _build_csa_rumor_filter_state(request)
+    filtered_qs = _build_csa_rumor_queryset(request)
+    hierarchy = _build_map_hierarchy_counts(filtered_qs)
+    province_counts = [
+        {"name": r.get("province_name") or "", "count": r.get("count") or 0}
+        for r in hierarchy["map_province_sums"]
+    ]
+    district_counts = [
+        {"name": r.get("district_name") or "", "count": r.get("count") or 0}
+        for r in hierarchy["map_district_sums"]
+    ]
+    constituency_counts = [
+        {"name": r.get("constituency_name") or "", "count": r.get("count") or 0}
+        for r in hierarchy["map_constituency_sums"]
+    ]
+    ward_counts = [
+        {"name": r.get("ward_name") or "", "count": r.get("count") or 0}
+        for r in hierarchy["map_ward_sums"]
+    ]
+    ea_counts = [
+        {"name": r.get("ea_name") or "", "count": r.get("count") or 0}
+        for r in hierarchy["map_ea_sums"]
+    ]
+    counts_by_view = {
+        "Province": province_counts,
+        "District": district_counts,
+        "Constituency": constituency_counts,
+        "Ward": ward_counts,
+        "EA": ea_counts,
+    }
+
+    # GPS points – CSADailyTracker has separate lat/lng columns; build them here.
+    user = getattr(request, "user", None)
+    gps_points = []
+    if user and user.is_authenticated and user.has_perm("va_analytics.view_pii"):
+        gps_qs = (
+            filtered_qs.exclude(hh_gps_latitude__isnull=True)
+            .exclude(hh_gps_latitude="")
+            .exclude(hh_gps_longitude__isnull=True)
+            .exclude(hh_gps_longitude="")
+            .values(
+                "hh_gps_latitude",
+                "hh_gps_longitude",
+                "province",
+                "district",
+                "constituency",
+                "ward",
+                "ea",
+                "enumerator",
+                "today",
+                "submissiondate",
+                "sorce_rum",
+                "other_rum",
+                "desci",
+                "ru_num",
+            )[:2000]
+        )
+        for row in gps_qs:
+            try:
+                lat = float(row["hh_gps_latitude"])
+                lng = float(row["hh_gps_longitude"])
+            except (TypeError, ValueError):
+                continue
+            report_date = _parse_rumor_date(
+                row.get("today") or row.get("submissiondate")
+            )
+            source_code = (row.get("sorce_rum") or "").strip()
+            gps_points.append(
+                {
+                    "lat": lat,
+                    "lng": lng,
+                    "province": row.get("province") or "",
+                    "district": row.get("district") or "",
+                    "constituency": row.get("constituency") or "",
+                    "ward": row.get("ward") or "",
+                    "ea": row.get("ea") or "",
+                    "enumerator": row.get("enumerator") or "",
+                    "report_date": (
+                        report_date.strftime("%Y-%m-%d") if report_date else ""
+                    ),
+                    "rumor_source_code": source_code,
+                    "rumor_source_label": RUMOR_SOURCE_LABELS.get(
+                        source_code, source_code or "Unknown"
+                    ),
+                    "other_rum": row.get("other_rum") or "",
+                    "desci": row.get("desci") or "",
+                    "ru_num": row.get("ru_num") or "",
+                }
+            )
+
+    payload = {
+        "map_view": filter_state["map_view"],
+        "counts": counts_by_view.get(filter_state["map_view"], province_counts),
+        "province_counts": province_counts,
+        "district_counts": district_counts,
+        "constituency_counts": constituency_counts,
+        "ward_counts": ward_counts,
+        "ea_counts": ea_counts,
+        "gps_points": gps_points,
+        "gps_total": len(gps_points),
+        "gps_truncated": False,
+        "gps_pii_denied": not (
+            user and user.is_authenticated and user.has_perm("va_analytics.view_pii")
+        ),
+        **hierarchy,
+    }
+    return payload
+
+
+class RumorSurveillanceSummaryAPIView(CustomAuthMixin, View):
+    def get(self, request, *args, **kwargs):
+        return JsonResponse(
+            _build_rumor_summary_data(_build_csa_rumor_queryset(request))
+        )
+
+
+rumor_surveillance_summary_api_view = transaction.non_atomic_requests(
+    RumorSurveillanceSummaryAPIView.as_view()
+)
+
+
+class RumorSurveillanceTrendAPIView(CustomAuthMixin, View):
+    def get(self, request, *args, **kwargs):
+        labels, counts = _build_rumor_trend_data(_build_csa_rumor_queryset(request))
+        return JsonResponse({"labels": labels, "data": counts})
+
+
+rumor_surveillance_trend_api_view = transaction.non_atomic_requests(
+    RumorSurveillanceTrendAPIView.as_view()
+)
+
+
+class RumorSurveillanceDetectionAPIView(CustomAuthMixin, View):
+    """Source distribution – kept on the 'detection' URL for API stability."""
+
+    def get(self, request, *args, **kwargs):
+        labels, counts = _build_rumor_source_distribution(
+            _build_csa_rumor_queryset(request)
+        )
+        return JsonResponse({"labels": labels, "data": counts})
+
+
+rumor_surveillance_detection_api_view = transaction.non_atomic_requests(
+    RumorSurveillanceDetectionAPIView.as_view()
+)
+
+
+class RumorSurveillanceFollowUpAPIView(CustomAuthMixin, View):
+    """Data completeness stats – kept on the 'follow-up' URL for API stability."""
+
+    def get(self, request, *args, **kwargs):
+        return JsonResponse(
+            _build_rumor_completeness_stats(_build_csa_rumor_queryset(request))
+        )
+
+
+rumor_surveillance_follow_up_api_view = transaction.non_atomic_requests(
+    RumorSurveillanceFollowUpAPIView.as_view()
+)
+
+
+class RumorSurveillanceMapAPIView(CustomAuthMixin, View):
+    def get(self, request, *args, **kwargs):
+        return JsonResponse(_build_rumor_map_payload(request))
+
+
+rumor_surveillance_map_api_view = transaction.non_atomic_requests(
+    RumorSurveillanceMapAPIView.as_view()
+)
+
+
+class RumorSurveillanceWordCloudAPIView(CustomAuthMixin, View):
+    def get(self, request, *args, **kwargs):
+        return JsonResponse(
+            _build_rumor_word_cloud_data(_build_csa_rumor_queryset(request))
+        )
+
+
+rumor_surveillance_word_cloud_api_view = transaction.non_atomic_requests(
+    RumorSurveillanceWordCloudAPIView.as_view()
 )
 
 

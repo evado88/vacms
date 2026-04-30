@@ -9,6 +9,7 @@
   {{ block.super }}
   <link href="{% static 'css/home_dashboard.css' %}?v=20260219d" rel="stylesheet">
   <link href="{% static 'css/regional_operations.css' %}" rel="stylesheet">
+  <link href="{% static 'css/rumor_surveillance_dashboard.css' %}?v=20260430b" rel="stylesheet">
   <link href="{% static 'vendor/leaflet-1.9.2/leaflet.css' %}" rel="stylesheet">
 {% endblock %}
 
@@ -224,19 +225,7 @@
         </section>
       </div>
       <div class="tab-pane dashboard-tab-panel fade {% if home_active_tab == 'rumor_surveillance' %}show active{% endif %}" id="tab-6" data-tab-panel="rumor_surveillance" role="tabpanel" aria-labelledby="tab-6-tab">
-        <section class="regional-ops-layout">
-          <div class="regional-ops-divider" aria-hidden="true"></div>
-          <div class="regional-ops-panel right-panel">
-            <div class="right-panel-sections">
-              <div class="right-panel-section ou-card">
-                <div class="home-panel">
-                  <h5 class="mb-2">Rumor Surveillance</h5>
-                  <p class="text-muted mb-0">No rumor surveillance data available.</p>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
+        {% include "home/components/_rumor_surveillance_dashboard.html" %}
       </div>
       <div class="tab-pane dashboard-tab-panel fade home-va-tab {% if home_active_tab == 'va_statistics' %}show active{% endif %}" id="tab-3" data-tab-panel="va_statistics" role="tabpanel" aria-labelledby="tab-3-tab">
         <div id="homeVAStatisticsComponentSlot" data-component-slot data-component="va-statistics" data-scope="va_statistics,trends-data" data-endpoint="{% url 'home:home_va_statistics_component' %}" data-cache-key="home:va_statistics">
@@ -263,6 +252,7 @@
   <script src="{% static 'js/home_hierarchical_dashboard_map.js' %}?v=20260430a"></script>
   <script src="{% static 'js/regional_operations.js' %}?v=20260427b"></script>
   <script src="{% static 'vendor/chartjs-3.7.1/chart.min.js' %}"></script>
+  <script src="{% static 'js/rumor_surveillance_dashboard.js' %}?v=20260430b"></script>
   <script src="{% static 'js/home.js' %}?v=20260430a"></script>
 
   <script>

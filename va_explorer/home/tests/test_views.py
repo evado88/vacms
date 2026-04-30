@@ -597,6 +597,63 @@ def test_operational_dashboard_includes_rumor_surveillance_tab(user: User):
     assert b"Rumor Surveillance" in response.content
     assert b'data-tab="rumor_surveillance"' in response.content
     assert b'data-tab-panel="rumor_surveillance"' in response.content
+    assert b'id="rumorDashboardApp"' in response.content
+    assert b"rumor_surveillance_dashboard.js" in response.content
+    assert b"rumor-surveillance/summary/" in response.content
+    assert b"rumor-surveillance/detection/" in response.content
+    assert b"rumor-surveillance/follow-up/" in response.content
+    assert b"rumor-surveillance/word-cloud/" in response.content
+    assert b"pregnancyDashboardApp" not in response.content
+    assert b"pregnancy-summary-api" not in response.content
+
+
+def test_rumor_surveillance_api_endpoints_return_dashboard_payloads(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    summary_response = client.get(reverse("home:rumor_surveillance_summary_api"))
+    trend_response = client.get(reverse("home:rumor_surveillance_trend_api"))
+    detection_response = client.get(reverse("home:rumor_surveillance_detection_api"))
+    follow_up_response = client.get(reverse("home:rumor_surveillance_follow_up_api"))
+    map_response = client.get(reverse("home:rumor_surveillance_map_api"))
+    word_cloud_response = client.get(reverse("home:rumor_surveillance_word_cloud_api"))
+
+    assert summary_response.status_code == 200
+    assert trend_response.status_code == 200
+    assert detection_response.status_code == 200
+    assert follow_up_response.status_code == 200
+    assert map_response.status_code == 200
+    assert word_cloud_response.status_code == 200
+
+    summary = summary_response.json()
+    assert summary["card_last_data_update"] == "N/A"
+    assert summary["card_number_of_events"] == 0
+    assert "card_provinces_reporting" in summary
+    assert "card_eas_reporting" in summary
+    assert "card_enumerators" in summary
+    assert "card_top_source" in summary
+    assert "card_mean_age" not in summary
+
+    assert set(trend_response.json()) == {"labels", "data"}
+    assert set(detection_response.json()) == {"labels", "data"}
+
+    follow_up = follow_up_response.json()
+    assert set(follow_up) >= {
+        "total",
+        "recent_7_days",
+        "recent_30_days",
+        "with_gps",
+        "missing_gps",
+        "missing_description",
+        "missing_source",
+    }
+
+    map_payload = map_response.json()
+    assert map_payload["map_view"] == "Province"
+    assert "map_province_sums" in map_payload
+    assert "map_ea_sums" in map_payload
+
+    assert "words" in word_cloud_response.json()
 
 
 def test_regional_operations_components_refresh_independently(user: User):
