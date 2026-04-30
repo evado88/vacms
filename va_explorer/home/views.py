@@ -39,7 +39,10 @@ from va_explorer.home.model_trends import get_model_trends_data
 from va_explorer.home.va_trends import get_trends_data
 from va_explorer.utils.mixins import CustomAuthMixin
 from va_explorer.utils.profiling import timed_block
-from va_explorer.va_analytics.utils.loading import _resolve_geo_name
+from va_explorer.va_analytics.utils.loading import (
+    _derive_va_geo_levels,
+    _resolve_geo_name,
+)
 from va_explorer.va_data_management.models import (
     CauseCodingIssue,
     CauseOfDeath,
@@ -460,12 +463,15 @@ def _latest_geo_by_identifier(queryset, key_field, date_fields, start_dt, end_dt
             continue
         if end_dt and ts > end_dt:
             continue
-        max_ts_by_key[identifier] = (ts, raw_ts)
+        max_ts_by_key[identifier] = ts
 
     if not max_ts_by_key:
         return {}
 
-    # Step 2: fetch geo fields only for the matching rows
+    # Step 2: fetch geo fields only for the matching rows.  Recompute each
+    # row's latest timestamp in Python instead of comparing raw DB strings so
+    # DateTimeField fallbacks such as ``created`` do not drop otherwise valid
+    # rows.
     latest = {}
     for row in (
         base.filter(**{f"{key_field}__in": list(max_ts_by_key)})
@@ -475,18 +481,17 @@ def _latest_geo_by_identifier(queryset, key_field, date_fields, start_dt, end_dt
         identifier = row.get(key_field)
         if not identifier or identifier not in max_ts_by_key:
             continue
-        target_ts, target_raw = max_ts_by_key[identifier]
-        # Pick the row whose leading date field matches the max raw value
-        row_raw = next(
-            (row.get(f) for f in date_fields if row.get(f)),
-            None,
-        )
-        if row_raw != target_raw:
+        row_ts = _latest_timestamp_from_mapping(row, date_fields)
+        if row_ts is None:
             continue
-        if identifier in latest:
+        if start_dt and row_ts < start_dt:
+            continue
+        if end_dt and row_ts > end_dt:
+            continue
+        if identifier in latest and row_ts <= latest[identifier][0]:
             continue
         latest[identifier] = (
-            target_ts,
+            row_ts,
             {
                 "province": _normalize_geo_value(
                     row.get("province"), HOME_GEO_LEVEL_LABELS["province"]
@@ -504,6 +509,137 @@ def _latest_geo_by_identifier(queryset, key_field, date_fields, start_dt, end_dt
             },
         )
     return latest
+
+
+def _latest_timestamp_from_mapping(row, date_fields):
+    timestamps = [
+        _parse_submission_timestamp(row.get(field_name)) for field_name in date_fields
+    ]
+    timestamps = [timestamp for timestamp in timestamps if timestamp is not None]
+    return max(timestamps) if timestamps else None
+
+
+def _latest_timestamp_from_object(obj, date_fields):
+    timestamps = [
+        _parse_submission_timestamp(getattr(obj, field_name, None))
+        for field_name in date_fields
+    ]
+    timestamps = [timestamp for timestamp in timestamps if timestamp is not None]
+    return max(timestamps) if timestamps else None
+
+
+def _latest_va_geo_by_identifier(queryset, start_dt, end_dt):
+    """
+    Return latest VA geography per instance id, including community VA cluster
+    geography and facility-location fallbacks used by the VA analytics map.
+    """
+    key_field = "instanceid"
+    date_fields = ("submissiondate", "Id10012", "created")
+    date_exprs = [_build_date_expr(queryset.model, field) for field in date_fields]
+    latest_expr = Greatest(*date_exprs, output_field=TextField())
+    base = queryset.exclude(instanceid__isnull=True).exclude(instanceid="")
+
+    max_rows = (
+        base.values(key_field)
+        .annotate(_latest_ts=Max(latest_expr))
+        .values_list(key_field, "_latest_ts")
+        .iterator()
+    )
+    max_ts_by_key = {}
+    for identifier, raw_ts in max_rows:
+        if not identifier or not raw_ts:
+            continue
+        ts = _parse_submission_timestamp(raw_ts)
+        if ts is None:
+            continue
+        if start_dt and ts < start_dt:
+            continue
+        if end_dt and ts > end_dt:
+            continue
+        max_ts_by_key[identifier] = ts
+
+    if not max_ts_by_key:
+        return {}
+
+    annotated = _annotate_va_location_names(
+        base.filter(instanceid__in=list(max_ts_by_key))
+    )
+
+    latest = {}
+    for va in annotated.select_related("location", "cluster").iterator(chunk_size=2000):
+        identifier = va.instanceid
+        if not identifier or identifier not in max_ts_by_key:
+            continue
+        row_ts = _latest_timestamp_from_object(va, date_fields)
+        if row_ts is None:
+            continue
+        if start_dt and row_ts < start_dt:
+            continue
+        if end_dt and row_ts > end_dt:
+            continue
+        if identifier in latest and row_ts <= latest[identifier][0]:
+            continue
+
+        geo = _derive_va_geo_levels(va)
+        latest[identifier] = (
+            row_ts,
+            {
+                "province": geo.get("Province", ""),
+                "district": geo.get("District", ""),
+                "constituency": geo.get("Constituency", ""),
+                "ward": geo.get("Ward", ""),
+                "ea": geo.get("EA", ""),
+            },
+        )
+    return latest
+
+
+def _annotate_va_location_names(queryset):
+    return queryset.annotate(
+        province_name_from_location=Subquery(
+            Location.objects.values("name").filter(
+                Q(path=Substr(OuterRef("location__path"), 1, 8)),
+                Q(depth=2),
+            )[:1]
+        ),
+        district_name_from_location=Subquery(
+            Location.objects.values("name").filter(
+                Q(path=Substr(OuterRef("location__path"), 1, 12)),
+                Q(depth=3),
+            )[:1]
+        ),
+    )
+
+
+def _va_matches_resolved_geography(va, geography_level, geography_value):
+    if not geography_level or not geography_value:
+        return True
+    level_label = HOME_GEO_LEVEL_LABELS.get(geography_level)
+    if not level_label:
+        return True
+
+    expected = _normalize_geo_value(geography_value, level_label).casefold()
+    if not expected:
+        return True
+
+    geo = _derive_va_geo_levels(va)
+    actual = _normalize_geo_value(geo.get(level_label), level_label).casefold()
+    return bool(actual and actual == expected)
+
+
+def _apply_va_geography_filter(queryset, geography_level, geography_value):
+    if not geography_level or geography_level == "national" or not geography_value:
+        return queryset
+
+    matching_ids = []
+    for va in (
+        _annotate_va_location_names(queryset)
+        .select_related("location", "cluster")
+        .iterator(chunk_size=2000)
+    ):
+        if _va_matches_resolved_geography(va, geography_level, geography_value):
+            matching_ids.append(va.pk)
+    return queryset.filter(pk__in=matching_ids)
 
 
 def _build_home_combined_map_payload(request):
@@ -546,12 +682,7 @@ def _build_home_combined_map_payload(request):
             vas_qs = VerbalAutopsy.objects.filter(
                 deleted_at__isnull=True, duplicate=False
             )
-        vas_qs = _apply_text_geography_filter(
-            vas_qs,
-            VerbalAutopsy,
-            geography_level or "national",
-            geography_value,
-        )
+        vas_qs = _apply_va_geography_filter(vas_qs, geography_level, geography_value)
 
     with timed_block("home.map.aggregate", request=request):
         model_sets = (
@@ -587,13 +718,7 @@ def _build_home_combined_map_payload(request):
             ),
             (
                 "verbal_autopsies_count",
-                _latest_geo_by_identifier(
-                    vas_qs,
-                    "instanceid",
-                    ("submissiondate", "Id10012", "created"),
-                    start_dt,
-                    end_dt,
-                ),
+                _latest_va_geo_by_identifier(vas_qs, start_dt, end_dt),
             ),
         )
 
@@ -1343,7 +1468,19 @@ class HomeOverviewMapData(CustomAuthMixin, View):
         cache_key = _fastpath_cache_key(
             "home_overview_map_data",
             request,
-            extra={"component": "overview_map", "schema_version": 2},
+            extra={
+                "component": "overview_map",
+                "schema_version": 3,
+                "time_preset": request.GET.get("time_preset", ""),
+                "start_datetime": request.GET.get("start_datetime", ""),
+                "end_datetime": request.GET.get("end_datetime", ""),
+                "map_view": request.GET.get("map_view", ""),
+                "geography_level": request.GET.get("geography_level", ""),
+                "geography_value": request.GET.get("geography_value", ""),
+                "include_gps_points": request.GET.get("include_gps_points", ""),
+                "gps_limit": request.GET.get("gps_limit", ""),
+                "gps_offset": request.GET.get("gps_offset", ""),
+            },
         )
         payload = cache.get(cache_key)
         if payload is None:

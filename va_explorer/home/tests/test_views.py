@@ -29,6 +29,7 @@ from va_explorer.va_data_management.models import (
     HouseholdMember,
     Pregnancy,
     PregnancyOutcome,
+    SRSClusterLocation,
 )
 from va_explorer.vacms.cmsmodels.events import Event
 
@@ -475,6 +476,104 @@ def test_home_dashboard_overview_chart_is_scoped_to_user_province():
     assert sum(payload["pregnancy_outcome"]) == 1
     assert sum(payload["death"]) == 1
     assert sum(payload["va"]) == 1
+
+
+def test_home_overview_map_va_ea_counts_use_resolved_va_geography(user: User):
+    cache.clear()
+    client = Client()
+    client.force_login(user=user)
+
+    srs_province = SRSClusterLocation.add_root(
+        name="Southern", location_type="province", code="P1", status="Active"
+    )
+    srs_district = srs_province.add_child(
+        name="District 1", location_type="district", code="D1", status="Active"
+    )
+    srs_constituency = srs_district.add_child(
+        name="Constituency 1",
+        location_type="constituency",
+        code="C1",
+        status="Active",
+    )
+    srs_ward = srs_constituency.add_child(
+        name="Ward 10", location_type="ward", code="W10", status="Active"
+    )
+    srs_ea = srs_ward.add_child(
+        name="EA 2001", location_type="ea", code="EA2001", status="Active"
+    )
+
+    VerbalAutopsyFactory.create(
+        instanceid="home-map-community-va-1",
+        location=None,
+        cluster=srs_ea,
+        province="",
+        district="",
+        constituency="",
+        ward="",
+        ea="",
+        community_va="yes",
+        Id10017="Community",
+        Id10018="One",
+        Id10019="Female",
+        Id10012="2021-03-21",
+        Id10023="2021-03-21",
+        submissiondate="2021-03-21",
+    )
+    VerbalAutopsyFactory.create(
+        instanceid="home-map-direct-va-1",
+        province="Southern",
+        district="District 1",
+        constituency="Constituency 1",
+        ward="Ward 10",
+        ea="EA 3001",
+        community_va="yes",
+        Id10017="Direct",
+        Id10018="Two",
+        Id10019="Male",
+        Id10012="2021-03-21",
+        Id10023="2021-03-21",
+        submissiondate="2021-03-21",
+    )
+    VerbalAutopsyFactory.create(
+        instanceid="home-map-other-ward-va-1",
+        province="Southern",
+        district="District 1",
+        constituency="Constituency 1",
+        ward="Ward 99",
+        ea="EA 4001",
+        community_va="yes",
+        Id10017="Other",
+        Id10018="Ward",
+        Id10019="Female",
+        Id10012="2021-03-21",
+        Id10023="2021-03-21",
+        submissiondate="2021-03-21",
+    )
+
+    response = client.get("/national-operational/map-data/", {"map_view": "EA"})
+
+    assert response.status_code == 200
+    rows_by_ea = {row["ea_name"]: row for row in response.json()["map_ea_sums"]}
+    assert rows_by_ea["EA 2001"]["verbal_autopsies_count"] == 1
+    assert rows_by_ea["EA 2001"]["count"] == 1
+    assert rows_by_ea["EA 3001"]["verbal_autopsies_count"] == 1
+    assert rows_by_ea["EA 3001"]["count"] == 1
+    assert rows_by_ea["EA 4001"]["verbal_autopsies_count"] == 1
+
+    ward_response = client.get(
+        "/national-operational/map-data/",
+        {
+            "map_view": "EA",
+            "geography_level": "ward",
+            "geography_value": "Ward 10",
+        },
+    )
+    ward_rows_by_ea = {
+        row["ea_name"]: row for row in ward_response.json()["map_ea_sums"]
+    }
+    assert ward_rows_by_ea["EA 2001"]["verbal_autopsies_count"] == 1
+    assert ward_rows_by_ea["EA 3001"]["verbal_autopsies_count"] == 1
+    assert "EA 4001" not in ward_rows_by_ea
 
 
 def test_regional_operations_page_loads(user: User):
