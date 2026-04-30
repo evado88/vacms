@@ -124,6 +124,7 @@ class PregnancyDashboardEndpointSchemaTests(TestCase):
         User = get_user_model()
         user = User.objects.create_user(
             username="pregnancy_dashboard_test_user",
+            email="pregnancy-dashboard-test@example.com",
             password="test-password-123",
         )
         user.groups.add(group)

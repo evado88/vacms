@@ -51,6 +51,7 @@ GPS_DEFAULT_LIMIT = 2000
 GPS_CACHE_TIMEOUT = 3600  # 1 hour
 
 TREND_SUBMISSION_HARD_START_DATE = "2024-01-01"
+PREGNANCY_TREND_HARD_START_DATE = "2024-09-01"
 
 
 def get_pregnancy_outcomes_filter_state(request):
@@ -213,18 +214,18 @@ def _build_outcomes_summary_cards(filtered_qs):
     }
 
 
-def _build_submission_trend_series(filtered_qs):
-    """Group any model queryset by submissiondate month and return (labels, counts)."""
+def _build_text_date_trend_series(filtered_qs, *, date_field, hard_start_date):
+    """Group any text date field by month and return (labels, counts)."""
     month_rows = (
-        filtered_qs.exclude(submissiondate__isnull=True)
-        .exclude(submissiondate="")
-        .exclude(submissiondate__iexact="nan")
-        .exclude(submissiondate__iexact="nat")
-        .exclude(submissiondate__iexact="none")
-        .exclude(submissiondate__iexact="null")
-        .filter(submissiondate__regex=r"^\d{4}-\d{2}-\d{2}")
-        .filter(submissiondate__gte=TREND_SUBMISSION_HARD_START_DATE)
-        .annotate(month_key=Substr("submissiondate", 1, 7))
+        filtered_qs.exclude(**{f"{date_field}__isnull": True})
+        .exclude(**{date_field: ""})
+        .exclude(**{f"{date_field}__iexact": "nan"})
+        .exclude(**{f"{date_field}__iexact": "nat"})
+        .exclude(**{f"{date_field}__iexact": "none"})
+        .exclude(**{f"{date_field}__iexact": "null"})
+        .filter(**{f"{date_field}__regex": r"^\d{4}-\d{2}-\d{2}"})
+        .filter(**{f"{date_field}__gte": hard_start_date})
+        .annotate(month_key=Substr(date_field, 1, 7))
         .values("month_key")
         .annotate(count=Count("pk"))
         .order_by("month_key")
@@ -241,8 +242,20 @@ def _build_submission_trend_series(filtered_qs):
     return labels, counts
 
 
+def _build_submission_trend_series(filtered_qs):
+    return _build_text_date_trend_series(
+        filtered_qs,
+        date_field="submissiondate",
+        hard_start_date=TREND_SUBMISSION_HARD_START_DATE,
+    )
+
+
 def _build_pregnancy_outcomes_trend_series(filtered_qs):
-    return _build_submission_trend_series(filtered_qs)
+    return _build_text_date_trend_series(
+        filtered_qs,
+        date_field="PO_41",
+        hard_start_date=TREND_SUBMISSION_HARD_START_DATE,
+    )
 
 
 def _normalize_birth_outcome_category(value):
@@ -864,19 +877,11 @@ def build_pregnancy_qs(request):
             start_dt, end_dt = end_dt, start_dt
 
     if start_dt or end_dt:
-        date_fields = ("submissiondate", "today", "start")
+        qs = qs.exclude(PE_09A__isnull=True).exclude(PE_09A="")
         if start_dt:
-            start_token = start_dt.strftime("%Y-%m-%d")
-            start_filter = Q()
-            for field_name in date_fields:
-                start_filter |= Q(**{f"{field_name}__gte": start_token})
-            qs = qs.filter(start_filter)
+            qs = qs.filter(PE_09A__gte=start_dt.strftime("%Y-%m-%d"))
         if end_dt:
-            end_token = (end_dt + timedelta(days=1)).strftime("%Y-%m-%d")
-            end_filter = Q()
-            for field_name in date_fields:
-                end_filter |= Q(**{f"{field_name}__lt": end_token})
-            qs = qs.filter(end_filter)
+            qs = qs.filter(PE_09A__lt=(end_dt + timedelta(days=1)).strftime("%Y-%m-%d"))
 
     return qs
 
@@ -1003,19 +1008,13 @@ def build_deaths_qs(request, *, apply_time_filter=True):
                 start_dt, end_dt = end_dt, start_dt
 
         if start_dt or end_dt:
-            date_fields = ("submissiondate", "today", "start")
+            qs = qs.exclude(DE_06__isnull=True).exclude(DE_06="")
             if start_dt:
-                start_token = start_dt.strftime("%Y-%m-%d")
-                start_filter = Q()
-                for field_name in date_fields:
-                    start_filter |= Q(**{f"{field_name}__gte": start_token})
-                qs = qs.filter(start_filter)
+                qs = qs.filter(DE_06__gte=start_dt.strftime("%Y-%m-%d"))
             if end_dt:
-                end_token = (end_dt + timedelta(days=1)).strftime("%Y-%m-%d")
-                end_filter = Q()
-                for field_name in date_fields:
-                    end_filter |= Q(**{f"{field_name}__lt": end_token})
-                qs = qs.filter(end_filter)
+                qs = qs.filter(
+                    DE_06__lt=(end_dt + timedelta(days=1)).strftime("%Y-%m-%d")
+                )
 
     age_group = filter_state["age_group"]
     if age_group in {"neonate", "child", "adult"}:
@@ -1113,7 +1112,11 @@ def _with_valid_death_date(qs, *, source_field="DE_06", alias="death_date"):
 
 
 def _build_deaths_trend_series(filtered_qs):
-    return _build_submission_trend_series(filtered_qs)
+    return _build_text_date_trend_series(
+        filtered_qs,
+        date_field="DE_06",
+        hard_start_date=TREND_SUBMISSION_HARD_START_DATE,
+    )
 
 
 def _build_pregnancy_summary_cards(filtered_qs):
@@ -1149,7 +1152,11 @@ def _build_pregnancy_summary_cards(filtered_qs):
 
 
 def _build_pregnancy_trend_series(filtered_qs):
-    return _build_submission_trend_series(filtered_qs)
+    return _build_text_date_trend_series(
+        filtered_qs,
+        date_field="PE_09A",
+        hard_start_date=PREGNANCY_TREND_HARD_START_DATE,
+    )
 
 
 def _build_pregnancy_ga_anc_points(filtered_qs):

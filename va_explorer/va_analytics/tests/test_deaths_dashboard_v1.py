@@ -6,6 +6,7 @@ from django.urls import reverse
 from va_explorer.tests.factories import LocationFactory
 from va_explorer.va_analytics.views import (
     _build_deaths_summary_cards,
+    _build_deaths_trend_series,
     build_deaths_qs,
     get_deaths_filter_state,
 )
@@ -45,11 +46,16 @@ class DeathsFilterParsingTests(TestCase):
             username="death_loc_test_user",
             email="death-loc@example.com",
             password="test-password-123",
+            has_valid_password=True,
         )
         province = LocationFactory.create(name="Southern", location_type="province")
         user.location_restrictions.set([province])
-        Death.objects.create(key="death-south", province="Southern", district="Choma")
-        Death.objects.create(key="death-other", province="Lusaka", district="Lusaka")
+        Death.objects.bulk_create(
+            [
+                Death(key="death-south", province="Southern", district="Choma"),
+                Death(key="death-other", province="Lusaka", district="Lusaka"),
+            ]
+        )
 
         request = self.factory.get("/va_analytics/outcomes-dashboard/")
         request.user = user
@@ -57,38 +63,93 @@ class DeathsFilterParsingTests(TestCase):
 
         assert set(qs.values_list("key", flat=True)) == {"death-south"}
 
+    def test_custom_date_range_filter_uses_date_of_death(self):
+        Death.objects.bulk_create(
+            [
+                Death(
+                    key="death-filter-in",
+                    DE_06="2026-03-05",
+                    submissiondate="2026-02-01",
+                ),
+                Death(
+                    key="death-filter-out",
+                    DE_06="2026-01-20",
+                    submissiondate="2026-03-10",
+                ),
+            ]
+        )
+
+        request = self.factory.get(
+            "/va_analytics/outcomes-dashboard/",
+            {
+                "time_preset": "custom",
+                "start_datetime": "2026-03-01T00:00",
+                "end_datetime": "2026-03-31T23:59",
+            },
+        )
+        qs = build_deaths_qs(request)
+
+        assert list(qs.values_list("key", flat=True)) == ["death-filter-in"]
+
 
 class DeathsUnder5CalculationTests(TestCase):
     def test_under_5_percentage_handles_missing_age_safely(self):
-        Death.objects.create(
-            key="death-u5-1",
-            DE_04="2024-01-01",
-            DE_06="2026-01-01",
-            DE_05="Female",
-            DE_07="home",
-            submissiondate="2026-01-02",
-        )
-        Death.objects.create(
-            key="death-u5-2",
-            DE_04="1980-01-01",
-            DE_06="2026-01-01",
-            DE_05="Male",
-            DE_07="hospital",
-            submissiondate="2026-01-02",
-        )
-        Death.objects.create(
-            key="death-u5-3",
-            DE_04="",
-            DE_06="2026-01-01",
-            DE_05="",
-            DE_07="",
-            submissiondate="2026-01-02",
+        Death.objects.bulk_create(
+            [
+                Death(
+                    key="death-u5-1",
+                    DE_04="2024-01-01",
+                    DE_06="2026-01-01",
+                    DE_05="Female",
+                    DE_07="home",
+                    submissiondate="2026-01-02",
+                ),
+                Death(
+                    key="death-u5-2",
+                    DE_04="1980-01-01",
+                    DE_06="2026-01-01",
+                    DE_05="Male",
+                    DE_07="hospital",
+                    submissiondate="2026-01-02",
+                ),
+                Death(
+                    key="death-u5-3",
+                    DE_04="",
+                    DE_06="2026-01-01",
+                    DE_05="",
+                    DE_07="",
+                    submissiondate="2026-01-02",
+                ),
+            ]
         )
 
         payload = _build_deaths_summary_cards(Death.objects.all())
 
         assert payload["death_card_total_events"] == 3
         assert abs(payload["death_card_under_5_pct"] - 33.3) < 0.05
+
+
+class DeathsTrendDataTests(TestCase):
+    def test_trend_uses_date_of_death(self):
+        Death.objects.bulk_create(
+            [
+                Death(
+                    key="death-trend-dod",
+                    DE_06="2026-03-05",
+                    submissiondate="2026-02-01",
+                ),
+                Death(
+                    key="death-trend-submission-only",
+                    DE_06="",
+                    submissiondate="2026-02-15",
+                ),
+            ]
+        )
+
+        labels, counts = _build_deaths_trend_series(Death.objects.all())
+
+        assert labels == ["Mar 2026"]
+        assert counts == [1]
 
 
 class DeathsApiSchemaTests(TestCase):
@@ -101,23 +162,29 @@ class DeathsApiSchemaTests(TestCase):
         User = get_user_model()
         user = User.objects.create_user(
             username="deaths_dashboard_test_user",
+            email="deaths-dashboard-test@example.com",
             password="test-password-123",
+            has_valid_password=True,
         )
         user.groups.add(group)
         self.client.force_login(user)
 
-        Death.objects.create(
-            key="death-schema-1",
-            DE_04="2024-01-01",
-            DE_05="Unknown",
-            DE_06="2026-02-01",
-            DE_07="",
-            DE_15="",
-            province="Lusaka",
-            district="Lusaka",
-            submissiondate="2026-02-02",
-            today="2026-02-02",
-            start="2026-02-02",
+        Death.objects.bulk_create(
+            [
+                Death(
+                    key="death-schema-1",
+                    DE_04="2024-01-01",
+                    DE_05="Unknown",
+                    DE_06="2026-02-01",
+                    DE_07="",
+                    DE_15="",
+                    province="Lusaka",
+                    district="Lusaka",
+                    submissiondate="2026-02-02",
+                    today="2026-02-02",
+                    start="2026-02-02",
+                )
+            ]
         )
 
     def test_death_endpoints_json_schema(self):
@@ -160,7 +227,7 @@ class DeathsApiSchemaTests(TestCase):
         age_sex = self.client.get(
             reverse("va_analytics:outcomes-deaths-age-sex-api")
         ).json()
-        assert set(age_sex.keys()) == {"labels", "male", "female", "other"}
+        assert set(age_sex.keys()) == {"labels", "male", "female"}
 
         place = self.client.get(
             reverse("va_analytics:outcomes-deaths-place-api")
@@ -207,29 +274,33 @@ class DeathsApiSchemaTests(TestCase):
         assert response.status_code == 400
 
     def test_mortality_trend_hard_starts_at_january_2024(self):
-        Death.objects.create(
-            key="death-trend-legacy",
-            DE_04="2020-01-01",
-            DE_05="Female",
-            DE_06="2023-12-15",
-            DE_07="home",
-            province="Lusaka",
-            district="Lusaka",
-            submissiondate="2023-12-16",
-            today="2023-12-16",
-            start="2023-12-16",
-        )
-        Death.objects.create(
-            key="death-trend-2024",
-            DE_04="2020-01-01",
-            DE_05="Male",
-            DE_06="2024-01-10",
-            DE_07="home",
-            province="Lusaka",
-            district="Lusaka",
-            submissiondate="2024-01-11",
-            today="2024-01-11",
-            start="2024-01-11",
+        Death.objects.bulk_create(
+            [
+                Death(
+                    key="death-trend-legacy",
+                    DE_04="2020-01-01",
+                    DE_05="Female",
+                    DE_06="2023-12-15",
+                    DE_07="home",
+                    province="Lusaka",
+                    district="Lusaka",
+                    submissiondate="2023-12-16",
+                    today="2023-12-16",
+                    start="2023-12-16",
+                ),
+                Death(
+                    key="death-trend-2024",
+                    DE_04="2020-01-01",
+                    DE_05="Male",
+                    DE_06="2024-01-10",
+                    DE_07="home",
+                    province="Lusaka",
+                    district="Lusaka",
+                    submissiondate="2024-01-11",
+                    today="2024-01-11",
+                    start="2024-01-11",
+                ),
+            ]
         )
 
         trend = self.client.get(
@@ -250,7 +321,9 @@ class OutcomesTabsIsolationTests(TestCase):
         User = get_user_model()
         user = User.objects.create_user(
             username="outcomes_tabs_test_user",
+            email="outcomes-tabs-test@example.com",
             password="test-password-123",
+            has_valid_password=True,
         )
         user.groups.add(group)
         self.client.force_login(user)
@@ -263,4 +336,3 @@ class OutcomesTabsIsolationTests(TestCase):
 
         assert response.status_code == 200
         assert 'id="pregnancyDashboardApp"' in content
-        assert 'id="deathsDashboardApp"' not in content

@@ -148,8 +148,8 @@ class Death(models.Model):
             # Optimise date-range filtering in analytics views
             models.Index(fields=["today"], name="death_today_idx"),
             models.Index(fields=["death_id"], name="death_id_idx"),
-            # Submission date used for trend series grouping
-            models.Index(fields=["submissiondate"], name="death_submission_idx"),
+            # Date of death used for mortality trend grouping/filtering
+            models.Index(fields=["DE_06"], name="death_date_idx"),
         ]
 
     def __str__(self):

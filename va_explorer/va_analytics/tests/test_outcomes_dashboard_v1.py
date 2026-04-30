@@ -7,6 +7,7 @@ from django.utils import timezone
 
 from va_explorer.tests.factories import GroupFactory, LocationFactory, UserFactory
 from va_explorer.va_analytics.views import (
+    _build_pregnancy_outcomes_trend_series,
     build_pregnancy_outcomes_qs,
     get_pregnancy_outcomes_filter_state,
 )
@@ -95,6 +96,25 @@ class TestPregnancyOutcomesQuerysetBuilder:
         qs = build_pregnancy_outcomes_qs(request)
 
         assert set(qs.values_list("key", flat=True)) == {"po-southern"}
+
+    def test_trend_uses_delivery_or_pregnancy_end_date(self):
+        self._create_po(
+            key="po-delivered-mar",
+            PO_41="2026-03-05",
+            submissiondate="2026-02-01",
+        )
+        self._create_po(
+            key="po-submitted-only",
+            PO_41="",
+            submissiondate="2026-02-15",
+        )
+
+        labels, counts = _build_pregnancy_outcomes_trend_series(
+            PregnancyOutcome.objects.all()
+        )
+
+        assert labels == ["Mar 2026"]
+        assert counts == [1]
 
 
 class TestPregnancyOutcomesApiSchemas:

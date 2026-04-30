@@ -157,3 +157,48 @@ def test_load_va_data_source_filter_all_community_facility():
     )
     assert facility_data["update_stats"]["total_vas"] == 1
     assert facility_data["map_total_vas"] == 1
+
+
+def test_load_va_data_cause_trends_use_date_of_death():
+    va_delayed_submission = VerbalAutopsyFactory.create(
+        instanceid="analytics-cod-trend-delayed",
+        Id10023="2026-03-05",
+        submissiondate="2026-02-01",
+    )
+    CauseOfDeathFactory.create(
+        verbalautopsy=va_delayed_submission,
+        cause="Cause A",
+    )
+    va_later_submission = VerbalAutopsyFactory.create(
+        instanceid="analytics-cod-trend-later-submission",
+        Id10023="2026-01-20",
+        submissiondate="2026-03-10",
+    )
+    CauseOfDeathFactory.create(
+        verbalautopsy=va_later_submission,
+        cause="Cause B",
+    )
+
+    data = load_va_data(
+        user=UserFactory.create(),
+        cause_of_death=None,
+        start_date="2026-01-01",
+        end_date="2026-12-31",
+        region_of_interest=None,
+        age=None,
+        sex=None,
+    )
+
+    assert list(data["COD_trend"]) == [
+        {"month_key": "2026-01", "count": 1},
+        {"month_key": "2026-03", "count": 1},
+    ]
+
+    cause_a_series = next(
+        series
+        for series in data["va_cause_trend"]["series"]
+        if series["name"] == "Cause A"
+    )
+    periods = data["va_cause_trend"]["periods"]
+    assert cause_a_series["values"][periods.index("Mar 2026")] == 1
+    assert cause_a_series["values"][periods.index("Feb 2026")] == 0
