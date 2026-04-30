@@ -404,17 +404,13 @@ def _next_comparison_level(region_level):
     return order.get(region_level, "Province")
 
 
-def _collapse_top_n_with_other(rows, label_key, value_key="count", top_n=10):
+def _top_n_rows(rows, label_key, value_key="count", top_n=10):
     rows = list(rows)
     top = rows[:top_n]
-    other_total = sum((row.get(value_key) or 0) for row in rows[top_n:])
-    collapsed = [
+    return [
         {label_key: row.get(label_key), value_key: row.get(value_key) or 0}
         for row in top
     ]
-    if other_total > 0:
-        collapsed.append({label_key: "Other", value_key: other_total})
-    return collapsed
 
 
 def _month_starts_between(start_month, end_month):
@@ -475,8 +471,6 @@ def _build_va_cause_trend_payload(filtered_qs, top_causes):
         }
 
     cause_buckets = list(top_causes)
-    if cause_buckets:
-        cause_buckets.append("Other")
     trend_map = {cause: dict.fromkeys(month_keys, 0) for cause in cause_buckets}
 
     for row in rows:
@@ -484,10 +478,9 @@ def _build_va_cause_trend_payload(filtered_qs, top_causes):
         if not mk:
             continue
         cause = row.get("cause")
-        bucket = cause if cause in top_causes else "Other"
-        if bucket not in trend_map:
+        if cause not in trend_map:
             continue
-        trend_map[bucket][mk] += row.get("count") or 0
+        trend_map[cause][mk] += row.get("count") or 0
 
     series_rows = []
     datasets = []
@@ -542,7 +535,6 @@ def _build_regional_cod_comparison(filtered_qs, region_of_interest, top_causes):
     cod_categories = list(top_causes)
     if not cod_categories:
         return _empty_regional_cod_comparison(compare_key)
-    cod_categories.append("Other")
 
     grouped_counts = {}
     coded_qs = (
@@ -565,11 +557,12 @@ def _build_regional_cod_comparison(filtered_qs, region_of_interest, top_causes):
                 group_name = "Unknown Province"
 
         cause_name = getattr(va, "final_cause", None)
-        bucket = cause_name if cause_name in top_causes else "Other"
+        if cause_name not in top_causes:
+            continue
         group_bucket = grouped_counts.setdefault(
             group_name, dict.fromkeys(cod_categories, 0)
         )
-        group_bucket[bucket] += 1
+        group_bucket[cause_name] += 1
 
     if compare_key == "age":
         order = {
@@ -890,7 +883,7 @@ def load_va_data(
         row.get("cause") for row in cod_sums_rows[:5] if row.get("cause")
     ]
     cod_total = sum((row.get("count") or 0) for row in cod_sums_rows)
-    COD_sums = _collapse_top_n_with_other(
+    COD_sums = _top_n_rows(
         cod_sums_rows,
         label_key="cause",
         value_key="count",

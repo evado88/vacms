@@ -202,3 +202,30 @@ def test_load_va_data_cause_trends_use_date_of_death():
     periods = data["va_cause_trend"]["periods"]
     assert cause_a_series["values"][periods.index("Mar 2026")] == 1
     assert cause_a_series["values"][periods.index("Feb 2026")] == 0
+
+
+def test_load_va_data_omits_other_from_cause_graphs():
+    for index in range(11):
+        va = VerbalAutopsyFactory.create(
+            instanceid=f"analytics-cod-no-other-{index}",
+            Id10023=f"2026-03-{index + 1:02d}",
+            submissiondate=f"2026-03-{index + 1:02d}",
+        )
+        CauseOfDeathFactory.create(
+            verbalautopsy=va,
+            cause=f"Cause {index:02d}",
+        )
+
+    data = load_va_data(
+        user=UserFactory.create(),
+        cause_of_death=None,
+        start_date="2026-01-01",
+        end_date="2026-12-31",
+        region_of_interest=None,
+        age=None,
+        sex=None,
+    )
+
+    assert all(row["cause"] != "Other" for row in data["COD_grouping"])
+    assert all(series["name"] != "Other" for series in data["va_cause_trend"]["series"])
+    assert "Other" not in data["regional_cod_comparison"]["cod_categories"]
