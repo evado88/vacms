@@ -400,7 +400,7 @@
           const areaName = feature?.properties?.area_name || "";
           const count = lookupCount(lookup, level, feature);
           const levelLabel = toTitleCase(feature?.properties?.area_level_label || LEVEL_CONFIG[level]?.label || "");
-          const canDrill = enableDrilldown && level < 5;
+          const canDrill = enableDrilldown && level < 5 && count > 0;
           layer.bindTooltip(
             `<div class="mapTooltip"><h4>${areaName} ${levelLabel}</h4><p>${count}</p>${canDrill ? "<small>Click to drill down</small>" : ""}</div>`
           );

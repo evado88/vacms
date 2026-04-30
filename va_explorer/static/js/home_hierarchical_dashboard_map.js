@@ -428,10 +428,12 @@
         onEachFeature: (feature, layer) => {
           const areaName = feature?.properties?.area_name || "";
           const rowData = lookupRowData(lookup, level, feature) || { count: 0 };
+          const count = toSafeInt(rowData.count);
           const levelLabel = toTitleCase(feature?.properties?.area_level_label || LEVEL_CONFIG[level]?.label || "");
-          const canDrill = level < 5;
+          const canDrill = level < 5 && count > 0;
           layer.bindTooltip(renderTooltipHtml(areaName, levelLabel, rowData, canDrill));
           layer.on("click", async () => {
+            if (!canDrill) return;
             const selectedNode = {
               id: feature?.properties?.area_id,
               name: areaName,
@@ -441,7 +443,6 @@
             state.selectedNode = selectedNode;
             emitSelectionChange();
 
-            if (!canDrill) return;
             const nextNode = {
               id: feature?.properties?.area_id,
               name: areaName,
