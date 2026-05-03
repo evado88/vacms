@@ -9,7 +9,7 @@
   {{ block.super }}
   <link href="{% static 'css/home_dashboard.css' %}?v=20260219d" rel="stylesheet">
   <link href="{% static 'css/regional_operations.css' %}" rel="stylesheet">
-  <link href="{% static 'css/rumor_details_dashboard.css' %}?v=20260430c" rel="stylesheet">
+  <link href="{% static 'css/rumor_details_dashboard.css' %}?v=20260503a" rel="stylesheet">
   <link href="{% static 'vendor/leaflet-1.9.2/leaflet.css' %}" rel="stylesheet">
 {% endblock %}
 
@@ -260,7 +260,9 @@
   <script src="{% static 'js/home_hierarchical_dashboard_map.js' %}?v=20260430a"></script>
   <script src="{% static 'js/regional_operations.js' %}?v=20260427b"></script>
   <script src="{% static 'vendor/chartjs-3.7.1/chart.min.js' %}"></script>
-  <script src="{% static 'js/rumor_details_dashboard.js' %}?v=20260430c"></script>
+  <script src="{% static 'vendor/d3-7.9.0/d3.min.js' %}"></script>
+  <script src="{% static 'js/rumor_word_cloud.js' %}?v=20260503b"></script>
+  <script src="{% static 'js/rumor_details_dashboard.js' %}?v=20260503a"></script>
   <script src="{% static 'js/rumor_overview_dashboard.js' %}?v=20260430c"></script>
   <script src="{% static 'js/home.js' %}?v=20260430a"></script>
 

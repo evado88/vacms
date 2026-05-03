@@ -2011,6 +2011,14 @@ _RUMOR_SENTIMENT_MOD_RE = re.compile(
     re.I,
 )
 
+# Word cloud clustering parameters
+_WC_TOP_N_PHRASES = 150
+_WC_MAX_NODES = 60
+_WC_CLUSTER_THRESHOLD = 75
+_WC_EDGE_THRESHOLD = 40
+_WC_NOISE_RE = re.compile(r"[^\w\s\-]")
+_WC_SKIP_VALUES = {"", "nan", "none", "null", "nat", "n/a", "na"}
+
 
 def _infer_rumor_category(text):
     if not text:
@@ -2019,6 +2027,108 @@ def _infer_rumor_category(text):
         if pattern.search(text):
             return name
     return "General Concern"
+
+
+def _wc_token_sort_ratio(a, b):
+    try:
+        from rapidfuzz import fuzz as rf
+
+        return rf.token_sort_ratio(a, b)
+    except Exception:
+        ta = " ".join(sorted(a.split()))
+        tb = " ".join(sorted(b.split()))
+        return int(difflib.SequenceMatcher(None, ta, tb).ratio() * 100)
+
+
+def _wc_token_set_ratio(a, b):
+    try:
+        from rapidfuzz import fuzz as rf
+
+        return rf.token_set_ratio(a, b)
+    except Exception:
+        set_a, set_b = set(a.split()), set(b.split())
+        shared = set_a & set_b
+        if not shared:
+            return 0
+        return int(len(shared) / max(len(set_a), len(set_b)) * 100)
+
+
+def _build_rumor_word_cloud_data(qs, *, max_nodes=_WC_MAX_NODES):
+    raw_counts: Counter = Counter()
+    for (desci,) in (
+        qs.exclude(desci__isnull=True).exclude(desci="").values_list("desci").iterator()
+    ):
+        norm = re.sub(
+            r"\s+", " ", _WC_NOISE_RE.sub(" ", (desci or "").strip().lower())
+        ).strip()
+        if not norm or norm in _WC_SKIP_VALUES or len(norm) < 3:
+            continue
+        raw_counts[norm] += 1
+
+    total_events = sum(raw_counts.values())
+    if not raw_counts:
+        return {"nodes": [], "edges": [], "total_events": 0, "has_data": False}
+
+    top_phrases = [p for p, _ in raw_counts.most_common(_WC_TOP_N_PHRASES)]
+
+    # Union-Find clustering
+    parent = {p: p for p in top_phrases}
+
+    def _find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def _union(a, b):
+        parent[_find(a)] = _find(b)
+
+    for i, p1 in enumerate(top_phrases):
+        for p2 in top_phrases[i + 1 :]:
+            if _wc_token_sort_ratio(p1, p2) >= _WC_CLUSTER_THRESHOLD:
+                _union(p1, p2)
+
+    clusters: dict = defaultdict(list)
+    for phrase in top_phrases:
+        clusters[_find(phrase)].append(phrase)
+
+    nodes = []
+    for members in clusters.values():
+        canonical = max(members, key=lambda p: raw_counts[p])
+        freq = sum(raw_counts[p] for p in members)
+        variants = sorted(
+            (p for p in members if p != canonical), key=lambda p: -raw_counts[p]
+        )[:5]
+        nodes.append(
+            {
+                "id": canonical,
+                "label": canonical.title(),
+                "frequency": freq,
+                "pct": round(freq / total_events * 100, 1) if total_events else 0.0,
+                "variants": variants,
+                "category": _infer_rumor_category(canonical),
+            }
+        )
+
+    nodes.sort(key=lambda n: -n["frequency"])
+    nodes = nodes[:max_nodes]
+    node_ids = [n["id"] for n in nodes]
+
+    edges = []
+    for i, src in enumerate(node_ids):
+        for tgt in node_ids[i + 1 :]:
+            score = _wc_token_set_ratio(src, tgt)
+            if score >= _WC_EDGE_THRESHOLD:
+                edges.append(
+                    {"source": src, "target": tgt, "weight": round(score / 100, 3)}
+                )
+
+    return {
+        "nodes": nodes,
+        "edges": edges,
+        "total_events": total_events,
+        "has_data": True,
+    }
 
 
 def _build_rumor_source_by_province(qs):
@@ -2362,6 +2472,18 @@ class RumorDetailsSentimentAPIView(CustomAuthMixin, View):
 
 rumor_details_sentiment_api_view = transaction.non_atomic_requests(
     RumorDetailsSentimentAPIView.as_view()
+)
+
+
+class RumorDetailsWordCloudAPIView(CustomAuthMixin, View):
+    def get(self, request, *args, **kwargs):
+        return JsonResponse(
+            _build_rumor_word_cloud_data(_build_csa_rumor_queryset(request))
+        )
+
+
+rumor_details_word_cloud_api_view = transaction.non_atomic_requests(
+    RumorDetailsWordCloudAPIView.as_view()
 )
 
 

@@ -5,6 +5,7 @@
   data-enumerator-stats-endpoint="{% url 'home:rumor_details_enumerator_stats_api' %}"
   data-description-table-endpoint="{% url 'home:rumor_details_description_table_api' %}"
   data-sentiment-endpoint="{% url 'home:rumor_details_sentiment_api' %}"
+  data-word-cloud-endpoint="{% url 'home:rumor_details_word_cloud_api' %}"
   data-user-pii="{% if perms.va_analytics.view_pii %}true{% else %}false{% endif %}"
 >
   <!-- Row 1: Filters -->
@@ -47,6 +48,15 @@
   <!-- Row 2: Word cloud (left) + tables (right) -->
   <div class="rumor-details-content-row">
     <div class="rumor-details-col-left">
+      <section class="sectionContainer" id="rumorDetailsWordCloudSection">
+        <div class="rdwc-header">
+          <h2>Rumor Phrase Network</h2>
+        </div>
+        <div class="rdwc-canvas-wrap" id="rdwcCanvasWrap">
+          <svg id="rdwcSvg" class="rdwc-svg" aria-label="Rumor phrase network visualization"></svg>
+        </div>
+        <p id="rdwcEmptyState" class="po-empty-state" hidden>No rumor phrases recorded for the selected filters.</p>
+      </section>
     </div>
 
     <div class="rumor-details-col-right">

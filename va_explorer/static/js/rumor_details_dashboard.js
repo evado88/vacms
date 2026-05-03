@@ -5,6 +5,7 @@
   const endpoints = {
     enumeratorStats: app.dataset.enumeratorStatsEndpoint,
     descriptionTable: app.dataset.descriptionTableEndpoint,
+    wordCloud: app.dataset.wordCloudEndpoint,
   };
 
   let tableState = { page: 1, totalPages: 1, filters: null };
@@ -178,6 +179,10 @@
 
     renderEnumeratorStats(enumeratorStats);
     renderDescriptionTable(tableData);
+
+    if (window.RumorWordCloud && endpoints.wordCloud) {
+      window.RumorWordCloud.refresh(endpoints.wordCloud, filters, fetchJSON).catch(console.error);
+    }
   };
 
   // ── Event bindings ─────────────────────────────────────────────────────────
@@ -206,9 +211,15 @@
     });
   };
 
+  // ── Resize helper (called on tab re-activation after first init) ──────────
+  const resizeVisuals = () => {
+    if (window.RumorWordCloud) window.RumorWordCloud.resize();
+  };
+
   // ── Init ───────────────────────────────────────────────────────────────────
   const init = async () => {
     setupDateInputs([filterElements.start, filterElements.end]);
+    if (window.RumorWordCloud) window.RumorWordCloud.init();
     bindEvents();
     await refreshAll();
   };

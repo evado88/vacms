@@ -110,6 +110,11 @@ urlpatterns = [
         name="rumor_overview_sentiment_api",
     ),
     path(
+        "rumor-details/word-cloud/",
+        views.rumor_details_word_cloud_api_view,
+        name="rumor_details_word_cloud_api",
+    ),
+    path(
         "components/overview/events/",
         views.home_overview_events_component_view,
         name="home_overview_events_component",
