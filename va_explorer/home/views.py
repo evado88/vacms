@@ -3,8 +3,8 @@ import hashlib
 import json
 import logging
 import re
-import string
 from collections import Counter, defaultdict
+from contextlib import suppress
 from datetime import date, datetime, time, timedelta
 
 import pandas as pd
@@ -1513,49 +1513,6 @@ RUMOR_SOURCE_LABELS = {
 _RUMOR_POSITIVE = {"01", "1", "yes", "true"}
 _RUMOR_NEGATIVE = {"02", "0", "2", "no", "false"}
 
-_WORD_CLOUD_STOP_WORDS = frozenset(
-    {
-        "the",
-        "and",
-        "is",
-        "of",
-        "to",
-        "in",
-        "a",
-        "an",
-        "for",
-        "with",
-        "on",
-        "that",
-        "rumor",
-        "rumour",
-        "said",
-        "people",
-        "community",
-        "reported",
-        "was",
-        "are",
-        "has",
-        "have",
-        "been",
-        "be",
-        "were",
-        "it",
-        "this",
-        "they",
-        "from",
-        "by",
-        "at",
-        "but",
-        "not",
-        "no",
-        "as",
-        "or",
-        "about",
-        "there",
-    }
-)
-
 
 def _is_rumor_positive(value):
     v = (value or "").strip().lower()
@@ -1734,6 +1691,24 @@ def _build_rumor_summary_data(qs):
     top_source_code = (source_row or {}).get("sorce_rum") or ""
     top_source = RUMOR_SOURCE_LABELS.get(top_source_code, top_source_code or "Unknown")
 
+    gps_coverage_pct = round(with_gps * 100 / total) if total else 0
+
+    total_affected = 0
+    for ru_num_val in (
+        qs.exclude(ru_num__isnull=True)
+        .exclude(ru_num="")
+        .values_list("ru_num", flat=True)
+        .iterator()
+    ):
+        with suppress(TypeError, ValueError):
+            total_affected += int(float(ru_num_val))
+
+    days_since_last = None
+    if latest_date:
+        d = _parse_rumor_date(latest_date)
+        if d:
+            days_since_last = (timezone.localdate() - d).days
+
     return {
         "card_last_data_update": latest_str,
         "card_number_of_events": total,
@@ -1744,6 +1719,9 @@ def _build_rumor_summary_data(qs):
         "card_with_gps": with_gps,
         "card_missing_gps": missing_gps,
         "card_top_source": top_source,
+        "card_gps_coverage_pct": gps_coverage_pct,
+        "card_total_affected": total_affected,
+        "card_days_since_last": days_since_last,
     }
 
 
@@ -1768,6 +1746,52 @@ def _build_rumor_trend_data(qs):
         except ValueError:
             continue
     return labels, counts
+
+
+def _normalize_rumor_description(value):
+    raw = re.sub(r"\s+", " ", str(value or "")).strip()
+    if not raw or raw.lower() in {"nan", "none", "null", "nat"}:
+        return ""
+    return raw
+
+
+def _build_top_rumors_trend_data(qs, *, top_n=5):
+    totals = Counter()
+    trend_counts = defaultdict(Counter)
+    month_keys = set()
+
+    for row in qs.values("desci", "today", "submissiondate", "start").iterator():
+        rumor = _normalize_rumor_description(row.get("desci"))
+        if not rumor:
+            continue
+        event_date = _parse_rumor_date(_rumor_date_str(row))
+        if not event_date:
+            continue
+        month_key = event_date.strftime("%Y-%m")
+        totals[rumor] += 1
+        trend_counts[rumor][month_key] += 1
+        month_keys.add(month_key)
+
+    ordered_months = sorted(month_keys)
+    labels = [
+        datetime.strptime(month_key, "%Y-%m").strftime("%b %Y")
+        for month_key in ordered_months
+    ]
+    series = [
+        {
+            "name": rumor,
+            "values": [
+                trend_counts[rumor].get(month_key, 0) for month_key in ordered_months
+            ],
+        }
+        for rumor, _count in totals.most_common(top_n)
+    ]
+    return {
+        "has_rumors": bool(series),
+        "labels": labels,
+        "periods": labels,
+        "series": series,
+    }
 
 
 def _build_rumor_source_distribution(qs):
@@ -1815,24 +1839,6 @@ def _build_rumor_completeness_stats(qs):
         "missing_description": missing_desc,
         "missing_source": missing_source,
     }
-
-
-def _build_rumor_word_cloud_data(qs, *, top_n=60):
-    punct_re = re.compile(r"[^\w\s]")
-    freq: Counter = Counter()
-    for desci_val in (
-        qs.exclude(desci__isnull=True)
-        .exclude(desci="")
-        .values_list("desci", flat=True)
-        .iterator()
-    ):
-        text = punct_re.sub(" ", (desci_val or "").lower())
-        for word in text.split():
-            word = word.strip(string.punctuation)
-            if len(word) >= 3 and word not in _WORD_CLOUD_STOP_WORDS:
-                freq[word] += 1
-    words = [{"text": w, "value": c} for w, c in freq.most_common(top_n)]
-    return {"words": words}
 
 
 def _build_rumor_map_payload(request):
@@ -1947,30 +1953,298 @@ def _build_rumor_map_payload(request):
     return payload
 
 
-class RumorSurveillanceSummaryAPIView(CustomAuthMixin, View):
+# Category inference taxonomy for description table
+_RUMOR_CATEGORY_PATTERNS = [
+    (
+        "Vaccine / Immunization",
+        re.compile(r"vaccin|immuniz|immunis|injection|\bjab\b", re.I),
+    ),
+    (
+        "Disease Outbreak",
+        re.compile(
+            r"outbreak|epidemic|cholera|malaria|typhoid|infect|ebola|covid|spread", re.I
+        ),
+    ),
+    (
+        "Death / Mortality",
+        re.compile(r"\bdeath\b|\bdied\b|\bdead\b|\bkilled\b|fatal|mortalit", re.I),
+    ),
+    ("Family / Household", re.compile(r"family|household|child|children|parent", re.I)),
+    (
+        "Water / Sanitation",
+        re.compile(r"\bwater\b|sanitat|hygiene|\btoilet\b|sewage|contamin", re.I),
+    ),
+    (
+        "Food / Nutrition",
+        re.compile(r"\bfood\b|hunger|nutrition|poison|toxic|malnutri", re.I),
+    ),
+    (
+        "Health Facility",
+        re.compile(
+            r"hospital|clinic|\bnurse\b|\bdoctor\b|health cent|medicine|treatment", re.I
+        ),
+    ),
+]
+
+_SOURCE_DISPLAY_LABELS = {
+    "Social Media": "Social Media",
+    "Community Group": "Community Group",
+    "Offline Media": "Offline Media",
+    "Other": "Other",
+}
+_SOURCE_COLORS = {
+    "Social Media": "#4e79a7",
+    "Community Group": "#f28e2b",
+    "Offline Media": "#59a14f",
+    "Other": "#e15759",
+    "Unknown": "#9ca3af",
+}
+
+_RUMOR_SENTIMENT_HIGH_RE = re.compile(
+    r"outbreak|epidemic|\bdeath\b|\bdied\b|\bdead\b|\bkilled\b|fatal|panic"
+    r"|danger|emergenc|spread|cholera|ebola|covid|crisis|alert",
+    re.I,
+)
+_RUMOR_SENTIMENT_MOD_RE = re.compile(
+    r"\bsick\b|hospital|worr|medic|infect|treatment|warning|concern"
+    r"|illness|clinic|\bnurse\b|\bdoctor\b|symptom|fever|\bpain\b",
+    re.I,
+)
+
+
+def _infer_rumor_category(text):
+    if not text:
+        return "General Concern"
+    for name, pattern in _RUMOR_CATEGORY_PATTERNS:
+        if pattern.search(text):
+            return name
+    return "General Concern"
+
+
+def _build_rumor_source_by_province(qs):
+    rows = (
+        qs.exclude(province__isnull=True)
+        .exclude(province="")
+        .values("province", "sorce_rum")
+        .annotate(count=Count("pk"))
+        .order_by("province")
+    )
+    data_map = {}
+    for row in rows:
+        prov = row["province"]
+        code = (row.get("sorce_rum") or "").strip()
+        label = RUMOR_SOURCE_LABELS.get(code, "Unknown")
+        data_map.setdefault(prov, Counter())[label] += row["count"]
+
+    provinces = sorted(data_map.keys())
+    seen_labels, all_labels = set(), []
+    for code in ["01", "02", "03", "04"]:
+        lbl = RUMOR_SOURCE_LABELS[code]
+        if lbl not in seen_labels:
+            seen_labels.add(lbl)
+            all_labels.append(lbl)
+    if any("Unknown" in data_map[p] for p in provinces):
+        all_labels.append("Unknown")
+
+    series = [
+        {
+            "label": lbl,
+            "data": [data_map.get(p, Counter()).get(lbl, 0) for p in provinces],
+            "backgroundColor": _SOURCE_COLORS.get(lbl, "#999"),
+        }
+        for lbl in all_labels
+        if any(data_map.get(p, Counter()).get(lbl, 0) > 0 for p in provinces)
+    ]
+    return {"provinces": provinces, "series": series}
+
+
+def _build_rumor_affected_population(qs):
+    rows = (
+        qs.exclude(today__isnull=True)
+        .exclude(today="")
+        .exclude(today__iexact="nan")
+        .exclude(today__iexact="none")
+        .filter(today__regex=r"^\d{4}-\d{2}-\d{2}")
+        .annotate(month_key=Substr("today", 1, 7))
+        .values("month_key", "ru_num")
+        .order_by("month_key")
+    )
+    month_events: Counter = Counter()
+    month_affected: Counter = Counter()
+    for row in rows:
+        mk = row.get("month_key") or ""
+        if not mk:
+            continue
+        month_events[mk] += 1
+        with suppress(TypeError, ValueError):
+            month_affected[mk] += int(float(row.get("ru_num") or 0))
+
+    ordered_months = sorted(set(month_events) | set(month_affected))
+    labels, event_counts, affected_counts = [], [], []
+    for mk in ordered_months:
+        try:
+            labels.append(datetime.strptime(mk, "%Y-%m").strftime("%b %Y"))
+        except ValueError:
+            continue
+        event_counts.append(month_events[mk])
+        affected_counts.append(month_affected[mk])
+    return {
+        "labels": labels,
+        "event_counts": event_counts,
+        "affected_counts": affected_counts,
+    }
+
+
+def _build_rumor_enumerator_stats(qs, *, top_n=15):
+    rows = (
+        qs.exclude(enumerator__isnull=True)
+        .exclude(enumerator="")
+        .values("enumerator")
+        .annotate(count=Count("pk"), last_reported=Max("today"))
+        .order_by("-count")[:top_n]
+    )
+    return {
+        "rows": [
+            {
+                "name": row["enumerator"],
+                "count": row["count"],
+                "last_reported": row.get("last_reported") or "",
+            }
+            for row in rows
+        ]
+    }
+
+
+def _build_rumor_gps_coverage_by_province(qs):
+    province_rows = (
+        qs.exclude(province__isnull=True)
+        .exclude(province="")
+        .values("province")
+        .annotate(
+            with_gps=Count(
+                "pk",
+                filter=Q(hh_gps_latitude__isnull=False) & ~Q(hh_gps_latitude=""),
+            ),
+            total=Count("pk"),
+        )
+        .order_by("-total")
+    )
+    provinces, with_gps, missing_gps = [], [], []
+    for row in province_rows:
+        provinces.append(row["province"])
+        wgps = row["with_gps"]
+        total = row["total"]
+        with_gps.append(wgps)
+        missing_gps.append(total - wgps)
+    return {"provinces": provinces, "with_gps": with_gps, "missing_gps": missing_gps}
+
+
+def _build_rumor_sentiment_data(qs):
+    counts = {"High Concern": 0, "Moderate Concern": 0, "Low / Neutral": 0}
+    for (desci,) in (
+        qs.exclude(desci__isnull=True).exclude(desci="").values_list("desci").iterator()
+    ):
+        text = (desci or "").strip()
+        if not text or text.lower() in {"nan", "none", "null", "nat"}:
+            continue
+        if _RUMOR_SENTIMENT_HIGH_RE.search(text):
+            counts["High Concern"] += 1
+        elif _RUMOR_SENTIMENT_MOD_RE.search(text):
+            counts["Moderate Concern"] += 1
+        else:
+            counts["Low / Neutral"] += 1
+    total = sum(counts.values())
+    return {
+        "labels": list(counts.keys()),
+        "data": list(counts.values()),
+        "total": total,
+    }
+
+
+def _build_rumor_description_table(qs, *, page=1, page_size=5):
+    ws_re = re.compile(r"\s+")
+    desc_data = {}
+    for row in (
+        qs.exclude(desci__isnull=True)
+        .exclude(desci="")
+        .values("desci", "sorce_rum")
+        .iterator()
+    ):
+        raw = (row.get("desci") or "").strip()
+        normalized = ws_re.sub(" ", raw).lower().strip()
+        if not normalized or normalized in {"nan", "none", "null", "nat"}:
+            continue
+        if normalized not in desc_data:
+            desc_data[normalized] = {"count": 0, "original": raw, "sources": Counter()}
+        desc_data[normalized]["count"] += 1
+        code = (row.get("sorce_rum") or "").strip()
+        desc_data[normalized]["sources"][RUMOR_SOURCE_LABELS.get(code, "Unknown")] += 1
+
+    sorted_items = sorted(
+        desc_data.items(), key=lambda kv: kv[1]["count"], reverse=True
+    )
+    total_rows = len(sorted_items)
+    start = (page - 1) * page_size
+    page_slice = sorted_items[start : start + page_size]
+
+    rows = []
+    for _norm, entry in page_slice:
+        top_source = (
+            entry["sources"].most_common(1)[0][0] if entry["sources"] else "Unknown"
+        )
+        rows.append(
+            {
+                "description": entry["original"],
+                "category": _infer_rumor_category(entry["original"]),
+                "count": entry["count"],
+                "source": top_source,
+            }
+        )
+    return {
+        "rows": rows,
+        "total_rows": total_rows,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": max(1, (total_rows + page_size - 1) // page_size),
+    }
+
+
+class RumorOverviewSummaryAPIView(CustomAuthMixin, View):
     def get(self, request, *args, **kwargs):
         return JsonResponse(
             _build_rumor_summary_data(_build_csa_rumor_queryset(request))
         )
 
 
-rumor_surveillance_summary_api_view = transaction.non_atomic_requests(
-    RumorSurveillanceSummaryAPIView.as_view()
+rumor_overview_summary_api_view = transaction.non_atomic_requests(
+    RumorOverviewSummaryAPIView.as_view()
 )
 
 
-class RumorSurveillanceTrendAPIView(CustomAuthMixin, View):
+class RumorOverviewTrendAPIView(CustomAuthMixin, View):
     def get(self, request, *args, **kwargs):
         labels, counts = _build_rumor_trend_data(_build_csa_rumor_queryset(request))
         return JsonResponse({"labels": labels, "data": counts})
 
 
-rumor_surveillance_trend_api_view = transaction.non_atomic_requests(
-    RumorSurveillanceTrendAPIView.as_view()
+rumor_overview_trend_api_view = transaction.non_atomic_requests(
+    RumorOverviewTrendAPIView.as_view()
 )
 
 
-class RumorSurveillanceDetectionAPIView(CustomAuthMixin, View):
+class RumorOverviewTopRumorsTrendAPIView(CustomAuthMixin, View):
+    def get(self, request, *args, **kwargs):
+        return JsonResponse(
+            _build_top_rumors_trend_data(_build_csa_rumor_queryset(request))
+        )
+
+
+rumor_overview_top_rumors_trend_api_view = transaction.non_atomic_requests(
+    RumorOverviewTopRumorsTrendAPIView.as_view()
+)
+
+
+class RumorOverviewDetectionAPIView(CustomAuthMixin, View):
     """Source distribution – kept on the 'detection' URL for API stability."""
 
     def get(self, request, *args, **kwargs):
@@ -1980,12 +2254,12 @@ class RumorSurveillanceDetectionAPIView(CustomAuthMixin, View):
         return JsonResponse({"labels": labels, "data": counts})
 
 
-rumor_surveillance_detection_api_view = transaction.non_atomic_requests(
-    RumorSurveillanceDetectionAPIView.as_view()
+rumor_overview_detection_api_view = transaction.non_atomic_requests(
+    RumorOverviewDetectionAPIView.as_view()
 )
 
 
-class RumorSurveillanceFollowUpAPIView(CustomAuthMixin, View):
+class RumorOverviewFollowUpAPIView(CustomAuthMixin, View):
     """Data completeness stats – kept on the 'follow-up' URL for API stability."""
 
     def get(self, request, *args, **kwargs):
@@ -1994,30 +2268,100 @@ class RumorSurveillanceFollowUpAPIView(CustomAuthMixin, View):
         )
 
 
-rumor_surveillance_follow_up_api_view = transaction.non_atomic_requests(
-    RumorSurveillanceFollowUpAPIView.as_view()
+rumor_overview_follow_up_api_view = transaction.non_atomic_requests(
+    RumorOverviewFollowUpAPIView.as_view()
 )
 
 
-class RumorSurveillanceMapAPIView(CustomAuthMixin, View):
+class RumorOverviewMapAPIView(CustomAuthMixin, View):
     def get(self, request, *args, **kwargs):
         return JsonResponse(_build_rumor_map_payload(request))
 
 
-rumor_surveillance_map_api_view = transaction.non_atomic_requests(
-    RumorSurveillanceMapAPIView.as_view()
+rumor_overview_map_api_view = transaction.non_atomic_requests(
+    RumorOverviewMapAPIView.as_view()
 )
 
 
-class RumorSurveillanceWordCloudAPIView(CustomAuthMixin, View):
+class RumorOverviewSourceByProvinceAPIView(CustomAuthMixin, View):
     def get(self, request, *args, **kwargs):
         return JsonResponse(
-            _build_rumor_word_cloud_data(_build_csa_rumor_queryset(request))
+            _build_rumor_source_by_province(_build_csa_rumor_queryset(request))
         )
 
 
-rumor_surveillance_word_cloud_api_view = transaction.non_atomic_requests(
-    RumorSurveillanceWordCloudAPIView.as_view()
+rumor_overview_source_by_province_api_view = transaction.non_atomic_requests(
+    RumorOverviewSourceByProvinceAPIView.as_view()
+)
+
+
+class RumorOverviewAffectedPopulationAPIView(CustomAuthMixin, View):
+    def get(self, request, *args, **kwargs):
+        return JsonResponse(
+            _build_rumor_affected_population(_build_csa_rumor_queryset(request))
+        )
+
+
+rumor_overview_affected_population_api_view = transaction.non_atomic_requests(
+    RumorOverviewAffectedPopulationAPIView.as_view()
+)
+
+
+class RumorDetailsEnumeratorStatsAPIView(CustomAuthMixin, View):
+    def get(self, request, *args, **kwargs):
+        return JsonResponse(
+            _build_rumor_enumerator_stats(_build_csa_rumor_queryset(request))
+        )
+
+
+rumor_details_enumerator_stats_api_view = transaction.non_atomic_requests(
+    RumorDetailsEnumeratorStatsAPIView.as_view()
+)
+
+
+class RumorOverviewGpsCoverageAPIView(CustomAuthMixin, View):
+    def get(self, request, *args, **kwargs):
+        return JsonResponse(
+            _build_rumor_gps_coverage_by_province(_build_csa_rumor_queryset(request))
+        )
+
+
+rumor_overview_gps_coverage_api_view = transaction.non_atomic_requests(
+    RumorOverviewGpsCoverageAPIView.as_view()
+)
+
+
+class RumorDetailsDescriptionTableAPIView(CustomAuthMixin, View):
+    def get(self, request, *args, **kwargs):
+        try:
+            page = max(1, int(request.GET.get("page", 1)))
+        except (TypeError, ValueError):
+            page = 1
+        try:
+            page_size = min(100, max(5, int(request.GET.get("page_size", 5))))
+        except (TypeError, ValueError):
+            page_size = 5
+        return JsonResponse(
+            _build_rumor_description_table(
+                _build_csa_rumor_queryset(request), page=page, page_size=page_size
+            )
+        )
+
+
+rumor_details_description_table_api_view = transaction.non_atomic_requests(
+    RumorDetailsDescriptionTableAPIView.as_view()
+)
+
+
+class RumorDetailsSentimentAPIView(CustomAuthMixin, View):
+    def get(self, request, *args, **kwargs):
+        return JsonResponse(
+            _build_rumor_sentiment_data(_build_csa_rumor_queryset(request))
+        )
+
+
+rumor_details_sentiment_api_view = transaction.non_atomic_requests(
+    RumorDetailsSentimentAPIView.as_view()
 )
 
 

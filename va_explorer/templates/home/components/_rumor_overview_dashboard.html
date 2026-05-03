@@ -1,0 +1,138 @@
+<main
+  id="rumorOverviewDashboardApp"
+  class="outcomes-dashboard-root"
+  data-component="dashboard"
+  data-summary-endpoint="{% url 'home:rumor_overview_summary_api' %}"
+  data-trend-endpoint="{% url 'home:rumor_overview_top_rumors_trend_api' %}"
+  data-source-by-province-endpoint="{% url 'home:rumor_overview_source_by_province_api' %}"
+  data-affected-pop-endpoint="{% url 'home:rumor_overview_affected_population_api' %}"
+  data-map-endpoint="{% url 'home:rumor_overview_map_api' %}"
+  data-user-pii="{% if perms.va_analytics.view_pii %}true{% else %}false{% endif %}"
+>
+  <!-- Row 1: KPI cards -->
+  <div class="rumor-overview-top-row">
+    <section class="sectionContainer panelView" id="rumorOverviewPanelSection" data-component="panel">
+      <div class="highlightsContainer" id="rumorOverviewSummaryCards" data-component="summary">
+        <div class="highlight">
+          <h3>Last Data Update</h3>
+          <p id="rumorOverviewCardLastDataUpdate">N/A</p>
+        </div>
+        <div class="highlight">
+          <h3>Rumor Events</h3>
+          <p id="rumorOverviewCardNumberOfEvents">0</p>
+        </div>
+        <div class="highlight">
+          <h3>Provinces Reporting</h3>
+          <p id="rumorOverviewCardProvincesReporting">0</p>
+        </div>
+        <div class="highlight">
+          <h3>EAs Reporting</h3>
+          <p id="rumorOverviewCardEasReporting">0</p>
+        </div>
+        <div class="highlight">
+          <h3>Top Source</h3>
+          <p id="rumorOverviewCardTopSource">—</p>
+        </div>
+      </div>
+      <p id="rumorOverviewSummaryEmpty" class="po-empty-state" hidden>No rumor data available for the selected filters.</p>
+    </section>
+  </div>
+
+  <!-- Row 2: Filters -->
+  <div class="rumor-overview-filters-row">
+    <section class="sectionContainer" id="rumorOverviewFiltersSection" data-component="filters">
+      <form id="rumorOverviewFiltersForm" class="controls" data-component="filters" method="get" action="{% url 'home:index' %}">
+        <small class="dashboard-note">
+          Note: this dashboard visualizes CSA rumor events; all charts reflect the filtered total above.
+        </small>
+
+        <div class="filtersRow">
+          <div class="mainFiltersContainer">
+            <label for="rumorOverviewMapViewSelect">Map:</label>
+            <select id="rumorOverviewMapViewSelect" class="select">
+              <option value="Province" {% if filter_map_view == "Province" %}selected{% endif %}>Province</option>
+              <option value="District" {% if filter_map_view == "District" %}selected{% endif %}>District</option>
+              <option value="Constituency" {% if filter_map_view == "Constituency" %}selected{% endif %}>Constituency</option>
+              <option value="Ward" {% if filter_map_view == "Ward" %}selected{% endif %}>Ward</option>
+              <option value="EA" {% if filter_map_view == "EA" %}selected{% endif %}>EA</option>
+            </select>
+
+            <label for="rumorOverviewFilterTimePreset">Rumor Date:</label>
+            <select id="rumorOverviewFilterTimePreset" class="select" name="time_preset">
+              <option value="all_time" {% if filter_time_preset == "all_time" %}selected{% endif %}>All time</option>
+              <option value="last_30_days" {% if filter_time_preset == "last_30_days" %}selected{% endif %}>Last 30 days</option>
+              <option value="last_7_days" {% if filter_time_preset == "last_7_days" %}selected{% endif %}>Last 7 days</option>
+              <option value="last_24_hours" {% if filter_time_preset == "last_24_hours" %}selected{% endif %}>Last 24 hours</option>
+              <option value="custom" {% if filter_time_preset == "custom" %}selected{% endif %}>Custom</option>
+            </select>
+          </div>
+
+          <div class="betweenDatesContainer customDatesContainer">
+            <span>Between</span>
+            <label for="rumorOverviewFilterStartDatetime" class="sr-only">Start Date</label>
+            <input id="rumorOverviewFilterStartDatetime" class="input" type="date" name="start_datetime" value="{{ filter_start_datetime }}">
+            <span>and</span>
+            <label for="rumorOverviewFilterEndDatetime" class="sr-only">End Date</label>
+            <input id="rumorOverviewFilterEndDatetime" class="input" type="date" name="end_datetime" value="{{ filter_end_datetime }}">
+          </div>
+
+          <div class="formBtnsContainer">
+            <button id="rumorOverviewFiltersReset" type="button" class="button resetBtn">Reset</button>
+          </div>
+        </div>
+        <input type="hidden" id="rumorOverviewFilterMapView" name="map_view" value="{{ filter_map_view }}">
+      </form>
+    </section>
+  </div>
+
+  <!-- Row 3: Map (left) + Charts (right) -->
+  <div class="rumor-overview-content-row">
+    <div class="rumor-overview-col-left">
+      <section class="sectionContainer mapView" id="rumorOverviewMapSection" data-component="map">
+        <h2>Geographic Distribution</h2>
+        <div id="rumorOverviewMapBreadcrumb" class="map-breadcrumbs"></div>
+        <div id="rumorOverviewMapContainer">
+          <div id="rumorOverviewMapLegend" class="legend"></div>
+        </div>
+        <p id="rumorOverviewMapEmpty" class="po-empty-state" hidden>No geographic data available for the selected filters.</p>
+      </section>
+
+    </div>
+
+    <div class="rumor-overview-col-right">
+      <!-- Multi-line trend: top 5 rumor descriptions -->
+      <section class="sectionContainer trendView" id="rumorOverviewTrendSection" data-component="trend">
+        <h2>Top Rumor Descriptions Over Time</h2>
+        <div class="chartsContainer">
+          <div class="topCauseLineChartContainer chart-canvas-wrap">
+            <canvas id="rumorOverviewTrendChart" data-component="trend-chart"></canvas>
+          </div>
+        </div>
+        <p id="rumorOverviewTrendEmpty" class="po-empty-state" hidden>No trend data available for the selected filters.</p>
+      </section>
+
+      <!-- Source × Province stacked bar + Affected Population dual-axis -->
+      <div class="rumor-overview-chart-row">
+        <section class="sectionContainer" id="rumorOverviewSourceByProvinceSection" data-component="source-by-province">
+          <h2>Rumor Source by Province</h2>
+          <div class="chartsContainer">
+            <div class="chart-canvas-wrap">
+              <canvas id="rumorOverviewSourceByProvinceChart"></canvas>
+            </div>
+          </div>
+          <p id="rumorOverviewSourceByProvinceEmpty" class="po-empty-state" hidden>No source data available for the selected filters.</p>
+        </section>
+
+        <section class="sectionContainer" id="rumorOverviewAffectedPopSection" data-component="affected-pop">
+          <h2>Events vs People Affected</h2>
+          <div class="chartsContainer">
+            <div class="chart-canvas-wrap">
+              <canvas id="rumorOverviewAffectedPopChart"></canvas>
+            </div>
+          </div>
+          <p id="rumorOverviewAffectedPopEmpty" class="po-empty-state" hidden>No affected population data available for the selected filters.</p>
+        </section>
+      </div>
+    </div>
+  </div>
+</main>

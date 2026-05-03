@@ -587,43 +587,73 @@ def test_regional_operations_page_loads(user: User):
     assert b'id="regionalMsoComponent"' in response.content
 
 
-def test_operational_dashboard_includes_rumor_surveillance_tab(user: User):
+def test_operational_dashboard_includes_rumor_details_tab(user: User):
     client = Client()
     client.force_login(user=user)
 
-    response = client.get("/", {"tab": "rumor_surveillance"}, follow=True)
+    response = client.get("/", {"tab": "rumor_details"}, follow=True)
 
     assert response.status_code == 200
     assert b"Rumor Surveillance" in response.content
-    assert b'data-tab="rumor_surveillance"' in response.content
-    assert b'data-tab-panel="rumor_surveillance"' in response.content
-    assert b'id="rumorDashboardApp"' in response.content
-    assert b"rumor_surveillance_dashboard.js" in response.content
-    assert b"rumor-surveillance/summary/" in response.content
-    assert b"rumor-surveillance/detection/" in response.content
-    assert b"rumor-surveillance/follow-up/" in response.content
-    assert b"rumor-surveillance/word-cloud/" in response.content
+    assert b"Rumor Overview" in response.content
+    assert b'data-tab="rumor_details"' in response.content
+    assert b'data-tab="rumor_overview"' in response.content
+    assert b'id="rumorDetailsDashboardApp"' in response.content
+    assert b'id="rumorOverviewDashboardApp"' in response.content
+    # Tab-6 (Details): has enumerator section, description table
+    assert b'id="rumorSummaryCards"' not in response.content
+    assert b'id="rumorTrendChart"' not in response.content
+    assert b'id="rumorGpsCoverageChart"' not in response.content
+    assert b'id="rumorDetailsEnumeratorTable"' in response.content
+    assert b'id="rumorDetailsDescTable"' in response.content
+    # Tab-7 (Overview): has map, no word cloud
+    assert b'id="rumorOverviewMapContainer"' in response.content
+    assert b'id="rumorOverviewWordCloud"' not in response.content
+    # Both tabs reference their own JS
+    assert b"rumor_details_dashboard.js" in response.content
+    assert b"rumor_overview_dashboard.js" in response.content
+    # New endpoints present in templates
+    assert b"rumor-overview/source-by-province/" in response.content
+    assert b"rumor-overview/affected-population/" in response.content
+    assert b"rumor-details/enumerator-stats/" in response.content
+    assert b"rumor-details/description-table/" in response.content
     assert b"pregnancyDashboardApp" not in response.content
-    assert b"pregnancy-summary-api" not in response.content
 
 
-def test_rumor_surveillance_api_endpoints_return_dashboard_payloads(user: User):
+def test_rumor_details_api_endpoints_return_dashboard_payloads(user: User):
     client = Client()
     client.force_login(user=user)
 
-    summary_response = client.get(reverse("home:rumor_surveillance_summary_api"))
-    trend_response = client.get(reverse("home:rumor_surveillance_trend_api"))
-    detection_response = client.get(reverse("home:rumor_surveillance_detection_api"))
-    follow_up_response = client.get(reverse("home:rumor_surveillance_follow_up_api"))
-    map_response = client.get(reverse("home:rumor_surveillance_map_api"))
-    word_cloud_response = client.get(reverse("home:rumor_surveillance_word_cloud_api"))
+    summary_response = client.get(reverse("home:rumor_overview_summary_api"))
+    trend_response = client.get(reverse("home:rumor_overview_trend_api"))
+    top_rumors_trend_response = client.get(
+        reverse("home:rumor_overview_top_rumors_trend_api")
+    )
+    map_response = client.get(reverse("home:rumor_overview_map_api"))
+    source_prov_response = client.get(
+        reverse("home:rumor_overview_source_by_province_api")
+    )
+    affected_pop_response = client.get(
+        reverse("home:rumor_overview_affected_population_api")
+    )
+    enumerator_response = client.get(reverse("home:rumor_details_enumerator_stats_api"))
+    gps_coverage_response = client.get(reverse("home:rumor_overview_gps_coverage_api"))
+    desc_table_response = client.get(
+        reverse("home:rumor_details_description_table_api")
+    )
 
-    assert summary_response.status_code == 200
-    assert trend_response.status_code == 200
-    assert detection_response.status_code == 200
-    assert follow_up_response.status_code == 200
-    assert map_response.status_code == 200
-    assert word_cloud_response.status_code == 200
+    for resp in [
+        summary_response,
+        trend_response,
+        top_rumors_trend_response,
+        map_response,
+        source_prov_response,
+        affected_pop_response,
+        enumerator_response,
+        gps_coverage_response,
+        desc_table_response,
+    ]:
+        assert resp.status_code == 200
 
     summary = summary_response.json()
     assert summary["card_last_data_update"] == "N/A"
@@ -632,28 +662,75 @@ def test_rumor_surveillance_api_endpoints_return_dashboard_payloads(user: User):
     assert "card_eas_reporting" in summary
     assert "card_enumerators" in summary
     assert "card_top_source" in summary
+    assert "card_gps_coverage_pct" in summary
+    assert "card_total_affected" in summary
+    assert "card_days_since_last" in summary
     assert "card_mean_age" not in summary
 
     assert set(trend_response.json()) == {"labels", "data"}
-    assert set(detection_response.json()) == {"labels", "data"}
-
-    follow_up = follow_up_response.json()
-    assert set(follow_up) >= {
-        "total",
-        "recent_7_days",
-        "recent_30_days",
-        "with_gps",
-        "missing_gps",
-        "missing_description",
-        "missing_source",
+    assert set(top_rumors_trend_response.json()) == {
+        "has_rumors",
+        "labels",
+        "periods",
+        "series",
     }
 
     map_payload = map_response.json()
     assert map_payload["map_view"] == "Province"
     assert "map_province_sums" in map_payload
-    assert "map_ea_sums" in map_payload
 
-    assert "words" in word_cloud_response.json()
+    assert set(source_prov_response.json()) == {"provinces", "series"}
+    assert set(affected_pop_response.json()) == {
+        "labels",
+        "event_counts",
+        "affected_counts",
+    }
+    assert "rows" in enumerator_response.json()
+    assert set(gps_coverage_response.json()) == {"provinces", "with_gps", "missing_gps"}
+
+    desc_table = desc_table_response.json()
+    assert set(desc_table) >= {"rows", "total_rows", "page", "page_size", "total_pages"}
+    assert desc_table["page_size"] == 5
+    assert desc_table["rows"] == []
+    assert desc_table["total_rows"] == 0
+
+
+def test_rumor_overview_trend_tracks_top_five_rumors(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    rumor_counts = {
+        "Cholera rumor": 6,
+        "Measles rumor": 5,
+        "Vaccine concern": 4,
+        "Clinic closed": 3,
+        "Water contamination": 2,
+        "Not top five": 1,
+    }
+    month_by_index = ["2026-01-10", "2026-02-10"]
+    for rumor, count in rumor_counts.items():
+        for index in range(count):
+            CSADailyTracker.objects.create(
+                key=f"rumor-trend-{rumor}-{index}",
+                rum="1",
+                desci=rumor,
+                today=month_by_index[index % len(month_by_index)],
+            )
+
+    response = client.get(reverse("home:rumor_overview_top_rumors_trend_api"))
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["has_rumors"] is True
+    assert payload["labels"] == ["Jan 2026", "Feb 2026"]
+    assert [series["name"] for series in payload["series"]] == [
+        "Cholera rumor",
+        "Measles rumor",
+        "Vaccine concern",
+        "Clinic closed",
+        "Water contamination",
+    ]
+    assert payload["series"][0]["values"] == [3, 3]
 
 
 def test_regional_operations_components_refresh_independently(user: User):

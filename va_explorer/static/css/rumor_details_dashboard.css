@@ -1,0 +1,596 @@
+.dashboard-shell[data-shell="home"] {
+  --od-surface: #f3f4f6;
+  --od-card: #ffffff;
+  --od-border: #e2e8f0;
+  --od-border-strong: #dbe3ef;
+  --od-text: #111827;
+  --od-muted: #6b7280;
+  --od-shadow: 0 4px 14px rgba(15, 23, 42, 0.05);
+  --od-shadow-hover: 0 8px 18px rgba(15, 23, 42, 0.08);
+  --od-radius: 12px;
+  --od-gap: 10px;
+}
+
+#tab-6,
+#tab-7 {
+  background: var(--od-surface);
+  border-radius: 14px;
+  padding: 16px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+}
+
+#tab-7 {
+  display: flex;
+  flex-direction: column;
+  height: calc(150vh - 270px);
+  min-height: 900px;
+}
+
+#rumorDetailsDashboardApp,
+#rumorOverviewDashboardApp {
+  background: var(--od-surface);
+  display: flex;
+  flex-direction: column;
+  gap: var(--od-gap);
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+#rumorOverviewDashboardApp {
+  flex: 1;
+  min-height: 0;
+}
+
+.rumor-details-top-row,
+.rumor-details-filters-row,
+.rumor-details-chart-row,
+.rumor-overview-top-row,
+.rumor-overview-filters-row,
+.rumor-overview-chart-row {
+  width: 100%;
+}
+
+.rumor-details-content-row,
+.rumor-overview-content-row {
+  width: 100%;
+  display: flex;
+  gap: var(--od-gap);
+  align-items: stretch;
+}
+
+.rumor-details-content-row,
+.rumor-overview-content-row {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.rumor-details-col-left,
+.rumor-overview-col-left {
+  flex: 4.5;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.rumor-overview-col-left {
+  gap: var(--od-gap);
+}
+
+.rumor-details-col-right,
+.rumor-overview-col-right {
+  flex: 5.5;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--od-gap);
+}
+
+/* Side-by-side detection + follow-up */
+.rumor-details-chart-row,
+.rumor-overview-chart-row {
+  display: flex;
+  gap: var(--od-gap);
+  align-items: stretch;
+}
+
+.rumor-details-chart-row > .sectionContainer,
+.rumor-overview-chart-row > .sectionContainer {
+  flex: 1;
+  min-width: 0;
+}
+
+#rumorDetailsDashboardApp .sectionContainer,
+#rumorOverviewDashboardApp .sectionContainer {
+  background: var(--od-card);
+  border: 1px solid var(--od-border);
+  border-radius: var(--od-radius);
+  box-shadow: var(--od-shadow);
+}
+
+#rumorDetailsDashboardApp .sectionContainer:hover,
+#rumorOverviewDashboardApp .sectionContainer:hover {
+  box-shadow: var(--od-shadow-hover);
+}
+
+#rumorDetailsDashboardApp .panelView,
+#rumorOverviewDashboardApp .panelView {
+  height: auto;
+  align-self: start;
+}
+
+/* KPI cards: match the shared outcomes highlight-card treatment. */
+#rumorDetailsDashboardApp .highlightsContainer,
+#rumorOverviewDashboardApp .highlightsContainer {
+  display: flex;
+  align-items: stretch;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+  width: 100%;
+}
+
+#rumorDetailsDashboardApp .highlight,
+#rumorOverviewDashboardApp .highlight {
+  border-radius: 0.5rem;
+  border: 1px solid var(--od-border);
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
+}
+
+#rumorDetailsDashboardApp .highlight h3,
+#rumorOverviewDashboardApp .highlight h3 {
+  background: #f8fafc;
+  border-bottom: 1px solid var(--od-border);
+  color: #1f2937;
+  font-size: 0.78rem;
+  font-weight: 600;
+  margin: 0;
+  overflow: hidden;
+  padding: 0.45rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#rumorDetailsDashboardApp .highlight p,
+#rumorOverviewDashboardApp .highlight p {
+  background: var(--od-card);
+  color: #0f172a;
+  font-size: 0.95rem;
+  font-weight: 700;
+  margin: 0;
+  overflow: hidden;
+  padding: 0.45rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#rumorDetailsFiltersForm .filtersRow,
+#rumorOverviewFiltersForm .filtersRow {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: nowrap;
+}
+
+#rumorDetailsDashboardApp .controls,
+#rumorOverviewDashboardApp .controls {
+  background: var(--od-card);
+  border: 1px solid var(--od-border);
+  border-radius: var(--od-radius);
+  padding: 10px 12px;
+}
+
+#rumorDetailsDashboardApp .controls label,
+#rumorOverviewDashboardApp .controls label {
+  line-height: 1.2;
+  margin-bottom: 0;
+}
+
+#rumorDetailsDashboardApp .controls :is(select, input[type="date"], button),
+#rumorOverviewDashboardApp .controls :is(select, input[type="date"], button) {
+  height: 2.25rem;
+  min-height: 2.25rem;
+  border-radius: 8px;
+  line-height: 1.2;
+  font-size: 0.8rem;
+}
+
+#rumorDetailsDashboardApp .controls select,
+#rumorOverviewDashboardApp .controls select {
+  padding: 0.35rem 0.65rem;
+}
+
+#rumorDetailsDashboardApp .controls input[type="date"],
+#rumorOverviewDashboardApp .controls input[type="date"] {
+  padding: 0.35rem 0.6rem;
+}
+
+#rumorDetailsDashboardApp .controls button,
+#rumorOverviewDashboardApp .controls button {
+  padding: 0 0.9rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#rumorDetailsDashboardApp .mainFiltersContainer,
+#rumorDetailsDashboardApp .betweenDatesContainer,
+#rumorDetailsDashboardApp .customDatesContainer,
+#rumorDetailsDashboardApp .formBtnsContainer,
+#rumorOverviewDashboardApp .mainFiltersContainer,
+#rumorOverviewDashboardApp .betweenDatesContainer,
+#rumorOverviewDashboardApp .customDatesContainer,
+#rumorOverviewDashboardApp .formBtnsContainer {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+#rumorDetailsDashboardApp .dashboard-note,
+#rumorOverviewDashboardApp .dashboard-note {
+  color: var(--od-muted);
+  display: block;
+  font-size: 0.65rem;
+  font-style: italic;
+  margin-bottom: 0.4rem;
+}
+
+#rumorDetailsEnumeratorSection,
+#rumorDetailsDescTableSection,
+#rumorOverviewTrendSection,
+#rumorOverviewSourceByProvinceSection,
+#rumorOverviewAffectedPopSection,
+#rumorOverviewMapSection {
+  padding: 7.5px 0 0 0 !important;
+  border: none !important;
+  box-shadow: none !important;
+  background: white !important;
+}
+
+#rumorDetailsEnumeratorSection:hover,
+#rumorDetailsDescTableSection:hover,
+#rumorOverviewTrendSection:hover,
+#rumorOverviewSourceByProvinceSection:hover,
+#rumorOverviewAffectedPopSection:hover,
+#rumorOverviewMapSection:hover {
+  box-shadow: none !important;
+}
+
+#rumorDetailsDashboardApp h2,
+#rumorOverviewDashboardApp h2 {
+  color: var(--od-text);
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin-bottom: 0 !important;
+  padding-bottom: 5px !important;
+  text-align: center;
+}
+
+#rumorDetailsDashboardApp .chartsContainer,
+#rumorOverviewDashboardApp .chartsContainer {
+  background: var(--od-card);
+  border-radius: 10px;
+}
+
+#rumorDetailsDashboardApp .chart-canvas-wrap,
+#rumorOverviewDashboardApp .chart-canvas-wrap {
+  position: relative;
+}
+
+
+#rumorOverviewMapSection {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+#rumorMapContainer,
+#rumorOverviewMapContainer {
+  flex: 1 1 0;
+  min-height: 350px;
+  width: 100%;
+}
+
+#rumorOverviewMapContainer {
+  min-height: 525px;
+}
+
+/* Overview tab: trend (50%) and chart-row (50%) share right column equally */
+#rumorOverviewTrendSection {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+#rumorOverviewTrendSection .chartsContainer {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+#rumorOverviewTrendSection .chart-canvas-wrap {
+  flex: 1;
+  height: auto;
+  min-height: 293px;
+}
+
+.rumor-overview-chart-row {
+  flex: 1;
+}
+
+#rumorOverviewSourceByProvinceSection,
+#rumorOverviewAffectedPopSection {
+  display: flex;
+  flex-direction: column;
+}
+
+#rumorOverviewSourceByProvinceSection .chartsContainer,
+#rumorOverviewAffectedPopSection .chartsContainer {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+#rumorOverviewSourceByProvinceSection .chart-canvas-wrap,
+#rumorOverviewAffectedPopSection .chart-canvas-wrap {
+  flex: 1;
+  height: auto;
+  min-height: 210px;
+}
+
+/* Enumerator leaderboard */
+.rumor-details-leaderboard-wrap {
+  overflow-y: auto;
+  max-height: 220px;
+  padding: 0 8px 8px;
+}
+
+.rumor-details-leaderboard-table {
+  border-collapse: collapse;
+  font-size: 0.78rem;
+  width: 100%;
+}
+
+.rumor-details-leaderboard-table th {
+  background: #f8fafc;
+  border-bottom: 1px solid var(--od-border);
+  color: var(--od-muted);
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 5px 6px;
+  text-align: left;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.rumor-details-leaderboard-table td {
+  border-bottom: 1px solid #f1f5f9;
+  padding: 4px 6px;
+  vertical-align: middle;
+}
+
+.rumor-lb-name {
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rumor-lb-count {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  min-width: 80px;
+  white-space: nowrap;
+}
+
+.rumor-lb-bar-wrap {
+  background: #e2e8f0;
+  border-radius: 3px;
+  flex: 1;
+  height: 8px;
+  min-width: 30px;
+  overflow: hidden;
+}
+
+.rumor-lb-bar {
+  background: #2d6cdf;
+  border-radius: 3px;
+  height: 100%;
+  transition: width 0.3s ease;
+}
+
+.rumor-lb-date {
+  color: var(--od-muted);
+  font-size: 0.7rem;
+  white-space: nowrap;
+}
+
+.rumor-details-desc-table-wrap {
+  overflow-x: auto;
+  padding: 0 8px 8px;
+}
+
+.rumor-details-desc-table {
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  min-width: 500px;
+  width: 100%;
+}
+
+.rumor-details-desc-table th {
+  background: #f8fafc;
+  border-bottom: 2px solid var(--od-border);
+  color: var(--od-muted);
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 6px 8px;
+  text-align: left;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.rumor-details-desc-table td {
+  border-bottom: 1px solid #f1f5f9;
+  padding: 5px 8px;
+  vertical-align: top;
+}
+
+.rumor-details-desc-table tr:hover td {
+  background: #f8fafc;
+}
+
+.rumor-details-desc-col-desc { width: 50%; }
+.rumor-details-desc-col-cat  { width: 22%; }
+.rumor-details-desc-col-count { text-align: right; width: 10%; }
+.rumor-details-desc-col-source { width: 18%; }
+
+.rumor-dt-desc {
+  color: #1e293b;
+  cursor: default;
+  font-size: 0.79rem;
+}
+
+.rumor-dt-badge {
+  border-radius: 4px;
+  display: inline-block;
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 2px 6px;
+  white-space: nowrap;
+}
+
+.rumor-dt-count {
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  text-align: right;
+}
+
+.rumor-dt-source {
+  color: var(--od-muted);
+  font-size: 0.75rem;
+}
+
+.rumor-details-desc-table-pagination {
+  align-items: center;
+  display: flex;
+  gap: 0.75rem;
+  justify-content: center;
+  padding: 6px 8px 10px;
+}
+
+.rumor-details-desc-table-pagination span {
+  color: var(--od-muted);
+  font-size: 0.75rem;
+}
+
+/* Word cloud */
+.rumor-overview-word-cloud {
+  flex: 1 1 auto;
+  font-family: Inter, Roboto, "Open Sans", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  min-height: 360px;
+  overflow: hidden;
+  position: relative;
+  width: 100%;
+  background: #ffffff;
+  border-radius: 10px;
+}
+
+.rumor-overview-wc-word {
+  cursor: default;
+  display: inline-block;
+  font-weight: 700;
+  left: 0;
+  letter-spacing: 0;
+  line-height: 1;
+  position: absolute;
+  top: 0;
+  transform-origin: center center;
+  transition: filter 0.15s ease, opacity 0.15s ease;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.rumor-overview-wc-word.is-top-word {
+  font-weight: 800;
+}
+
+.rumor-overview-wc-word:hover {
+  filter: saturate(1.2) brightness(0.92);
+}
+
+#rumorDetailsDashboardApp .po-empty-state,
+#rumorOverviewDashboardApp .po-empty-state {
+  color: var(--od-muted);
+  font-size: 0.8rem;
+  font-style: italic;
+  margin-top: 0.5rem;
+  text-align: left;
+}
+
+@media (max-width: 1200px) {
+  #rumorDetailsDashboardApp .highlightsContainer,
+  #rumorOverviewDashboardApp .highlightsContainer {
+    flex-wrap: wrap;
+  }
+
+  #rumorDetailsDashboardApp .highlight,
+  #rumorOverviewDashboardApp .highlight {
+    flex-basis: calc(33.333% - 0.75rem);
+  }
+}
+
+@media (max-width: 992px) {
+  #tab-6,
+  #tab-7 {
+    padding: 12px;
+  }
+
+  .rumor-details-content-row,
+  .rumor-overview-content-row {
+    flex-direction: column;
+  }
+
+  .rumor-details-chart-row,
+  .rumor-overview-chart-row {
+    flex-direction: column;
+  }
+
+  #rumorDetailsDashboardApp .highlightsContainer,
+  #rumorOverviewDashboardApp .highlightsContainer {
+    flex-wrap: wrap;
+  }
+
+  #rumorDetailsDashboardApp .highlight,
+  #rumorOverviewDashboardApp .highlight {
+    flex-basis: calc(50% - 0.75rem);
+  }
+
+  #rumorDetailsFiltersForm .filtersRow,
+  #rumorOverviewFiltersForm .filtersRow {
+    flex-wrap: wrap;
+    overflow-x: hidden;
+    white-space: normal;
+  }
+}
+
+@media (max-width: 480px) {
+  #rumorDetailsDashboardApp .highlightsContainer,
+  #rumorOverviewDashboardApp .highlightsContainer {
+    flex-direction: column;
+  }
+
+  #rumorDetailsDashboardApp .highlight,
+  #rumorOverviewDashboardApp .highlight {
+    flex-basis: auto;
+  }
+}
