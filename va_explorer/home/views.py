@@ -63,7 +63,9 @@ from va_explorer.va_data_management.utils.csa_names import (
     normalize_csa_name_for_join,
 )
 from va_explorer.va_data_management.utils.date_parsing import parse_date
-from va_explorer.va_data_management.utils.loading import get_va_summary_stats
+from va_explorer.va_data_management.utils.loading import (
+    get_va_summary_stats,
+)
 from va_explorer.va_data_management.utils.location_access import (
     restrict_queryset_to_user_locations,
 )
@@ -2205,23 +2207,90 @@ def _build_rumor_affected_population(qs):
     }
 
 
-def _build_rumor_enumerator_stats(qs, *, top_n=15):
+def _normalize_odk_lookup_value(value):
+    text = str(value or "").strip()
+    if re.fullmatch(r"\d+", text):
+        return str(int(text))  # strips leading zeros (e.g. "01" → "1")
+    return text
+
+
+def _get_csa_tracker_choice_label_map(field_name):
+    lookup = {}
+    for row in (
+        ODKFormChoice.objects.filter(field_name=field_name)
+        .order_by("id")
+        .values("value", "label")
+    ):
+        key = _normalize_odk_lookup_value(row["value"])
+        if key and key not in lookup:
+            lookup[key] = (row["label"] or "").strip()
+    return lookup
+
+
+def _resolve_csa_tracker_choice_label(choice_map, raw_value):
+    raw_text = str(raw_value or "").strip()
+    if not raw_text:
+        return ""
+    normalized = _normalize_odk_lookup_value(raw_text)
+    label = choice_map.get(normalized)
+    if label:
+        return label
+    return raw_text.replace("_", " ")
+
+
+def _build_rumor_location_stats(qs, *, top_n=5):
+    district_choices = _get_csa_tracker_choice_label_map("district")
+    constituency_choices = _get_csa_tracker_choice_label_map("constituency")
+    ward_choices = _get_csa_tracker_choice_label_map("ward")
     rows = (
-        qs.exclude(enumerator__isnull=True)
-        .exclude(enumerator="")
-        .values("enumerator")
+        qs.exclude(district__isnull=True)
+        .exclude(district="")
+        .exclude(district__iexact="nan")
+        .exclude(district__iexact="none")
+        .exclude(district__iexact="null")
+        .exclude(district__iexact="nat")
+        .exclude(ward__isnull=True)
+        .exclude(ward="")
+        .exclude(ward__iexact="nan")
+        .exclude(ward__iexact="none")
+        .exclude(ward__iexact="null")
+        .exclude(ward__iexact="nat")
+        .values("district", "constituency", "ward")
         .annotate(count=Count("pk"), last_reported=Max("today"))
-        .order_by("-count")[:top_n]
+        .order_by("-count")
     )
-    return {
-        "rows": [
+
+    locations = {}
+    for row in rows:
+        district = _resolve_csa_tracker_choice_label(
+            district_choices, row.get("district")
+        )
+        constituency = _resolve_csa_tracker_choice_label(
+            constituency_choices, row.get("constituency")
+        )
+        ward = _resolve_csa_tracker_choice_label(ward_choices, row.get("ward"))
+        location_name = f"{district} - {constituency} - {ward}"
+        entry = locations.setdefault(
+            location_name,
             {
-                "name": row["enumerator"],
-                "count": row["count"],
-                "last_reported": row.get("last_reported") or "",
-            }
-            for row in rows
-        ]
+                "name": location_name,
+                "district": district,
+                "constituency": constituency,
+                "ward": ward,
+                "count": 0,
+                "last_reported": "",
+            },
+        )
+        entry["count"] += row["count"]
+        last_reported = row.get("last_reported") or ""
+        if last_reported > entry["last_reported"]:
+            entry["last_reported"] = last_reported
+
+    top_rows = sorted(
+        locations.values(), key=lambda row: (-row["count"], row["name"].lower())
+    )[:top_n]
+    return {
+        "rows": top_rows,
     }
 
 
@@ -2293,9 +2362,10 @@ def _build_rumor_description_table(qs, *, page=1, page_size=5):
     sorted_items = sorted(
         desc_data.items(), key=lambda kv: kv[1]["count"], reverse=True
     )
-    total_rows = len(sorted_items)
-    start = (page - 1) * page_size
-    page_slice = sorted_items[start : start + page_size]
+    page_size = 5
+    page = 1
+    page_slice = sorted_items[:page_size]
+    total_events = sum(entry["count"] for _norm, entry in sorted_items)
 
     rows = []
     for _norm, entry in page_slice:
@@ -2307,15 +2377,20 @@ def _build_rumor_description_table(qs, *, page=1, page_size=5):
                 "description": entry["original"],
                 "category": _infer_rumor_category(entry["original"]),
                 "count": entry["count"],
+                "pct": (
+                    round(entry["count"] * 100 / total_events, 1)
+                    if total_events
+                    else 0.0
+                ),
                 "source": top_source,
             }
         )
     return {
         "rows": rows,
-        "total_rows": total_rows,
+        "total_rows": len(rows),
         "page": page,
         "page_size": page_size,
-        "total_pages": max(1, (total_rows + page_size - 1) // page_size),
+        "total_pages": 1,
     }
 
 
@@ -2420,7 +2495,7 @@ rumor_overview_affected_population_api_view = transaction.non_atomic_requests(
 class RumorDetailsEnumeratorStatsAPIView(CustomAuthMixin, View):
     def get(self, request, *args, **kwargs):
         return JsonResponse(
-            _build_rumor_enumerator_stats(_build_csa_rumor_queryset(request))
+            _build_rumor_location_stats(_build_csa_rumor_queryset(request))
         )
 
 

@@ -1,4 +1,4 @@
-/* Rumor Phrase Network — word cloud + force-directed network graph
+/* Rumor Cloud — word cloud + force-directed network graph
  * Exposes window.RumorWordCloud = { init, refresh, resize }
  *
  * 3-D Y-axis (globe) rotation: each node is assigned a longitude from its

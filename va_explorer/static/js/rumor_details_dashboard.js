@@ -96,10 +96,14 @@
     const maxCount = rows.reduce((m, r) => Math.max(m, r.count), 1);
     tbody.innerHTML = rows.map((r) => {
       const barW = Math.round((r.count / maxCount) * 100);
-      const name = escapeHtml(r.name);
+      const district = escapeHtml(r.district || "");
+      const constituency = escapeHtml(r.constituency || "");
+      const ward = escapeHtml(r.ward || "");
       const date = r.last_reported ? r.last_reported.slice(0, 10) : "—";
       return `<tr>
-        <td class="rumor-lb-name" title="${name}">${name}</td>
+        <td class="rumor-lb-location" title="${district}">${district}</td>
+        <td class="rumor-lb-location" title="${constituency}">${constituency}</td>
+        <td class="rumor-lb-location" title="${ward}">${ward}</td>
         <td class="rumor-lb-count">
           <div class="rumor-lb-bar-wrap"><div class="rumor-lb-bar" style="width:${barW}%"></div></div>
           <span>${r.count}</span>
@@ -144,10 +148,12 @@
       const catColor = CATEGORY_COLORS[r.category] || "#f3f4f6";
       const desc = escapeHtml(r.description);
       const truncated = desc.length > 120 ? desc.slice(0, 120) + "…" : desc;
+      const pct = Number(r.pct || 0).toFixed(1);
       return `<tr>
         <td class="rumor-dt-desc" title="${desc}">${truncated}</td>
         <td class="rumor-dt-cat"><span class="rumor-dt-badge" style="background:${catColor}">${r.category}</span></td>
         <td class="rumor-dt-count">${r.count}</td>
+        <td class="rumor-dt-pct">${pct}%</td>
         <td class="rumor-dt-source">${r.source || "—"}</td>
       </tr>`;
     }).join("");

@@ -50,10 +50,10 @@
     <div class="rumor-details-col-left">
       <section class="sectionContainer" id="rumorDetailsWordCloudSection">
         <div class="rdwc-header">
-          <h2>Rumor Phrase Network</h2>
+          <h2>Rumor Cloud</h2>
         </div>
         <div class="rdwc-canvas-wrap" id="rdwcCanvasWrap">
-          <svg id="rdwcSvg" class="rdwc-svg" aria-label="Rumor phrase network visualization"></svg>
+          <svg id="rdwcSvg" class="rdwc-svg" aria-label="Rumor cloud visualization"></svg>
         </div>
         <p id="rdwcEmptyState" class="po-empty-state" hidden>No rumor phrases recorded for the selected filters.</p>
       </section>
@@ -61,7 +61,7 @@
 
     <div class="rumor-details-col-right">
       <section class="sectionContainer" id="rumorDetailsDescTableSection" data-component="description-table">
-        <h2>Rumor Description Breakdown</h2>
+        <h2>Top Rumors Breakdown</h2>
         <div class="rumor-details-desc-table-wrap">
           <table class="rumor-details-desc-table" id="rumorDetailsDescTable">
             <thead>
@@ -69,6 +69,7 @@
                 <th class="rumor-details-desc-col-desc">Rumor Description</th>
                 <th class="rumor-details-desc-col-cat">Category</th>
                 <th class="rumor-details-desc-col-count">Count</th>
+                <th class="rumor-details-desc-col-pct">%</th>
                 <th class="rumor-details-desc-col-source">Source</th>
               </tr>
             </thead>
@@ -84,20 +85,22 @@
       </section>
 
       <section class="sectionContainer" id="rumorDetailsEnumeratorSection" data-component="enumerator-stats">
-        <h2>Top Reporting Enumerators</h2>
+        <h2>Communities Reporting Most Rumors</h2>
         <div id="rumorDetailsEnumeratorTableWrap" class="rumor-details-leaderboard-wrap">
           <table class="rumor-details-leaderboard-table" id="rumorDetailsEnumeratorTable">
             <thead>
               <tr>
-                <th>Enumerator</th>
+                <th>District</th>
+                <th>Constituency</th>
+                <th>Ward</th>
                 <th>Reports</th>
-                <th>Last Reported</th>
+                <th class="rumor-lb-date-heading">Last Reported</th>
               </tr>
             </thead>
             <tbody id="rumorDetailsEnumeratorTableBody"></tbody>
           </table>
         </div>
-        <p id="rumorDetailsEnumeratorEmpty" class="po-empty-state" hidden>No enumerator data available for the selected filters.</p>
+        <p id="rumorDetailsEnumeratorEmpty" class="po-empty-state" hidden>No reporting location data available for the selected filters.</p>
       </section>
     </div>
   </div>

@@ -27,6 +27,7 @@ from va_explorer.va_data_management.models import (
     Death,
     Household,
     HouseholdMember,
+    ODKFormChoice,
     Pregnancy,
     PregnancyOutcome,
     SRSClusterLocation,
@@ -693,6 +694,212 @@ def test_rumor_details_api_endpoints_return_dashboard_payloads(user: User):
     assert desc_table["page_size"] == 5
     assert desc_table["rows"] == []
     assert desc_table["total_rows"] == 0
+
+
+def test_rumor_details_tables_show_top_rumors_and_locations(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    district_labels = {
+        1: "Lusaka District",
+        2: "Kafue District",
+        3: "Choma District",
+        4: "Monze District",
+        5: "Mazabuka District",
+        6: "Livingstone District",
+    }
+    ward_labels = {
+        1: "Ward 1",
+        2: "Ward 2",
+        3: "Ward 3",
+        4: "Ward 4",
+        5: "Ward 5",
+        6: "Ward 6",
+    }
+    constituency_labels = {
+        1: "Lusaka Central",
+        2: "Kafue Central",
+        3: "Choma Central",
+        4: "Monze Central",
+        5: "Mazabuka Central",
+        6: "Livingstone Central",
+    }
+    ODKFormChoice.objects.bulk_create(
+        [
+            ODKFormChoice(
+                form_name="csa_daily_tracker",
+                field_name="district",
+                value=str(code),
+                label=label,
+            )
+            for code, label in district_labels.items()
+        ]
+        + [
+            ODKFormChoice(
+                form_name="csa_daily_tracker",
+                field_name="constituency",
+                value=str(code),
+                label=label,
+            )
+            for code, label in constituency_labels.items()
+        ]
+        + [
+            ODKFormChoice(
+                form_name="csa_daily_tracker",
+                field_name="ward",
+                value=str(code),
+                label=label,
+            )
+            for code, label in ward_labels.items()
+        ]
+    )
+
+    total_events = 0
+    for idx in range(12):
+        count = 12 - idx
+        total_events += count
+        location_code = (idx % 6) + 1
+        raw_district_code = (
+            f" {location_code:02d} " if idx < 6 else f"{location_code}.0"
+        )
+        raw_constituency_code = (
+            f" {location_code:02d}.0 " if idx < 6 else f"{location_code:02d}"
+        )
+        raw_ward_code = f" {location_code}.0 " if idx < 6 else f"{location_code:02d}"
+        for event_idx in range(count):
+            CSADailyTracker.objects.create(
+                key=f"rumor-detail-{idx}-{event_idx}",
+                rum="1",
+                desci=f"Rumor {idx}",
+                sorce_rum="01",
+                district=raw_district_code,
+                constituency=raw_constituency_code,
+                ward=raw_ward_code,
+                today="2026-03-01",
+            )
+
+    desc_response = client.get(reverse("home:rumor_details_description_table_api"))
+    location_response = client.get(reverse("home:rumor_details_enumerator_stats_api"))
+
+    assert desc_response.status_code == 200
+    desc_payload = desc_response.json()
+    assert desc_payload["page_size"] == 5
+    assert desc_payload["total_rows"] == 5
+    assert desc_payload["total_pages"] == 1
+    assert len(desc_payload["rows"]) == 5
+    assert [row["description"] for row in desc_payload["rows"]] == [
+        f"Rumor {idx}" for idx in range(5)
+    ]
+    assert desc_payload["rows"][0]["count"] == 12
+    assert desc_payload["rows"][0]["pct"] == round(12 * 100 / total_events, 1)
+
+    assert location_response.status_code == 200
+    location_payload = location_response.json()
+    assert [row["name"] for row in location_payload["rows"]] == [
+        "Lusaka District - Lusaka Central - Ward 1",
+        "Kafue District - Kafue Central - Ward 2",
+        "Choma District - Choma Central - Ward 3",
+        "Monze District - Monze Central - Ward 4",
+        "Mazabuka District - Mazabuka Central - Ward 5",
+    ]
+    assert [row["district"] for row in location_payload["rows"]] == [
+        "Lusaka District",
+        "Kafue District",
+        "Choma District",
+        "Monze District",
+        "Mazabuka District",
+    ]
+    assert [row["constituency"] for row in location_payload["rows"]] == [
+        "Lusaka Central",
+        "Kafue Central",
+        "Choma Central",
+        "Monze Central",
+        "Mazabuka Central",
+    ]
+    assert [row["ward"] for row in location_payload["rows"]] == [
+        "Ward 1",
+        "Ward 2",
+        "Ward 3",
+        "Ward 4",
+        "Ward 5",
+    ]
+    assert [row["count"] for row in location_payload["rows"]] == [18, 16, 14, 12, 10]
+
+
+def test_rumor_details_top_locations_resolves_separate_location_fields(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    ODKFormChoice.objects.bulk_create(
+        [
+            ODKFormChoice(
+                form_name="csa_daily_tracker",
+                field_name="district",
+                value="1",
+                label="Lusaka District",
+            ),
+            ODKFormChoice(
+                form_name="csa_daily_tracker",
+                field_name="ward",
+                value="1",
+                label="Ward 1",
+            ),
+            ODKFormChoice(
+                form_name="csa_daily_tracker",
+                field_name="constituency",
+                value="1",
+                label="Lusaka Central",
+            ),
+        ]
+    )
+
+    # Numeric variants resolve and aggregate across separate location fields.
+    CSADailyTracker.objects.create(
+        key="rumor-shape-leading-zeroes",
+        rum="1",
+        desci="Leading zero codes",
+        district="01",
+        constituency="01",
+        ward="1.0",
+        today="2026-03-01",
+    )
+    CSADailyTracker.objects.create(
+        key="rumor-shape-float-codes",
+        rum="1",
+        desci="Float-like codes",
+        district="1.0",
+        constituency="1.0",
+        ward="01",
+        today="2026-03-02",
+    )
+    # Already-resolved labels with no matching ODKFormChoice rows must
+    #    pass through unchanged (no `01_1` leak from the old fallback).
+    CSADailyTracker.objects.create(
+        key="rumor-shape-labels",
+        rum="1",
+        desci="Pre-resolved labels",
+        district="Kafue District",
+        constituency="Kafue_Constituency",
+        ward="Ward 7",
+        today="2026-03-04",
+    )
+
+    response = client.get(reverse("home:rumor_details_enumerator_stats_api"))
+    assert response.status_code == 200
+    rows = response.json()["rows"]
+    names = {row["name"] for row in rows}
+
+    assert "Lusaka District - Lusaka Central - Ward 1" in names
+    assert "Kafue District - Kafue Constituency - Ward 7" in names
+    assert {(row["district"], row["constituency"], row["ward"]) for row in rows} >= {
+        ("Lusaka District", "Lusaka Central", "Ward 1"),
+        ("Kafue District", "Kafue Constituency", "Ward 7"),
+    }
+    # No coded leakage should appear in any rendered name.
+    for name in names:
+        assert "01" not in name
+        assert "1.0" not in name
+        assert "_" not in name
 
 
 def test_rumor_overview_trend_tracks_top_five_rumors(user: User):
