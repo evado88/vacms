@@ -4,8 +4,8 @@
  * 3-D Y-axis (globe) rotation: each node is assigned a longitude from its
  * settled X position and orbits on a cylinder:
  *   x(t) = cx + spreadX * sin(lon + t),   y stays fixed.
- * Because only translate() is updated — never rotate() — all text stays
- * horizontal and legible throughout the rotation.
+ * Because only translate() is updated on the node group, text remains legible;
+ * each label gets only a small local rotation for organic word-cloud variation.
  */
 window.RumorWordCloud = (function () {
   // ── Internal state ─────────────────────────────────────────────────────────
@@ -24,6 +24,7 @@ window.RumorWordCloud = (function () {
   let _tooltip     = null;
   let _resizeTimer = null;
   let _colorMap    = {};
+  let _rotationPaused = false;
 
   const getEl = (id) => document.getElementById(id);
 
@@ -49,23 +50,42 @@ window.RumorWordCloud = (function () {
   }
 
   const TEXT_COLOR_PALETTE = [
-    "#2563eb","#dc2626","#7c3aed","#db2777","#0284c7",
-    "#ca8a04","#059669","#ea580c","#0891b2","#9333ea",
-    "#e11d48","#16a34a","#b45309","#4f46e5","#0f766e",
+    "#b91c1c", "#dc2626", "#991b1b", "#15803d", "#16a34a",
+    "#166534", "#854d0e", "#92400e", "#713f12", "#6b21a8",
+    "#7e22ce", "#86198f", "#a21caf", "#be123c", "#4d7c0f",
   ];
+  const TEXT_ROTATIONS = [0, 0, 0, 0, 0, -8, 8, -5, 5, -3, 3];
+  const WORD_FONT_SCALE = 2.6; // Existing 1.3 scale doubled for 100% larger words.
+  const MAX_WORD_FONT_PX = 122;
+  const BUBBLE_RADIUS_SCALE = 1.35;
 
-  function _randomTextColor() {
-    return TEXT_COLOR_PALETTE[Math.floor(Math.random() * TEXT_COLOR_PALETTE.length)];
+  function _hashString(value) {
+    let hash = 0;
+    const text = String(value || "");
+    for (let i = 0; i < text.length; i++) {
+      hash = ((hash << 5) - hash + text.charCodeAt(i)) >>> 0;
+    }
+    return hash;
+  }
+
+  function _textColorFor(d) {
+    const key = `${d.category || ""}:${d.id || d.label || ""}`;
+    return TEXT_COLOR_PALETTE[_hashString(key) % TEXT_COLOR_PALETTE.length];
+  }
+
+  function _textRotationFor(d) {
+    const key = `${d.id || d.label || ""}:rotation`;
+    return TEXT_ROTATIONS[_hashString(key) % TEXT_ROTATIONS.length];
   }
 
   // ── Font / bubble sizing ───────────────────────────────────────────────────
   function _fontPx(freq, maxFreq) {
-    if (maxFreq <= 1) return 18 * 1.3;
-    return (18 + Math.pow(freq / maxFreq, 0.55) * 44) * 1.3;   // 23–81 px
+    if (maxFreq <= 1) return 18 * WORD_FONT_SCALE;
+    return (18 + Math.pow(freq / maxFreq, 0.55) * 44) * WORD_FONT_SCALE; // 47–161 px
   }
 
   function _bubbleRadius(freq, maxFreq) {
-    return _fontPx(freq, maxFreq) * 5.46 + 16;
+    return Math.min(_fontPx(freq, maxFreq), MAX_WORD_FONT_PX) * BUBBLE_RADIUS_SCALE + 10;
   }
 
   // ── Text wrapping ──────────────────────────────────────────────────────────
@@ -84,11 +104,11 @@ window.RumorWordCloud = (function () {
     return lines;
   }
 
-  function _fitTextInBubble(label, r) {
+  function _fitTextInBubble(label, r, desiredFontSize) {
     const words   = label.split(/\s+/);
-    const usableW = r * 1.55;
-    const usableH = r * 1.55;
-    for (let fs = Math.min(r * 0.38, 61); fs >= 7; fs--) {
+    const usableW = r * 3.2;
+    const usableH = r * 2.6;
+    for (let fs = Math.min(desiredFontSize, r * 0.92, MAX_WORD_FONT_PX); fs >= 7; fs--) {
       const maxChars = Math.max(1, Math.floor(usableW / (fs * CHAR_W)));
       const lines    = _breakWords(words, maxChars);
       if (lines.length * fs * LINE_H <= usableH) return { lines, fontSize: fs };
@@ -100,8 +120,13 @@ window.RumorWordCloud = (function () {
 
   // Text-bounding-box collision — circles may overlap, words must not.
   function _collideR(d, maxFreq) {
-    const fs = _fontPx(d.frequency, maxFreq);
-    return fs * d.label.length * 0.28 + fs * 0.6;
+    const fs = Math.min(_fontPx(d.frequency, maxFreq), MAX_WORD_FONT_PX);
+    const labelLen = String(d.label || "").length;
+    return fs * (0.55 + Math.sqrt(Math.max(labelLen, 1)) * 0.16);
+  }
+
+  function _fitRadius(d, maxFreq) {
+    return Math.max(_bubbleRadius(d.frequency, maxFreq), _collideR(d, maxFreq));
   }
 
   // ── 3-D Y-axis (globe) rotation ────────────────────────────────────────────
@@ -114,6 +139,16 @@ window.RumorWordCloud = (function () {
 
   function _stopRotation() {
     if (_rafId) { cancelAnimationFrame(_rafId); _rafId = null; }
+  }
+
+  function _pauseRotation() {
+    _rotationPaused = true;
+    _stopRotation();
+  }
+
+  function _resumeRotation() {
+    _rotationPaused = false;
+    _start3DRotation();
   }
 
   function _init3DState(nodes, nodeSel, edgeSel) {
@@ -160,7 +195,7 @@ window.RumorWordCloud = (function () {
 
   function _start3DRotation() {
     _stopRotation();
-    if (!_nodeMeta.length) return;
+    if (_rotationPaused || !_nodeMeta.length) return;
 
     // ~0.0875 deg/frame ≈ 5.25 deg/sec ≈ 69 s/full revolution (75% slower than original)
     const RAD_PER_FRAME = 0.0875 * Math.PI / 180;
@@ -190,7 +225,7 @@ window.RumorWordCloud = (function () {
         el.setAttribute("x2", tgt.x);
         el.setAttribute("y2", tgt.y);
         const avgDepth = (Math.cos(srcLon + _rotationAngle) + Math.cos(tgtLon + _rotationAngle)) * 0.5;
-        el.setAttribute("stroke-opacity", String(Math.max(0.03, (avgDepth + 1) * 0.35)));
+        el.setAttribute("stroke-opacity", String(Math.max(0.18, (avgDepth + 1) * 0.42)));
       });
 
       _rafId = requestAnimationFrame(tick);
@@ -201,20 +236,20 @@ window.RumorWordCloud = (function () {
   function _fitToViewport(nodes, maxFreq, w, h) {
     const svg = getEl("rdwcSvg");
     if (!svg || !nodes.length || !_zoom) return;
-    const maxR = nodes.reduce((m, n) => Math.max(m, _bubbleRadius(n.frequency, maxFreq)), 0);
+    const maxR = nodes.reduce((m, n) => Math.max(m, _fitRadius(n, maxFreq)), 0);
     // x bounds cover the full rotation envelope (cylinder diameter + largest bubble)
     const x0 = _spinCx - _spreadX - maxR;
     const x1 = _spinCx + _spreadX + maxR;
     // y bounds from settled simulation positions
     let y0 = Infinity, y1 = -Infinity;
     nodes.forEach((n) => {
-      const r = _bubbleRadius(n.frequency, maxFreq);
+      const r = _fitRadius(n, maxFreq);
       y0 = Math.min(y0, (n.y || 0) - r);
       y1 = Math.max(y1, (n.y || 0) + r);
     });
     const nw = x1 - x0, nh = y1 - y0;
     if (nw <= 0 || nh <= 0) return;
-    const scale = Math.min(w / nw, h / nh) * 0.9;
+    const scale = Math.min(w / nw, h / nh) * 0.98;
     const tx = w / 2 - (x0 + nw / 2) * scale;
     const ty = h / 2 - (y0 + nh / 2) * scale;
     d3.select(svg)
@@ -286,8 +321,8 @@ window.RumorWordCloud = (function () {
 
     const maxFreq   = nodes.reduce((m, n) => Math.max(m, n.frequency), 1);
     const cx        = w / 2;
-    const cy_radial = h / 2 + h * 0.12;  // radial centre shifted down → outer ring reaches top
-    const maxRadius = Math.min(w, h) * 0.45;
+    const cy_radial = h / 2 + h * 0.04;  // slight downward bias while keeping the cloud compact
+    const maxRadius = Math.min(w, h) * 0.28;
 
     const targetR = {};
     nodes.forEach((n) => {
@@ -296,16 +331,17 @@ window.RumorWordCloud = (function () {
 
     _simulation = d3.forceSimulation(nodes)
       .force("link", d3.forceLink(edges).id((d) => d.id)
-        .distance((e) => 20 - e.weight * 10)
-        .strength((e) => e.weight * 0.2))
+        .distance((e) => 10 - e.weight * 4)
+        .strength((e) => 0.18 + e.weight * 0.22))
       .force("charge", d3.forceManyBody()
-        .strength((d) => -30 - _fontPx(d.frequency, maxFreq) * 1.5))
-      .force("radial", d3.forceRadial((d) => targetR[d.id], cx, cy_radial).strength(0.85))
+        .strength((d) => -10 - Math.min(_fontPx(d.frequency, maxFreq), MAX_WORD_FONT_PX) * 0.18))
+      .force("radial", d3.forceRadial((d) => targetR[d.id], cx, cy_radial).strength(1.08))
+      .force("center", d3.forceCenter(cx, h / 2).strength(0.35))
       .force("topBias", d3.forceY(h * 0.08).strength((d) =>
-        d.frequency / maxFreq < 0.35 ? 0.1 : 0))
+        d.frequency / maxFreq < 0.35 ? 0.03 : 0))
       .force("collide", d3.forceCollide()
         .radius((d) => _collideR(d, maxFreq))
-        .iterations(3))
+        .iterations(2))
       .alphaDecay(0.022);
 
     return _simulation;
@@ -317,6 +353,7 @@ window.RumorWordCloud = (function () {
     if (!svg) return;
 
     _stopRotation();
+    _rotationPaused = false;
 
     const wrap = getEl("rdwcCanvasWrap");
     const w = wrap ? wrap.clientWidth  || 520 : 520;
@@ -348,8 +385,10 @@ window.RumorWordCloud = (function () {
       .data(edges)
       .join("line")
         .attr("class", "rdwc-edge")
-        .attr("stroke-opacity", 0.7)
-        .attr("stroke-width", (e) => Math.max(1.5, e.weight * 3.5));
+        .attr("stroke", "#64748b")
+        .attr("stroke-linecap", "round")
+        .attr("stroke-opacity", 0.85)
+        .attr("stroke-width", (e) => Math.max(3, e.weight * 6));
 
     // ── Node groups ────────────────────────────────────────────────────────────
     const nodeSel = zoomLayer.append("g").attr("class", "rdwc-nodes")
@@ -371,6 +410,7 @@ window.RumorWordCloud = (function () {
           })
         )
         .on("mouseover", function (event, d) {
+          _pauseRotation();
           const id        = d.id;
           const neighbors = _adjacency.get(id) || new Set();
           d3.selectAll(".rdwc-node").classed("is-dimmed",
@@ -387,6 +427,7 @@ window.RumorWordCloud = (function () {
           d3.selectAll(".rdwc-node").classed("is-dimmed", false);
           d3.selectAll(".rdwc-edge").classed("is-dimmed", false);
           _hideTooltip();
+          _resumeRotation();
         });
 
     // Circle — invisible border, light fill tint.
@@ -399,7 +440,7 @@ window.RumorWordCloud = (function () {
     // Wrapped text inside bubble.
     nodeSel.each(function (d) {
       const r                  = _bubbleRadius(d.frequency, maxFreq);
-      const { lines, fontSize } = _fitTextInBubble(d.label, r);
+      const { lines, fontSize } = _fitTextInBubble(d.label, r, _fontPx(d.frequency, maxFreq));
       const lineH              = fontSize * LINE_H;
       const totalH             = lines.length * lineH;
       const startDy            = -(totalH / 2) + lineH * 0.5;
@@ -408,9 +449,10 @@ window.RumorWordCloud = (function () {
         .attr("text-anchor",   "middle")
         .attr("font-family",   "Inter, Roboto, 'Open Sans', system-ui, -apple-system, sans-serif")
         .attr("font-weight",   "700")
-        .attr("fill",          _randomTextColor())
+        .attr("fill",          _textColorFor(d))
         .attr("pointer-events","none")
-        .attr("user-select",   "none");
+        .attr("user-select",   "none")
+        .attr("transform",     `rotate(${_textRotationFor(d)})`);
 
       lines.forEach((line, i) => {
         textEl.append("tspan")
