@@ -7,12 +7,10 @@
     descriptionTable: app.dataset.descriptionTableEndpoint,
     wordCloud: app.dataset.wordCloudEndpoint,
     sentiment: app.dataset.sentimentEndpoint,
-    sentimentByLocation: app.dataset.sentimentByLocationEndpoint,
   };
 
   let tableState = { page: 1, totalPages: 1, filters: null };
   let sentimentChart = null;
-  let sentimentByLocationChart = null;
 
   const getEl = (id) => document.getElementById(id);
 
@@ -413,102 +411,6 @@
     });
   };
 
-  // ── Sentiment by location bar chart ───────────────────────────────────────
-  const LOCATION_LEVEL_LABEL = {
-    province: "province",
-    district: "district",
-    constituency: "constituency",
-    ward: "ward",
-    ea: "EA",
-  };
-
-  const sentimentColorForMean = (mean) => {
-    if (mean > 0) return { fill: "rgba(34, 197, 94, 0.7)", border: "rgba(22, 163, 74, 0.95)" };
-    if (mean < 0) return { fill: "rgba(239, 68, 68, 0.7)", border: "rgba(220, 38, 38, 0.95)" };
-    return { fill: "rgba(148, 163, 184, 0.7)", border: "rgba(100, 116, 139, 0.95)" };
-  };
-
-  const renderSentimentByLocation = (data) => {
-    const canvas = getEl("rumorDetailsSentimentByLocationChart");
-    if (!canvas || typeof Chart === "undefined") return;
-
-    const items = (data && data.items) || [];
-    const level = (data && data.level) || "province";
-
-    const levelLabelEl = getEl("rumorDetailsSentimentByLocationLevel");
-    if (levelLabelEl) levelLabelEl.textContent = LOCATION_LEVEL_LABEL[level] || level;
-
-    setEmptyState("rumorDetailsSentimentByLocationEmpty", items.length === 0);
-
-    if (sentimentByLocationChart) sentimentByLocationChart.destroy();
-
-    if (!items.length) {
-      sentimentByLocationChart = null;
-      return;
-    }
-
-    const labels = items.map((i) => i.name);
-    const values = items.map((i) => i.mean);
-    const counts = items.map((i) => i.count);
-    const fills = items.map((i) => sentimentColorForMean(i.mean).fill);
-    const borders = items.map((i) => sentimentColorForMean(i.mean).border);
-
-    sentimentByLocationChart = new Chart(canvas.getContext("2d"), {
-      type: "bar",
-      data: {
-        labels,
-        datasets: [
-          {
-            label: "Mean weighted sentiment",
-            data: values,
-            backgroundColor: fills,
-            borderColor: borders,
-            borderWidth: 1,
-            // Stash counts on the dataset for tooltips.
-            _counts: counts,
-          },
-        ],
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        animation: false,
-        plugins: {
-          legend: { display: false },
-          tooltip: {
-            callbacks: {
-              label: (item) => {
-                const v = Number(item.raw) || 0;
-                const n = item.dataset._counts?.[item.dataIndex] ?? 0;
-                return [`Mean weighted sentiment: ${v.toFixed(2)}`, `Reports: ${n}`];
-              },
-            },
-          },
-        },
-        scales: {
-          x: {
-            title: { display: true, text: LOCATION_LEVEL_LABEL[level] || level },
-            ticks: {
-              autoSkip: false,
-              maxRotation: 50,
-              minRotation: 35,
-              callback: function (value) {
-                const label = this.getLabelForValue(value);
-                return label && label.length > 14 ? label.slice(0, 13) + "…" : label;
-              },
-            },
-            grid: { display: false },
-          },
-          y: {
-            title: { display: true, text: "Weighted sentiment" },
-            grid: { color: "rgba(0,0,0,0.04)" },
-          },
-        },
-      },
-      plugins: [ZeroLinePlugin],
-    });
-  };
-
   // ── Refresh helpers ────────────────────────────────────────────────────────
   const refreshAll = async () => {
     const filters = getFilters();
@@ -521,19 +423,15 @@
       fetchJSON(endpoints.descriptionTable, filters, { page: 1 }),
     ];
     if (endpoints.sentiment) requests.push(fetchJSON(endpoints.sentiment, filters));
-    if (endpoints.sentimentByLocation) requests.push(fetchJSON(endpoints.sentimentByLocation, filters));
 
     const responses = await Promise.all(requests);
     const enumeratorStats = responses[0];
     const tableData = responses[1];
-    let cursor = 2;
-    const sentimentData = endpoints.sentiment ? responses[cursor++] : null;
-    const sentimentByLocationData = endpoints.sentimentByLocation ? responses[cursor++] : null;
+    const sentimentData = endpoints.sentiment ? responses[2] : null;
 
     renderEnumeratorStats(enumeratorStats);
     renderDescriptionTable(tableData);
     if (endpoints.sentiment) renderSentimentScatter(sentimentData);
-    if (endpoints.sentimentByLocation) renderSentimentByLocation(sentimentByLocationData);
 
     if (window.RumorWordCloud && endpoints.wordCloud) {
       window.RumorWordCloud.refresh(endpoints.wordCloud, filters, fetchJSON).catch(console.error);
@@ -579,7 +477,6 @@
   const resizeVisuals = () => {
     if (window.RumorWordCloud) window.RumorWordCloud.resize();
     if (sentimentChart) sentimentChart.resize();
-    if (sentimentByLocationChart) sentimentByLocationChart.resize();
   };
 
   // ── Init ───────────────────────────────────────────────────────────────────

@@ -1500,7 +1500,7 @@ home_overview_map_data_view = transaction.non_atomic_requests(
 
 
 # ---------------------------------------------------------------------------
-# Rumor Surveillance – real CSA Daily Tracker implementation
+# Rumor Details - real CSA Daily Tracker implementation
 # ---------------------------------------------------------------------------
 
 RUMOR_SOURCE_LABELS = {
@@ -2519,75 +2519,6 @@ def _build_rumor_sentiment_data(qs, *, filter_state=None):
     }
 
 
-# Maps the currently-selected geography level to the level we bucket the
-# sentiment-by-location chart by. Matches the drill-down semantics used
-# elsewhere in the rumor-details tab.
-_SENTIMENT_LOCATION_NEXT_LEVEL = {
-    "": "province",
-    "province": "district",
-    "district": "constituency",
-    "constituency": "ward",
-    "ward": "ea",
-    "ea": "ea",
-}
-
-_SENTIMENT_LOCATION_BAR_LIMIT = 15
-
-
-def _build_rumor_sentiment_by_location_data(qs, *, filter_state=None):
-    """Mean weighted sentiment per location bucket.
-
-    The bucket level follows the active geography filter — no selection
-    groups by province; selecting a province drills into districts; and
-    so on. Each bucket reports its mean weighted sentiment plus rumor
-    count so the chart can colour and label bars consistently with the
-    sentiment-over-time scatter.
-    """
-    fs = filter_state or {}
-    current_level = (fs.get("geography_level") or "").lower()
-    bucket_level = _SENTIMENT_LOCATION_NEXT_LEVEL.get(current_level, "province")
-
-    rows = qs.values(
-        "desci",
-        "ru_num",
-        "today",
-        "submissiondate",
-        "start",
-        bucket_level,
-    ).iterator()
-
-    buckets = defaultdict(list)
-    for row in rows:
-        desci = (row.get("desci") or "").strip()
-        if not desci or desci.lower() in _RUMOR_SKIP_TEXT_VALUES:
-            continue
-        # Match the time-series chart's row filter so the two views agree.
-        if _parse_rumor_date(_rumor_date_str(row)) is None:
-            continue
-        loc = (row.get(bucket_level) or "").strip() or "Unknown"
-        ru_num = _rumor_ru_num_int(row.get("ru_num"))
-        sentiment = _rumor_sentiment_score(desci)
-        buckets[loc].append(sentiment * math.log1p(ru_num))
-
-    items = [
-        {
-            "name": name,
-            "mean": round(sum(values) / len(values), 4),
-            "count": len(values),
-        }
-        for name, values in buckets.items()
-    ]
-    # Most-reported locations first; ties broken by absolute mean then name.
-    items.sort(key=lambda i: (-i["count"], -abs(i["mean"]), i["name"]))
-    items = items[:_SENTIMENT_LOCATION_BAR_LIMIT]
-
-    return {
-        "level": bucket_level,
-        "items": items,
-        "has_data": bool(items),
-    }
-
-
 def _build_rumor_description_table(qs, *, page=1, page_size=5):
     ws_re = re.compile(r"\s+")
     desc_data = {}
@@ -2798,21 +2729,6 @@ class RumorDetailsSentimentAPIView(CustomAuthMixin, View):
 
 rumor_details_sentiment_api_view = transaction.non_atomic_requests(
     RumorDetailsSentimentAPIView.as_view()
-)
-
-
-class RumorDetailsSentimentByLocationAPIView(CustomAuthMixin, View):
-    def get(self, request, *args, **kwargs):
-        return JsonResponse(
-            _build_rumor_sentiment_by_location_data(
-                _build_csa_rumor_queryset(request),
-                filter_state=_build_csa_rumor_filter_state(request),
-            )
-        )
-
-
-rumor_details_sentiment_by_location_api_view = transaction.non_atomic_requests(
-    RumorDetailsSentimentByLocationAPIView.as_view()
 )
 
 

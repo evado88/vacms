@@ -1304,6 +1304,39 @@ body.modal-open {
   z-index: 1200;
 }
 
+.top-navigation-wrapper .navbar {
+  height: var(--top-nav-height);
+  overflow: visible;
+}
+
+.top-navigation-wrapper .container-fluid {
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.top-navigation-wrapper .navbar-brand {
+  align-items: center;
+  display: flex;
+  min-width: 0;
+  max-width: min(62vw, 720px);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.top-navigation-wrapper .navbar-brand .auth-logo2 {
+  flex: 0 0 36px;
+  height: 36px;
+  object-fit: cover;
+  width: 36px;
+}
+
+.top-navigation-wrapper .navbar-brand-text {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 body {
   background: #f3f4f6;
   overflow-x: hidden;

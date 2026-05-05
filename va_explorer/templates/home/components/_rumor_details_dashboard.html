@@ -5,7 +5,6 @@
   data-enumerator-stats-endpoint="{% url 'home:rumor_details_enumerator_stats_api' %}"
   data-description-table-endpoint="{% url 'home:rumor_details_description_table_api' %}"
   data-sentiment-endpoint="{% url 'home:rumor_details_sentiment_api' %}"
-  data-sentiment-by-location-endpoint="{% url 'home:rumor_details_sentiment_by_location_api' %}"
   data-word-cloud-endpoint="{% url 'home:rumor_details_word_cloud_api' %}"
   data-user-pii="{% if perms.va_analytics.view_pii %}true{% else %}false{% endif %}"
 >
@@ -74,6 +73,20 @@
     </div>
 
     <div class="rumor-details-col-right">
+      <div class="rumor-details-sentiment-row">
+        <section class="sectionContainer" id="rumorDetailsSentimentSection" data-component="sentiment-scatter">
+          <h2>Rumor Sentiment Over Time</h2>
+          <p class="dashboard-note rds-subtitle">
+            Each dot is one rumor report; vertical position is sentiment weighted by population affected. Green = positive, red = negative, gray = neutral (e.g. factual SRS programme reports). Bubble size scales with people affected. The dark line tracks monthly mean weighted sentiment.
+          </p>
+          <div class="rds-chart-wrap">
+            <canvas id="rumorDetailsSentimentChart" aria-label="Rumor sentiment scatter plot"></canvas>
+          </div>
+          <div id="rumorDetailsSentimentCounts" class="rds-counts" hidden></div>
+          <p id="rumorDetailsSentimentEmpty" class="po-empty-state" hidden>No sentiment data for the selected filters.</p>
+        </section>
+      </div>
+
       <section class="sectionContainer" id="rumorDetailsDescTableSection" data-component="description-table">
         <h2>Top Rumors Breakdown</h2>
         <div class="rumor-details-desc-table-wrap">
@@ -83,7 +96,7 @@
                 <th class="rumor-details-desc-col-desc">Rumor Description</th>
                 <th class="rumor-details-desc-col-cat">Category</th>
                 <th class="rumor-details-desc-col-count">Count</th>
-                <th class="rumor-details-desc-col-pct">%</th>
+                <th class="rumor-details-desc-col-pct">Percentage</th>
                 <th class="rumor-details-desc-col-source">Source</th>
               </tr>
             </thead>
@@ -97,31 +110,6 @@
         </div>
         <p id="rumorDetailsDescTableEmpty" class="po-empty-state" hidden>No rumor descriptions recorded for the selected filters.</p>
       </section>
-
-      <div class="rumor-details-sentiment-row">
-        <section class="sectionContainer rds-col-left" id="rumorDetailsSentimentSection" data-component="sentiment-scatter">
-          <h2>Rumor Sentiment Over Time</h2>
-          <p class="dashboard-note rds-subtitle">
-            Each dot is one rumor report; vertical position is sentiment weighted by population affected. Green = positive, red = negative, gray = neutral (e.g. factual SRS programme reports). Bubble size scales with people affected. The dark line tracks monthly mean weighted sentiment.
-          </p>
-          <div class="rds-chart-wrap">
-            <canvas id="rumorDetailsSentimentChart" aria-label="Rumor sentiment scatter plot"></canvas>
-          </div>
-          <div id="rumorDetailsSentimentCounts" class="rds-counts" hidden></div>
-          <p id="rumorDetailsSentimentEmpty" class="po-empty-state" hidden>No sentiment data for the selected filters.</p>
-        </section>
-
-        <section class="sectionContainer rds-col-right" id="rumorDetailsSentimentByLocationSection" data-component="sentiment-by-location">
-          <h2>Sentiment by Location</h2>
-          <p class="dashboard-note rds-subtitle">
-            Mean weighted sentiment per <span id="rumorDetailsSentimentByLocationLevel">location</span>. Bars are coloured by overall tone (green = positive, red = negative, gray = neutral) and labelled with the rumor count.
-          </p>
-          <div class="rds-chart-wrap">
-            <canvas id="rumorDetailsSentimentByLocationChart" aria-label="Rumor sentiment by location bar chart"></canvas>
-          </div>
-          <p id="rumorDetailsSentimentByLocationEmpty" class="po-empty-state" hidden>No location-level sentiment data for the selected filters.</p>
-        </section>
-      </div>
 
       <section class="sectionContainer" id="rumorDetailsEnumeratorSection" data-component="enumerator-stats">
         <h2>Communities Reporting Most Rumors</h2>

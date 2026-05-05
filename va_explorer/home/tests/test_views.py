@@ -595,7 +595,7 @@ def test_operational_dashboard_includes_rumor_details_tab(user: User):
     response = client.get("/", {"tab": "rumor_details"}, follow=True)
 
     assert response.status_code == 200
-    assert b"Rumor Surveillance" in response.content
+    assert b"Rumor Details" in response.content
     assert b"Rumor Overview" in response.content
     assert b'data-tab="rumor_details"' in response.content
     assert b'data-tab="rumor_overview"' in response.content
@@ -712,16 +712,6 @@ def test_rumor_details_api_endpoints_return_dashboard_payloads(user: User):
     assert sentiment_payload["counts"] == {"positive": 0, "neutral": 0, "negative": 0}
     assert sentiment_payload["monthly_means"] == []
     assert sentiment_payload["range"] == {"start_month": None, "end_month": None}
-
-    by_loc_response = client.get(
-        reverse("home:rumor_details_sentiment_by_location_api")
-    )
-    assert by_loc_response.status_code == 200
-    by_loc_payload = by_loc_response.json()
-    assert set(by_loc_payload) == {"level", "items", "has_data"}
-    assert by_loc_payload["items"] == []
-    assert by_loc_payload["has_data"] is False
-    assert by_loc_payload["level"] == "province"
 
 
 def test_rumor_sentiment_endpoint_weights_by_population(user: User):
@@ -902,81 +892,6 @@ def test_rumor_sentiment_endpoint_recognises_extended_domain_terms(user: User):
     assert payload["counts"]["neutral"] >= 5
     assert payload["counts"]["positive"] == 0
     assert payload["counts"]["negative"] == 0
-
-
-def test_rumor_sentiment_by_location_buckets_and_drills_down(user: User):
-    client = Client()
-    client.force_login(user=user)
-
-    # Two provinces with distinct sentiment polarity.
-    CSADailyTracker.objects.create(
-        key="byloc-lusaka-1",
-        rum="1",
-        desci="Cholera outbreak is killing many people in the area; tragic.",
-        ru_num="40",
-        province="Lusaka Province",
-        district="Lusaka District",
-        today="2026-03-15",
-    )
-    CSADailyTracker.objects.create(
-        key="byloc-lusaka-2",
-        rum="1",
-        desci="Concerning fears about contaminated water are spreading.",
-        ru_num="20",
-        province="Lusaka Province",
-        district="Lusaka District",
-        today="2026-03-15",
-    )
-    CSADailyTracker.objects.create(
-        key="byloc-copperbelt-1",
-        rum="1",
-        desci="The community is grateful for the rapid and excellent help.",
-        ru_num="15",
-        province="Copperbelt Province",
-        district="Ndola District",
-        today="2026-03-15",
-    )
-    # Different district, same Lusaka province — used for drill-down assertion.
-    CSADailyTracker.objects.create(
-        key="byloc-lusaka-kafue",
-        rum="1",
-        desci="A wonderful and excellent celebration was organised in Kafue.",
-        ru_num="5",
-        province="Lusaka Province",
-        district="Kafue District",
-        today="2026-03-15",
-    )
-
-    # Default: no geography filter → bucket by province.
-    response = client.get(reverse("home:rumor_details_sentiment_by_location_api"))
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["has_data"] is True
-    assert payload["level"] == "province"
-
-    by_name = {i["name"]: i for i in payload["items"]}
-    assert "Lusaka Province" in by_name
-    assert "Copperbelt Province" in by_name
-    assert by_name["Lusaka Province"]["count"] == 3
-    assert by_name["Copperbelt Province"]["count"] == 1
-    # Lusaka has 2 negative + 1 positive → mean comes out negative.
-    assert by_name["Lusaka Province"]["mean"] < 0
-    # Copperbelt has only the positive rumor.
-    assert by_name["Copperbelt Province"]["mean"] > 0
-
-    # Drill-down: selecting Lusaka Province → bucket by district.
-    drill_response = client.get(
-        reverse("home:rumor_details_sentiment_by_location_api"),
-        {"geography_level": "province", "geography_value": "Lusaka Province"},
-    )
-    drill_payload = drill_response.json()
-    assert drill_payload["level"] == "district"
-    drill_by_name = {i["name"]: i for i in drill_payload["items"]}
-    assert "Lusaka District" in drill_by_name
-    assert "Kafue District" in drill_by_name
-    assert "Ndola District" not in drill_by_name  # Copperbelt was filtered out
-    assert drill_by_name["Lusaka District"]["count"] == 2
-    assert drill_by_name["Kafue District"]["count"] == 1
 
 
 @time_machine.travel(dt.datetime(2026, 3, 20, 12, 0, tzinfo=eastern_tz))

@@ -56,8 +56,16 @@ window.RumorWordCloud = (function () {
   ];
   const TEXT_ROTATIONS = [0, 0, 0, 0, 0, -8, 8, -5, 5, -3, 3];
   const WORD_FONT_SCALE = 2.6; // Existing 1.3 scale doubled for 100% larger words.
+  const WORD_RENDER_FONT_SCALE = 0.65;
   const MAX_WORD_FONT_PX = 122;
   const BUBBLE_RADIUS_SCALE = 1.35;
+  const INITIAL_LAYOUT_TICKS = 320;
+  const VIEWPORT_VERTICAL_PADDING = 30;
+  const COLLISION_PADDING = 22;
+  const TEXT_BUBBLE_GAP = 8;
+  const OVERLAP_RESOLVE_ITERATIONS = 120;
+  // ~0.0875 deg/frame ~= 5.25 deg/sec ~= 69 s/full revolution.
+  const ROTATION_RADIANS_PER_FRAME = 0.0875 * Math.PI / 180;
 
   function _hashString(value) {
     let hash = 0;
@@ -122,7 +130,7 @@ window.RumorWordCloud = (function () {
   function _collideR(d, maxFreq) {
     const fs = Math.min(_fontPx(d.frequency, maxFreq), MAX_WORD_FONT_PX);
     const labelLen = String(d.label || "").length;
-    return fs * (0.55 + Math.sqrt(Math.max(labelLen, 1)) * 0.16);
+    return fs * (0.55 + Math.sqrt(Math.max(labelLen, 1)) * 0.18) + COLLISION_PADDING;
   }
 
   function _fitRadius(d, maxFreq) {
@@ -197,64 +205,156 @@ window.RumorWordCloud = (function () {
     _stopRotation();
     if (_rotationPaused || !_nodeMeta.length) return;
 
-    // ~0.0875 deg/frame ≈ 5.25 deg/sec ≈ 69 s/full revolution (75% slower than original)
-    const RAD_PER_FRAME = 0.0875 * Math.PI / 180;
-
     (function tick() {
-      _rotationAngle += RAD_PER_FRAME; // positive → right-to-left from viewer (reversed)
-
-      // Update each node's projected X and depth-based opacity.
-      _nodeMeta.forEach(({ id, el, lon, sy }) => {
-        if (!el) return;
-        const angle   = lon + _rotationAngle;
-        const xProj   = _spinCx + _spreadX * Math.sin(angle);
-        const depth   = Math.cos(angle);           // 1 = front, -1 = back
-        const opacity = Math.max(0.05, (depth + 1) * 0.5);
-        el.setAttribute("transform", `translate(${xProj},${sy})`);
-        el.setAttribute("opacity", String(opacity));
-        _posMap.set(id, { x: xProj, y: sy });
-      });
-
-      // Update edge endpoints and fade edges toward the back.
-      _edgeMeta.forEach(({ el, srcId, tgtId, srcLon, tgtLon }) => {
-        const src = _posMap.get(srcId);
-        const tgt = _posMap.get(tgtId);
-        if (!src || !tgt) return;
-        el.setAttribute("x1", src.x);
-        el.setAttribute("y1", src.y);
-        el.setAttribute("x2", tgt.x);
-        el.setAttribute("y2", tgt.y);
-        const avgDepth = (Math.cos(srcLon + _rotationAngle) + Math.cos(tgtLon + _rotationAngle)) * 0.5;
-        el.setAttribute("stroke-opacity", String(Math.max(0.18, (avgDepth + 1) * 0.42)));
-      });
-
+      _render3DProjection(true);
       _rafId = requestAnimationFrame(tick);
     })();
   }
 
+  function _render3DProjection(advance) {
+    if (advance) _rotationAngle += ROTATION_RADIANS_PER_FRAME; // positive -> right-to-left from viewer
+
+    _nodeMeta.forEach(({ id, el, lon, sy }) => {
+      if (!el) return;
+      const angle   = lon + _rotationAngle;
+      const xProj   = _spinCx + _spreadX * Math.sin(angle);
+      const depth   = Math.cos(angle);           // 1 = front, -1 = back
+      const opacity = Math.max(0.05, (depth + 1) * 0.5);
+      el.setAttribute("transform", `translate(${xProj},${sy})`);
+      el.setAttribute("opacity", String(opacity));
+      _posMap.set(id, { x: xProj, y: sy });
+    });
+
+    _edgeMeta.forEach(({ el, srcId, tgtId, srcLon, tgtLon }) => {
+      const src = _posMap.get(srcId);
+      const tgt = _posMap.get(tgtId);
+      if (!src || !tgt) return;
+      el.setAttribute("x1", src.x);
+      el.setAttribute("y1", src.y);
+      el.setAttribute("x2", tgt.x);
+      el.setAttribute("y2", tgt.y);
+      const avgDepth = (Math.cos(srcLon + _rotationAngle) + Math.cos(tgtLon + _rotationAngle)) * 0.5;
+      el.setAttribute("stroke-opacity", String(Math.max(0.18, (avgDepth + 1) * 0.42)));
+    });
+  }
+
   // ── Auto-fit to viewport ───────────────────────────────────────────────────
-  function _fitToViewport(nodes, maxFreq, w, h) {
+  function _nodeVisualHalfWidth(n, maxFreq) {
+    return Number.isFinite(n._renderHalfWidth) ? n._renderHalfWidth : _fitRadius(n, maxFreq);
+  }
+
+  function _nodeVisualHalfHeight(n, maxFreq) {
+    return Number.isFinite(n._renderHalfHeight) ? n._renderHalfHeight : _fitRadius(n, maxFreq);
+  }
+
+  function _nodeCollisionHalfWidth(n, maxFreq) {
+    return _nodeVisualHalfWidth(n, maxFreq) + TEXT_BUBBLE_GAP;
+  }
+
+  function _nodeCollisionHalfHeight(n, maxFreq) {
+    return _nodeVisualHalfHeight(n, maxFreq) + TEXT_BUBBLE_GAP;
+  }
+
+  function _nodeCollisionRadius(n, maxFreq) {
+    return Math.max(
+      _collideR(n, maxFreq),
+      Math.hypot(_nodeCollisionHalfWidth(n, maxFreq), _nodeCollisionHalfHeight(n, maxFreq)),
+    );
+  }
+
+  function _nodeBounds(nodes, maxFreq) {
+    const bounds = { x0: Infinity, x1: -Infinity, y0: Infinity, y1: -Infinity };
+    nodes.forEach((n) => {
+      const xHalf = _nodeVisualHalfWidth(n, maxFreq);
+      const yHalf = _nodeVisualHalfHeight(n, maxFreq);
+      bounds.x0 = Math.min(bounds.x0, (n.x || 0) - xHalf);
+      bounds.x1 = Math.max(bounds.x1, (n.x || 0) + xHalf);
+      bounds.y0 = Math.min(bounds.y0, (n.y || 0) - yHalf);
+      bounds.y1 = Math.max(bounds.y1, (n.y || 0) + yHalf);
+    });
+    return bounds;
+  }
+
+  function _resolveTextBubbleOverlaps(nodes, maxFreq) {
+    if (nodes.length < 2) return;
+
+    for (let iter = 0; iter < OVERLAP_RESOLVE_ITERATIONS; iter++) {
+      let moved = false;
+
+      for (let i = 0; i < nodes.length; i++) {
+        const a = nodes[i];
+        for (let j = i + 1; j < nodes.length; j++) {
+          const b = nodes[j];
+          const dx = (b.x || 0) - (a.x || 0);
+          const dy = (b.y || 0) - (a.y || 0);
+          const overlapX = _nodeCollisionHalfWidth(a, maxFreq) + _nodeCollisionHalfWidth(b, maxFreq) - Math.abs(dx);
+          const overlapY = _nodeCollisionHalfHeight(a, maxFreq) + _nodeCollisionHalfHeight(b, maxFreq) - Math.abs(dy);
+
+          if (overlapX <= 0 || overlapY <= 0) continue;
+
+          if (overlapX < overlapY) {
+            const direction = dx === 0 ? (i % 2 === 0 ? 1 : -1) : Math.sign(dx);
+            const shift = overlapX / 2 + 0.5;
+            a.x = (a.x || 0) - direction * shift;
+            b.x = (b.x || 0) + direction * shift;
+          } else {
+            const direction = dy === 0 ? (i % 2 === 0 ? 1 : -1) : Math.sign(dy);
+            const shift = overlapY / 2 + 0.5;
+            a.y = (a.y || 0) - direction * shift;
+            b.y = (b.y || 0) + direction * shift;
+          }
+
+          moved = true;
+        }
+      }
+
+      if (!moved) break;
+    }
+  }
+
+  function _stretchYToViewport(nodes, maxFreq, h) {
+    if (!nodes.length) return;
+    const { y0, y1 } = _nodeBounds(nodes, maxFreq);
+    const sourceH = y1 - y0;
+    const targetH = Math.max(1, h - VIEWPORT_VERTICAL_PADDING * 2);
+    if (sourceH <= 0) return;
+
+    const targetY0 = VIEWPORT_VERTICAL_PADDING;
+    const targetY1 = h - VIEWPORT_VERTICAL_PADDING;
+    nodes.forEach((n) => {
+      const yHalf = _nodeVisualHalfHeight(n, maxFreq);
+      const sourceRange = sourceH - yHalf * 2;
+      const targetRange = targetH - yHalf * 2;
+      if (targetRange <= 0) {
+        n.y = (targetY0 + targetY1) / 2;
+        return;
+      }
+      const t = sourceRange > 0 ? (((n.y || 0) - yHalf - y0) / sourceRange) : 0.5;
+      n.y = targetY0 + yHalf + Math.max(0, Math.min(1, t)) * targetRange;
+    });
+  }
+
+  function _fitToViewport(nodes, maxFreq, w, h, animate) {
     const svg = getEl("rdwcSvg");
     if (!svg || !nodes.length || !_zoom) return;
     const maxR = nodes.reduce((m, n) => Math.max(m, _fitRadius(n, maxFreq)), 0);
     // x bounds cover the full rotation envelope (cylinder diameter + largest bubble)
     const x0 = _spinCx - _spreadX - maxR;
     const x1 = _spinCx + _spreadX + maxR;
-    // y bounds from settled simulation positions
-    let y0 = Infinity, y1 = -Infinity;
-    nodes.forEach((n) => {
-      const r = _fitRadius(n, maxFreq);
-      y0 = Math.min(y0, (n.y || 0) - r);
-      y1 = Math.max(y1, (n.y || 0) + r);
-    });
+    const { y0, y1 } = _nodeBounds(nodes, maxFreq);
     const nw = x1 - x0, nh = y1 - y0;
     if (nw <= 0 || nh <= 0) return;
-    const scale = Math.min(w / nw, h / nh) * 0.98;
+    const scaleY = Math.max(0.1, (h - VIEWPORT_VERTICAL_PADDING * 2) / nh);
+    const scale = scaleY;
     const tx = w / 2 - (x0 + nw / 2) * scale;
-    const ty = h / 2 - (y0 + nh / 2) * scale;
-    d3.select(svg)
-      .transition().duration(500)
-      .call(_zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
+    const ty = VIEWPORT_VERTICAL_PADDING - y0 * scale;
+    const transform = d3.zoomIdentity.translate(tx, ty).scale(scale);
+    const svgSel = d3.select(svg).interrupt();
+    if (animate) {
+      svgSel.transition().duration(500).call(_zoom.transform, transform);
+    } else {
+      svgSel.call(_zoom.transform, transform);
+    }
   }
 
   // ── Tooltip ────────────────────────────────────────────────────────────────
@@ -321,8 +421,8 @@ window.RumorWordCloud = (function () {
 
     const maxFreq   = nodes.reduce((m, n) => Math.max(m, n.frequency), 1);
     const cx        = w / 2;
-    const cy_radial = h / 2 + h * 0.04;  // slight downward bias while keeping the cloud compact
-    const maxRadius = Math.min(w, h) * 0.28;
+    const cy_radial = h / 2;
+    const maxRadius = Math.min(w, h) * 0.34;
 
     const targetR = {};
     nodes.forEach((n) => {
@@ -331,18 +431,20 @@ window.RumorWordCloud = (function () {
 
     _simulation = d3.forceSimulation(nodes)
       .force("link", d3.forceLink(edges).id((d) => d.id)
-        .distance((e) => 10 - e.weight * 4)
-        .strength((e) => 0.18 + e.weight * 0.22))
+        .distance((e) => 22 - e.weight * 5)
+        .strength((e) => 0.12 + e.weight * 0.16))
       .force("charge", d3.forceManyBody()
-        .strength((d) => -10 - Math.min(_fontPx(d.frequency, maxFreq), MAX_WORD_FONT_PX) * 0.18))
-      .force("radial", d3.forceRadial((d) => targetR[d.id], cx, cy_radial).strength(1.08))
-      .force("center", d3.forceCenter(cx, h / 2).strength(0.35))
+        .strength((d) => -24 - Math.min(_fontPx(d.frequency, maxFreq), MAX_WORD_FONT_PX) * 0.34))
+      .force("radial", d3.forceRadial((d) => targetR[d.id], cx, cy_radial).strength(0.78))
+      .force("center", d3.forceCenter(cx, h / 2).strength(0.28))
       .force("topBias", d3.forceY(h * 0.08).strength((d) =>
-        d.frequency / maxFreq < 0.35 ? 0.03 : 0))
+        d.frequency / maxFreq < 0.35 ? 0.015 : 0))
       .force("collide", d3.forceCollide()
-        .radius((d) => _collideR(d, maxFreq))
-        .iterations(2))
-      .alphaDecay(0.022);
+        .radius((d) => _nodeCollisionRadius(d, maxFreq))
+        .strength(1)
+        .iterations(8))
+      .alphaDecay(0.018)
+      .stop();
 
     return _simulation;
   }
@@ -440,10 +542,20 @@ window.RumorWordCloud = (function () {
     // Wrapped text inside bubble.
     nodeSel.each(function (d) {
       const r                  = _bubbleRadius(d.frequency, maxFreq);
-      const { lines, fontSize } = _fitTextInBubble(d.label, r, _fontPx(d.frequency, maxFreq));
-      const lineH              = fontSize * LINE_H;
-      const totalH             = lines.length * lineH;
-      const startDy            = -(totalH / 2) + lineH * 0.5;
+      const { lines, fontSize: fittedFontSize } = _fitTextInBubble(d.label, r, _fontPx(d.frequency, maxFreq));
+      const fontSize            = fittedFontSize * WORD_RENDER_FONT_SCALE;
+      const lineH               = fontSize * LINE_H;
+      const totalH              = lines.length * lineH;
+      const startDy             = -(totalH / 2) + lineH * 0.5;
+      const rotationDegrees     = _textRotationFor(d);
+      const rotationRadians     = rotationDegrees * Math.PI / 180;
+      const widestLine          = lines.reduce((m, line) => Math.max(m, line.length), 0);
+      const halfW               = widestLine * fontSize * CHAR_W * 0.5;
+      const halfH               = totalH * 0.5;
+      const absSin              = Math.sin(Math.abs(rotationRadians));
+      const absCos              = Math.cos(Math.abs(rotationRadians));
+      d._renderHalfWidth        = halfW * absCos + halfH * absSin;
+      d._renderHalfHeight       = halfH * absCos + halfW * absSin;
 
       const textEl = d3.select(this).append("text")
         .attr("text-anchor",   "middle")
@@ -452,7 +564,7 @@ window.RumorWordCloud = (function () {
         .attr("fill",          _textColorFor(d))
         .attr("pointer-events","none")
         .attr("user-select",   "none")
-        .attr("transform",     `rotate(${_textRotationFor(d)})`);
+        .attr("transform",     `rotate(${rotationDegrees})`);
 
       lines.forEach((line, i) => {
         textEl.append("tspan")
@@ -461,33 +573,66 @@ window.RumorWordCloud = (function () {
           .attr("font-size",fontSize + "px")
           .text(line);
       });
+
+      const textNode = textEl.node();
+      if (textNode && typeof textNode.getBBox === "function") {
+        try {
+          const box = textNode.getBBox();
+          if (box.width > 0 && box.height > 0) {
+            const sin = Math.sin(rotationRadians);
+            const cos = Math.cos(rotationRadians);
+            const measuredBounds = [
+              [box.x, box.y],
+              [box.x + box.width, box.y],
+              [box.x, box.y + box.height],
+              [box.x + box.width, box.y + box.height],
+            ].reduce((bounds, point) => {
+              const x = point[0] * cos - point[1] * sin;
+              const y = point[0] * sin + point[1] * cos;
+              return {
+                x: Math.max(bounds.x, Math.abs(x)),
+                y: Math.max(bounds.y, Math.abs(y)),
+              };
+            }, { x: 0, y: 0 });
+            d._renderHalfWidth = measuredBounds.x;
+            d._renderHalfHeight = measuredBounds.y;
+          }
+        } catch (err) {
+          // Keep the deterministic estimate when the browser cannot measure SVG text yet.
+        }
+      }
     });
 
     _adjacency = _buildAdjacency(edges);
     const sim  = _startSimulation(nodes, edges, w, h);
 
-    let fitted = false;
-    sim.on("end", () => {
-      // Rebuild 3D cylinder state from the freshly settled positions.
-      _init3DState(nodes, nodeSel, edgeSel);
-
-      if (!fitted) {
-        fitted = true;
-        _fitToViewport(nodes, maxFreq, w, h);
-        // Start rotation after the 500 ms fit transition completes.
-        setTimeout(_start3DRotation, 520);
-      } else {
-        // Post-drag re-settle: just resume rotation.
-        _start3DRotation();
-      }
-    });
-
-    sim.on("tick", () => {
+    const applySimulationPositions = () => {
       edgeSel
         .attr("x1", (e) => e.source.x).attr("y1", (e) => e.source.y)
         .attr("x2", (e) => e.target.x).attr("y2", (e) => e.target.y);
-      nodeSel.attr("transform", (d) => `translate(${d.x},${d.y})`);
+      nodeSel
+        .attr("transform", (d) => `translate(${d.x},${d.y})`)
+        .attr("opacity", 1);
+    };
+
+    sim.on("end", () => {
+      _resolveTextBubbleOverlaps(nodes, maxFreq);
+      applySimulationPositions();
+      _init3DState(nodes, nodeSel, edgeSel);
+      _render3DProjection(false);
+      _start3DRotation();
     });
+
+    sim.on("tick", applySimulationPositions);
+
+    for (let i = 0; i < INITIAL_LAYOUT_TICKS; i++) sim.tick();
+    _stretchYToViewport(nodes, maxFreq, h);
+    _resolveTextBubbleOverlaps(nodes, maxFreq);
+    applySimulationPositions();
+    _init3DState(nodes, nodeSel, edgeSel);
+    _render3DProjection(false);
+    _fitToViewport(nodes, maxFreq, w, h, false);
+    _start3DRotation();
   }
 
   // ── Empty / visible state ──────────────────────────────────────────────────
