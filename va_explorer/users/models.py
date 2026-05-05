@@ -1,3 +1,4 @@
+import contextlib
 import os
 import platform
 import uuid
@@ -454,6 +455,86 @@ def generate_unique_worker_id():
 
     # If all IDs are exhausted (unlikely), raise an error
     raise ValueError("All worker IDs have been exhausted")
+
+
+class UserActivity(models.Model):
+    LOGIN = "login"
+    LOGOUT = "logout"
+    PAGE_VIEW = "page_view"
+    LOGIN_FAILED = "login_failed"
+
+    ACTION_CHOICES = [
+        (LOGIN, "Login"),
+        (LOGOUT, "Logout"),
+        (PAGE_VIEW, "Page View"),
+        (LOGIN_FAILED, "Failed Login Attempt"),
+    ]
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="activity_logs",
+    )
+    # Snapshot so the record survives user deletion or email changes
+    user_email = models.EmailField(blank=True)
+    action = models.CharField(max_length=20, choices=ACTION_CHOICES, db_index=True)
+    path = models.TextField(blank=True)
+    method = models.CharField(max_length=10, blank=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.TextField(blank=True)
+    session_key = models.CharField(max_length=64, blank=True)
+    extra = models.JSONField(default=dict, blank=True)
+    timestamp = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["-timestamp"]
+        indexes = [
+            models.Index(fields=["user", "-timestamp"]),
+            models.Index(fields=["action", "-timestamp"]),
+        ]
+        verbose_name = "User Activity"
+        verbose_name_plural = "User Activities"
+
+    @classmethod
+    def log(cls, action, *, user=None, request=None, extra=None):
+        from va_explorer.utils.request_helpers import get_client_ip
+
+        user_email = ""
+        ip_address = None
+        user_agent = ""
+        session_key = ""
+        path = ""
+        method = ""
+
+        if user and hasattr(user, "email"):
+            user_email = user.email or ""
+        if request is not None:
+            ip_address = get_client_ip(request) or None
+            user_agent = request.headers.get("user-agent", "")[:512]
+            session_key = (request.session.session_key or "")[:64]
+            path = request.path or ""
+            method = request.method or ""
+            if (
+                not user_email
+                and hasattr(request, "user")
+                and hasattr(request.user, "email")
+            ):
+                user_email = request.user.email or ""
+
+        with contextlib.suppress(Exception):
+            cls.objects.create(
+                user=user,
+                user_email=user_email,
+                action=action,
+                path=path,
+                method=method,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                session_key=session_key,
+                extra=extra or {},
+            )
 
 
 @receiver(post_save, sender=User)

@@ -9,6 +9,8 @@ from va_explorer.va_admin.views import (
     admin_panel_upload_file_view,
     admin_panel_validate_file_view,
     admin_panel_view,
+    user_activity_log_download_view,
+    user_activity_log_view,
 )
 
 app_name = "va_admin"
@@ -22,4 +24,10 @@ urlpatterns = [
     path("csrf-token/", view=admin_panel_csrf_token_view, name="csrf-token"),
     path("alerts/", view=admin_panel_alerts_view, name="alerts"),
     path("alerts/log/", view=admin_panel_alert_log_view, name="alerts-log"),
+    path("activity/", view=user_activity_log_view, name="activity-log"),
+    path(
+        "activity/download/",
+        view=user_activity_log_download_view,
+        name="activity-log-download",
+    ),
 ]

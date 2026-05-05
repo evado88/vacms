@@ -231,6 +231,8 @@ MIDDLEWARE = [
     # Track which user makes VA data edits
     "simple_history.middleware.HistoryRequestMiddleware",
     "debug_toolbar.middleware.DebugToolbarMiddleware",
+    # Track authenticated user page views
+    "va_explorer.utils.middleware.UserActivityMiddleware",
 ]
 
 # Profiling middleware is dev-only — adds per-request overhead in production.
