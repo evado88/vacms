@@ -615,16 +615,42 @@ class TestAPIView:
             f.close()
 
     def test_download_via_form(self, user: User):
-        build_test_db()
-        # filter by id of last location in test db
-        loc_id = SRSClusterLocation.objects.last().pk
+        test_data = build_test_db()
+        loc_id = test_data["srs_district1"].pk
         download_form = VADownloadForm(
             {
+                "dataset": "verbalautopsy",
                 "action": "download",
                 "format": "csv",
                 "end_date": "2020-01-01",
-                "location": str(loc_id),
+                "locations": [str(loc_id)],
             }
         )
 
         assert download_form.is_valid()
+
+    def test_download_form_location_options_are_limited_to_admin_levels(self):
+        country = SRSClusterLocation.add_root(name="Zambia", location_type="country")
+        province = country.add_child(name="Lusaka", location_type="province")
+        district = province.add_child(name="Lusaka District", location_type="district")
+        constituency = district.add_child(name="Mandevu", location_type="constituency")
+        ward = constituency.add_child(name="Ward 1", location_type="ward")
+        ea = ward.add_child(name="EA 1001", location_type="ea")
+        facility = district.add_child(name="Clinic 1", location_type="facility")
+        unknown = province.add_child(name="Unknown", location_type="district")
+
+        form = VADownloadForm()
+
+        option_ids = set(form.fields["locations"].queryset.values_list("id", flat=True))
+        assert {province.id, district.id, constituency.id, ward.id}.issubset(option_ids)
+        assert {country.id, ea.id, facility.id, unknown.id}.isdisjoint(option_ids)
+
+        submitted_form = VADownloadForm(
+            {
+                "dataset": "verbalautopsy",
+                "action": "download",
+                "format": "csv",
+                "locations": [str(ward.id)],
+            }
+        )
+        assert submitted_form.is_valid()
