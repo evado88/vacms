@@ -29,6 +29,7 @@ class VADownloadForm(forms.Form):
             ("pregnancy", "Pregnancy"),
             ("pregnancy_outcome", "Pregnancy Outcome"),
             ("death", "Death"),
+            ("rumor_surveillance", "Rumor Surveillance"),
         ),
         initial="verbalautopsy",
         widget=Select(),
