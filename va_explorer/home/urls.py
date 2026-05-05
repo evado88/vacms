@@ -105,6 +105,11 @@ urlpatterns = [
         name="rumor_details_sentiment_api",
     ),
     path(
+        "rumor-details/sentiment-by-location/",
+        views.rumor_details_sentiment_by_location_api_view,
+        name="rumor_details_sentiment_by_location_api",
+    ),
+    path(
         "rumor-overview/sentiment/",
         views.rumor_details_sentiment_api_view,
         name="rumor_overview_sentiment_api",

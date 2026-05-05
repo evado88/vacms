@@ -8,6 +8,7 @@ requests==2.32.3
 pandas==1.5.1
 fuzzywuzzy==0.18.0
 python-Levenshtein==0.20.7
+vaderSentiment==3.3.2
 tqdm==4.65.0
 anytree==2.12.1
 Faker==19.13.0

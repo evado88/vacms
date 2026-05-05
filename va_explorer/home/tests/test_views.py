@@ -695,6 +695,326 @@ def test_rumor_details_api_endpoints_return_dashboard_payloads(user: User):
     assert desc_table["rows"] == []
     assert desc_table["total_rows"] == 0
 
+    sentiment_response = client.get(reverse("home:rumor_details_sentiment_api"))
+    assert sentiment_response.status_code == 200
+    sentiment_payload = sentiment_response.json()
+    assert set(sentiment_payload) == {
+        "points",
+        "total",
+        "has_data",
+        "counts",
+        "monthly_means",
+        "range",
+    }
+    assert sentiment_payload["points"] == []
+    assert sentiment_payload["total"] == 0
+    assert sentiment_payload["has_data"] is False
+    assert sentiment_payload["counts"] == {"positive": 0, "neutral": 0, "negative": 0}
+    assert sentiment_payload["monthly_means"] == []
+    assert sentiment_payload["range"] == {"start_month": None, "end_month": None}
+
+    by_loc_response = client.get(
+        reverse("home:rumor_details_sentiment_by_location_api")
+    )
+    assert by_loc_response.status_code == 200
+    by_loc_payload = by_loc_response.json()
+    assert set(by_loc_payload) == {"level", "items", "has_data"}
+    assert by_loc_payload["items"] == []
+    assert by_loc_payload["has_data"] is False
+    assert by_loc_payload["level"] == "province"
+
+
+def test_rumor_sentiment_endpoint_weights_by_population(user: User):
+    import math
+
+    client = Client()
+    client.force_login(user=user)
+
+    CSADailyTracker.objects.create(
+        key="sentiment-row-positive",
+        rum="1",
+        desci="The community is grateful for the rapid and excellent help.",
+        ru_num="10",
+        sorce_rum="01",
+        province="Lusaka Province",
+        district="Lusaka District",
+        today="2026-03-15",
+    )
+    CSADailyTracker.objects.create(
+        key="sentiment-row-negative",
+        rum="1",
+        desci="A terrible cholera outbreak is killing people; this is a disaster.",
+        ru_num="50",
+        sorce_rum="04",
+        other_rum="Field worker",
+        province="Lusaka Province",
+        district="Lusaka District",
+        today="2026-03-15",
+    )
+    # Excluded: rum is empty (negative report)
+    CSADailyTracker.objects.create(
+        key="sentiment-row-not-rumor",
+        rum="",
+        desci="Should not appear.",
+        ru_num="999",
+        today="2026-03-15",
+    )
+    # Excluded: empty desci
+    CSADailyTracker.objects.create(
+        key="sentiment-row-empty-desci",
+        rum="1",
+        desci="",
+        ru_num="3",
+        today="2026-03-15",
+    )
+
+    response = client.get(reverse("home:rumor_details_sentiment_api"))
+    assert response.status_code == 200
+    payload = response.json()
+
+    assert payload["has_data"] is True
+    assert payload["total"] == 2
+    points = {p["id"]: p for p in payload["points"]}
+    assert len(points) == 2
+
+    by_key = {p["description"]: p for p in payload["points"]}
+
+    pos = by_key["The community is grateful for the rapid and excellent help."]
+    neg = by_key["A terrible cholera outbreak is killing people; this is a disaster."]
+
+    assert pos["sentiment"] > 0
+    assert neg["sentiment"] < 0
+    assert pos["weighted"] > 0
+    assert neg["weighted"] < 0
+
+    assert pos["ru_num"] == 10
+    assert neg["ru_num"] == 50
+    assert math.isclose(
+        pos["weighted"], pos["sentiment"] * math.log1p(10), rel_tol=1e-3, abs_tol=1e-3
+    )
+    assert math.isclose(
+        neg["weighted"], neg["sentiment"] * math.log1p(50), rel_tol=1e-3, abs_tol=1e-3
+    )
+
+    for p in (pos, neg):
+        assert p["month"] == "2026-03"
+        assert p["date"] == "2026-03-15"
+        assert p["province"] == "Lusaka Province"
+        assert p["district"] == "Lusaka District"
+
+    assert pos["source"] == "Social Media"
+    assert neg["source"].startswith("Other")
+    assert "Field worker" in neg["source"]
+
+    # Each point carries category and is_srs_domain (used by tooltip/colors).
+    for p in (pos, neg):
+        assert "category" in p
+        assert "is_srs_domain" in p
+        assert p["is_srs_domain"] is False  # neither sample mentions SRS terms
+
+    # Counts: pos > 0 → positive, neg < 0 → negative
+    assert payload["counts"] == {"positive": 1, "neutral": 0, "negative": 1}
+
+    # Monthly means: one entry for 2026-03 covering both points.
+    assert len(payload["monthly_means"]) == 1
+    mm = payload["monthly_means"][0]
+    assert mm["month"] == "2026-03"
+    assert mm["count"] == 2
+    expected_mean = (pos["weighted"] + neg["weighted"]) / 2
+    assert math.isclose(mm["mean"], expected_mean, rel_tol=1e-3, abs_tol=1e-3)
+
+    # Range falls back to observed months when filter is all_time.
+    assert payload["range"]["start_month"] == "2026-03"
+    assert payload["range"]["end_month"] == "2026-03"
+
+    # Domain-neutral assertions: SRS programme language should score 0 unless
+    # the writing carries a clear connotation beyond the threshold.
+    # Domain-neutral: factual SRS programme language with no emotional content.
+    # VADER would normally score "verbal autopsy" context as negative; the
+    # domain rule pins it to 0 when the compound stays within the threshold.
+    CSADailyTracker.objects.create(
+        key="sentiment-domain-neutral",
+        rum="1",
+        desci="A verbal autopsy was conducted in the local community.",
+        ru_num="1",
+        today="2026-03-15",
+    )
+    # Domain-positive: SRS language with clearly positive connotation (VADER
+    # compound >> 0.25), so the domain rule lets the positive score through.
+    CSADailyTracker.objects.create(
+        key="sentiment-domain-positive",
+        rum="1",
+        desci="The verbal autopsy team did a wonderful and outstanding job helping families.",
+        ru_num="1",
+        today="2026-03-15",
+    )
+
+    response2 = client.get(reverse("home:rumor_details_sentiment_api"))
+    payload2 = response2.json()
+    by_key2 = {p["description"]: p for p in payload2["points"]}
+
+    neutral_domain = by_key2["A verbal autopsy was conducted in the local community."]
+    positive_domain = by_key2[
+        "The verbal autopsy team did a wonderful and outstanding job helping families."
+    ]
+
+    # Factual SRS description → pinned to neutral (VADER compound == 0.0)
+    assert neutral_domain["sentiment"] == 0.0
+    assert neutral_domain["weighted"] == 0.0
+
+    # Clearly positive SRS description → domain rule lets it through (compound > 0.25)
+    assert positive_domain["sentiment"] > 0
+
+
+def test_rumor_sentiment_endpoint_recognises_extended_domain_terms(user: User):
+    """birth, death, certificate, pregnancy, autopsy, health, maternal are all
+    treated as SRS programme subject matter — flagged is_srs_domain=True. When
+    the surrounding text is neutral, the score is pinned to 0; when VADER
+    detects strong polarity, the score still passes through."""
+    client = Client()
+    client.force_login(user=user)
+
+    # Each of these uses one of the newly-added domain terms with otherwise
+    # neutral wording — VADER returns 0 and the domain rule keeps it at 0.
+    neutral_cases = {
+        "domain-birth": "A birth was registered at the local clinic.",
+        "domain-pregnancy": "A pregnancy was reported in the area.",
+        "domain-maternal": "Maternal health discussion in the community.",
+        "domain-certificate": "The certificate was collected by the family.",
+        "domain-autopsy": "An autopsy was scheduled.",
+    }
+    for key, desci in neutral_cases.items():
+        CSADailyTracker.objects.create(
+            key=key, rum="1", desci=desci, ru_num="1", today="2026-03-15"
+        )
+
+    response = client.get(reverse("home:rumor_details_sentiment_api"))
+    payload = response.json()
+    by_desc = {p["description"]: p for p in payload["points"]}
+
+    for desci in neutral_cases.values():
+        p = by_desc[desci]
+        assert p["is_srs_domain"] is True, desci
+        assert p["sentiment"] == 0.0, desci
+        assert p["weighted"] == 0.0, desci
+
+    # All five rolled into the neutral count.
+    assert payload["counts"]["neutral"] >= 5
+    assert payload["counts"]["positive"] == 0
+    assert payload["counts"]["negative"] == 0
+
+
+def test_rumor_sentiment_by_location_buckets_and_drills_down(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    # Two provinces with distinct sentiment polarity.
+    CSADailyTracker.objects.create(
+        key="byloc-lusaka-1",
+        rum="1",
+        desci="Cholera outbreak is killing many people in the area; tragic.",
+        ru_num="40",
+        province="Lusaka Province",
+        district="Lusaka District",
+        today="2026-03-15",
+    )
+    CSADailyTracker.objects.create(
+        key="byloc-lusaka-2",
+        rum="1",
+        desci="Concerning fears about contaminated water are spreading.",
+        ru_num="20",
+        province="Lusaka Province",
+        district="Lusaka District",
+        today="2026-03-15",
+    )
+    CSADailyTracker.objects.create(
+        key="byloc-copperbelt-1",
+        rum="1",
+        desci="The community is grateful for the rapid and excellent help.",
+        ru_num="15",
+        province="Copperbelt Province",
+        district="Ndola District",
+        today="2026-03-15",
+    )
+    # Different district, same Lusaka province — used for drill-down assertion.
+    CSADailyTracker.objects.create(
+        key="byloc-lusaka-kafue",
+        rum="1",
+        desci="A wonderful and excellent celebration was organised in Kafue.",
+        ru_num="5",
+        province="Lusaka Province",
+        district="Kafue District",
+        today="2026-03-15",
+    )
+
+    # Default: no geography filter → bucket by province.
+    response = client.get(reverse("home:rumor_details_sentiment_by_location_api"))
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["has_data"] is True
+    assert payload["level"] == "province"
+
+    by_name = {i["name"]: i for i in payload["items"]}
+    assert "Lusaka Province" in by_name
+    assert "Copperbelt Province" in by_name
+    assert by_name["Lusaka Province"]["count"] == 3
+    assert by_name["Copperbelt Province"]["count"] == 1
+    # Lusaka has 2 negative + 1 positive → mean comes out negative.
+    assert by_name["Lusaka Province"]["mean"] < 0
+    # Copperbelt has only the positive rumor.
+    assert by_name["Copperbelt Province"]["mean"] > 0
+
+    # Drill-down: selecting Lusaka Province → bucket by district.
+    drill_response = client.get(
+        reverse("home:rumor_details_sentiment_by_location_api"),
+        {"geography_level": "province", "geography_value": "Lusaka Province"},
+    )
+    drill_payload = drill_response.json()
+    assert drill_payload["level"] == "district"
+    drill_by_name = {i["name"]: i for i in drill_payload["items"]}
+    assert "Lusaka District" in drill_by_name
+    assert "Kafue District" in drill_by_name
+    assert "Ndola District" not in drill_by_name  # Copperbelt was filtered out
+    assert drill_by_name["Lusaka District"]["count"] == 2
+    assert drill_by_name["Kafue District"]["count"] == 1
+
+
+@time_machine.travel(dt.datetime(2026, 3, 20, 12, 0, tzinfo=eastern_tz))
+def test_rumor_sentiment_endpoint_filters_by_date_range(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    CSADailyTracker.objects.create(
+        key="sentiment-recent",
+        rum="1",
+        desci="Outbreak panic spreading rapidly.",
+        ru_num="20",
+        today="2026-03-18",
+    )
+    CSADailyTracker.objects.create(
+        key="sentiment-old",
+        rum="1",
+        desci="Old fear about water.",
+        ru_num="5",
+        today="2025-12-01",
+    )
+
+    response = client.get(
+        reverse("home:rumor_details_sentiment_api"),
+        {"time_preset": "last_7_days"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    descriptions = [p["description"] for p in payload["points"]]
+    assert "Outbreak panic spreading rapidly." in descriptions
+    assert "Old fear about water." not in descriptions
+    assert payload["total"] == 1
+
+    # Range comes from the filter window (last_7_days), not from observed
+    # points — ends at the frozen "now" month, starts 7 days earlier.
+    assert payload["range"]["end_month"] == "2026-03"
+    assert payload["range"]["start_month"] == "2026-03"
+
 
 def test_rumor_details_tables_show_top_rumors_and_locations(user: User):
     client = Client()

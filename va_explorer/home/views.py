@@ -2,6 +2,7 @@ import difflib
 import hashlib
 import json
 import logging
+import math
 import re
 from collections import Counter, defaultdict
 from contextlib import suppress
@@ -30,6 +31,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_date as django_parse_date
 from django.utils.dateparse import parse_datetime as django_parse_datetime
 from django.views.generic import TemplateView, View
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 from zoneinfo import ZoneInfo
 
 from va_explorer.home.cache_utils import (
@@ -1573,6 +1575,35 @@ def _build_csa_rumor_filter_state(request):
     }
 
 
+def _csa_rumor_filter_window(filter_state):
+    """Resolve a (start_dt, end_dt) window from the filter state.
+
+    Returns (None, None) for the all_time preset or unparseable custom dates.
+    """
+    now = timezone.localtime(timezone.now())
+    preset = filter_state.get("time_preset")
+    if preset == "last_30_days":
+        return now - timedelta(days=30), now
+    if preset == "last_7_days":
+        return now - timedelta(days=7), now
+    if preset == "last_24_hours":
+        return now - timedelta(hours=24), now
+    if preset == "custom":
+        start_dt = end_dt = None
+        raw_start = filter_state.get("start_datetime") or ""
+        raw_end = filter_state.get("end_datetime") or ""
+        if raw_start:
+            d = django_parse_date(raw_start)
+            if d:
+                start_dt = timezone.make_aware(datetime.combine(d, time.min))
+        if raw_end:
+            d = django_parse_date(raw_end)
+            if d:
+                end_dt = timezone.make_aware(datetime.combine(d, time.max))
+        return start_dt, end_dt
+    return None, None
+
+
 def _build_csa_rumor_queryset(request):
     qs = CSADailyTracker.objects.all()
     qs = restrict_queryset_to_user_locations(qs, getattr(request, "user", None))
@@ -1596,26 +1627,7 @@ def _build_csa_rumor_queryset(request):
         qs = qs.filter(**{f"{geo_field_map[geo_level]}__iexact": geo_value})
 
     # Date range filter using today → submissiondate → start
-    now = timezone.localtime(timezone.now())
-    start_dt = end_dt = None
-    preset = filter_state["time_preset"]
-    if preset == "last_30_days":
-        start_dt, end_dt = now - timedelta(days=30), now
-    elif preset == "last_7_days":
-        start_dt, end_dt = now - timedelta(days=7), now
-    elif preset == "last_24_hours":
-        start_dt, end_dt = now - timedelta(hours=24), now
-    elif preset == "custom":
-        raw_start = filter_state["start_datetime"]
-        raw_end = filter_state["end_datetime"]
-        if raw_start:
-            d = django_parse_date(raw_start)
-            if d:
-                start_dt = timezone.make_aware(datetime.combine(d, time.min))
-        if raw_end:
-            d = django_parse_date(raw_end)
-            if d:
-                end_dt = timezone.make_aware(datetime.combine(d, time.max))
+    start_dt, end_dt = _csa_rumor_filter_window(filter_state)
 
     if start_dt or end_dt:
         date_fields = ("today", "submissiondate", "start")
@@ -2318,25 +2330,261 @@ def _build_rumor_gps_coverage_by_province(qs):
     return {"provinces": provinces, "with_gps": with_gps, "missing_gps": missing_gps}
 
 
-def _build_rumor_sentiment_data(qs):
-    counts = {"High Concern": 0, "Moderate Concern": 0, "Low / Neutral": 0}
-    for (desci,) in (
-        qs.exclude(desci__isnull=True).exclude(desci="").values_list("desci").iterator()
-    ):
-        text = (desci or "").strip()
-        if not text or text.lower() in {"nan", "none", "null", "nat"}:
+_VADER_ANALYZER = SentimentIntensityAnalyzer()
+_RUMOR_SKIP_TEXT_VALUES = {"nan", "none", "null", "nat"}
+
+# Matches text describing SRS programme objectives (verbal autopsy, mortality
+# surveillance, civil registration, etc.) and the broader subject matter the
+# programme tracks (birth, death, pregnancy, maternal/health). VADER scores
+# many of these terms as negative, but in this dataset they describe
+# operational/programmatic content, not concern.
+_SRS_DOMAIN_RE = re.compile(
+    # Programme structures and workflow vocabulary
+    r"\bverbal autopsy\b|\bautopsy\b|\bautopsies\b"
+    r"|\bmortality surveil|\bmortality data\b"
+    r"|\bcivil registr|\bdeath registr|\bbirth registr|\bCRVS\b"
+    r"|\bCSA\b|\bcommunity surveillance\b|\bMSO\b|\bRDM\b|\bSRS\b"
+    r"|\bsample.based registr|\bcause.of.death\b|\bcause of death\b"
+    r"|\bdeath certificate\b|\bcertificate\b|\bvital statistics\b|\bSDG\b|\bDNRPC\b"
+    r"|\binterva\b|\bodk\b|\bkobo\b"
+    # Subject matter the programme tracks (vital events, maternal/child health)
+    r"|\bbirth\b|\bbirths\b|\bdeath\b|\bdeaths\b"
+    r"|\bpregnan\w*|\bmaternal\b|\bhealth\b",
+    re.I,
+)
+
+# Domain text must exceed this VADER compound threshold to receive non-zero
+# sentiment. Keeps factually neutral programme language pinned to 0.
+_SRS_DOMAIN_SENTIMENT_THRESHOLD = 0.25
+
+
+def _rumor_sentiment_score_detail(text):
+    """Return (compound_score, is_srs_domain).
+
+    Rumors describing SRS programme activities (verbal autopsy, mortality
+    registration, CSA/MSO field work, etc.) are scored 0 unless the text
+    carries clear positive or negative connotation beyond the threshold.
+    Non-domain rumors use the raw VADER compound score.
+    """
+    if not text:
+        return 0.0, False
+    cleaned = text.strip()
+    if not cleaned or cleaned.lower() in _RUMOR_SKIP_TEXT_VALUES:
+        return 0.0, False
+    compound = float(_VADER_ANALYZER.polarity_scores(cleaned)["compound"])
+    is_domain = bool(_SRS_DOMAIN_RE.search(cleaned))
+    if is_domain and abs(compound) < _SRS_DOMAIN_SENTIMENT_THRESHOLD:
+        return 0.0, True
+    return compound, is_domain
+
+
+def _rumor_sentiment_score(text):
+    """Backwards-compatible wrapper returning the score only."""
+    return _rumor_sentiment_score_detail(text)[0]
+
+
+def _rumor_ru_num_int(value):
+    """Coerce ru_num (CharField) to a non-negative int; 0 on any failure."""
+    if value is None:
+        return 0
+    raw = str(value).strip()
+    if not raw or raw.lower() in _RUMOR_SKIP_TEXT_VALUES:
+        return 0
+    try:
+        n = int(float(raw))
+    except (TypeError, ValueError):
+        return 0
+    return max(0, n)
+
+
+def _rumor_source_label(sorce_rum, other_rum):
+    code = (sorce_rum or "").strip()
+    label = RUMOR_SOURCE_LABELS.get(code, "")
+    if label == "Other":
+        other = (other_rum or "").strip()
+        if other and other.lower() not in _RUMOR_SKIP_TEXT_VALUES:
+            return f"Other — {other}"
+    return label or "Unknown"
+
+
+def _build_rumor_sentiment_data(qs, *, filter_state=None):
+    """Per-rumor scatter points for the sentiment-over-time chart.
+
+    Each CSADailyTracker row that passes the filter becomes its own point
+    (no aggregation by description) so that more rumor reports render as
+    more dots, not fewer larger ones. Bubble size is driven separately by
+    `ru_num` (population affected) per the dashboard spec.
+
+    The response also carries:
+      - `counts` for a positive/neutral/negative summary
+      - `monthly_means` for a trendline overlay
+      - `range` so the chart x-axis can span the full filter window even
+        when some months have no points (surfacing reporting gaps)
+    """
+    points = []
+    rows = qs.values(
+        "pk",
+        "desci",
+        "ru_num",
+        "today",
+        "submissiondate",
+        "start",
+        "sorce_rum",
+        "other_rum",
+        "province",
+        "district",
+    ).iterator()
+
+    for row in rows:
+        desci = (row.get("desci") or "").strip()
+        if not desci or desci.lower() in _RUMOR_SKIP_TEXT_VALUES:
             continue
-        if _RUMOR_SENTIMENT_HIGH_RE.search(text):
-            counts["High Concern"] += 1
-        elif _RUMOR_SENTIMENT_MOD_RE.search(text):
-            counts["Moderate Concern"] += 1
+
+        parsed = _parse_rumor_date(_rumor_date_str(row))
+        if parsed is None:
+            continue
+
+        ru_num = _rumor_ru_num_int(row.get("ru_num"))
+        sentiment, is_srs_domain = _rumor_sentiment_score_detail(desci)
+        weighted = sentiment * math.log1p(ru_num)
+
+        points.append(
+            {
+                "id": row.get("pk"),
+                "date": parsed.strftime("%Y-%m-%d"),
+                "month": parsed.strftime("%Y-%m"),
+                "sentiment": round(sentiment, 4),
+                "weighted": round(weighted, 4),
+                "ru_num": ru_num,
+                "description": desci,
+                "category": _infer_rumor_category(desci),
+                "is_srs_domain": is_srs_domain,
+                "source": _rumor_source_label(
+                    row.get("sorce_rum"), row.get("other_rum")
+                ),
+                "province": (row.get("province") or "").strip(),
+                "district": (row.get("district") or "").strip(),
+            }
+        )
+
+    # Counts by sentiment sign (zero counts as neutral).
+    counts = {"positive": 0, "neutral": 0, "negative": 0}
+    monthly_buckets = defaultdict(list)
+    for p in points:
+        w = p["weighted"]
+        if w > 0:
+            counts["positive"] += 1
+        elif w < 0:
+            counts["negative"] += 1
         else:
-            counts["Low / Neutral"] += 1
-    total = sum(counts.values())
+            counts["neutral"] += 1
+        monthly_buckets[p["month"]].append(w)
+
+    monthly_means = []
+    for month_str in sorted(monthly_buckets.keys()):
+        values = monthly_buckets[month_str]
+        year, month = month_str.split("-")
+        x = int(year) * 12 + (int(month) - 1)
+        monthly_means.append(
+            {
+                "month": month_str,
+                "x": x,
+                "mean": round(sum(values) / len(values), 4),
+                "count": len(values),
+            }
+        )
+
+    # Range: prefer the filter window so empty months remain visible. Fall
+    # back to the observed point months for the all_time preset.
+    range_payload = {"start_month": None, "end_month": None}
+    start_dt, end_dt = (
+        _csa_rumor_filter_window(filter_state) if filter_state else (None, None)
+    )
+    if start_dt:
+        range_payload["start_month"] = start_dt.strftime("%Y-%m")
+    if end_dt:
+        range_payload["end_month"] = end_dt.strftime("%Y-%m")
+    if not range_payload["start_month"] and points:
+        range_payload["start_month"] = min(p["month"] for p in points)
+    if not range_payload["end_month"] and points:
+        range_payload["end_month"] = max(p["month"] for p in points)
+
     return {
-        "labels": list(counts.keys()),
-        "data": list(counts.values()),
-        "total": total,
+        "points": points,
+        "total": len(points),
+        "has_data": bool(points),
+        "counts": counts,
+        "monthly_means": monthly_means,
+        "range": range_payload,
+    }
+
+
+# Maps the currently-selected geography level to the level we bucket the
+# sentiment-by-location chart by. Matches the drill-down semantics used
+# elsewhere in the rumor-details tab.
+_SENTIMENT_LOCATION_NEXT_LEVEL = {
+    "": "province",
+    "province": "district",
+    "district": "constituency",
+    "constituency": "ward",
+    "ward": "ea",
+    "ea": "ea",
+}
+
+_SENTIMENT_LOCATION_BAR_LIMIT = 15
+
+
+def _build_rumor_sentiment_by_location_data(qs, *, filter_state=None):
+    """Mean weighted sentiment per location bucket.
+
+    The bucket level follows the active geography filter — no selection
+    groups by province; selecting a province drills into districts; and
+    so on. Each bucket reports its mean weighted sentiment plus rumor
+    count so the chart can colour and label bars consistently with the
+    sentiment-over-time scatter.
+    """
+    fs = filter_state or {}
+    current_level = (fs.get("geography_level") or "").lower()
+    bucket_level = _SENTIMENT_LOCATION_NEXT_LEVEL.get(current_level, "province")
+
+    rows = qs.values(
+        "desci",
+        "ru_num",
+        "today",
+        "submissiondate",
+        "start",
+        bucket_level,
+    ).iterator()
+
+    buckets = defaultdict(list)
+    for row in rows:
+        desci = (row.get("desci") or "").strip()
+        if not desci or desci.lower() in _RUMOR_SKIP_TEXT_VALUES:
+            continue
+        # Match the time-series chart's row filter so the two views agree.
+        if _parse_rumor_date(_rumor_date_str(row)) is None:
+            continue
+        loc = (row.get(bucket_level) or "").strip() or "Unknown"
+        ru_num = _rumor_ru_num_int(row.get("ru_num"))
+        sentiment = _rumor_sentiment_score(desci)
+        buckets[loc].append(sentiment * math.log1p(ru_num))
+
+    items = [
+        {
+            "name": name,
+            "mean": round(sum(values) / len(values), 4),
+            "count": len(values),
+        }
+        for name, values in buckets.items()
+    ]
+    # Most-reported locations first; ties broken by absolute mean then name.
+    items.sort(key=lambda i: (-i["count"], -abs(i["mean"]), i["name"]))
+    items = items[:_SENTIMENT_LOCATION_BAR_LIMIT]
+
+    return {
+        "level": bucket_level,
+        "items": items,
+        "has_data": bool(items),
     }
 
 
@@ -2541,12 +2789,30 @@ rumor_details_description_table_api_view = transaction.non_atomic_requests(
 class RumorDetailsSentimentAPIView(CustomAuthMixin, View):
     def get(self, request, *args, **kwargs):
         return JsonResponse(
-            _build_rumor_sentiment_data(_build_csa_rumor_queryset(request))
+            _build_rumor_sentiment_data(
+                _build_csa_rumor_queryset(request),
+                filter_state=_build_csa_rumor_filter_state(request),
+            )
         )
 
 
 rumor_details_sentiment_api_view = transaction.non_atomic_requests(
     RumorDetailsSentimentAPIView.as_view()
+)
+
+
+class RumorDetailsSentimentByLocationAPIView(CustomAuthMixin, View):
+    def get(self, request, *args, **kwargs):
+        return JsonResponse(
+            _build_rumor_sentiment_by_location_data(
+                _build_csa_rumor_queryset(request),
+                filter_state=_build_csa_rumor_filter_state(request),
+            )
+        )
+
+
+rumor_details_sentiment_by_location_api_view = transaction.non_atomic_requests(
+    RumorDetailsSentimentByLocationAPIView.as_view()
 )
 
 

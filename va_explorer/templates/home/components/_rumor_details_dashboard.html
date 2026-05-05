@@ -5,6 +5,7 @@
   data-enumerator-stats-endpoint="{% url 'home:rumor_details_enumerator_stats_api' %}"
   data-description-table-endpoint="{% url 'home:rumor_details_description_table_api' %}"
   data-sentiment-endpoint="{% url 'home:rumor_details_sentiment_api' %}"
+  data-sentiment-by-location-endpoint="{% url 'home:rumor_details_sentiment_by_location_api' %}"
   data-word-cloud-endpoint="{% url 'home:rumor_details_word_cloud_api' %}"
   data-user-pii="{% if perms.va_analytics.view_pii %}true{% else %}false{% endif %}"
 >
@@ -35,6 +36,19 @@
             <span>and</span>
             <label for="rumorDetailsFilterEndDatetime" class="sr-only">End Date</label>
             <input id="rumorDetailsFilterEndDatetime" class="input" type="date" name="end_datetime" value="{{ filter_end_datetime }}">
+          </div>
+
+          <div class="mainFiltersContainer">
+            <label for="rumorDetailsFilterGeoLevel">Geography:</label>
+            <select id="rumorDetailsFilterGeoLevel" class="select" name="geography_level">
+              <option value="" {% if not filter_geography_level %}selected{% endif %}>All</option>
+              <option value="province" {% if filter_geography_level == "province" %}selected{% endif %}>Province</option>
+              <option value="district" {% if filter_geography_level == "district" %}selected{% endif %}>District</option>
+              <option value="constituency" {% if filter_geography_level == "constituency" %}selected{% endif %}>Constituency</option>
+              <option value="ward" {% if filter_geography_level == "ward" %}selected{% endif %}>Ward</option>
+            </select>
+            <label for="rumorDetailsFilterGeoValue" class="sr-only">Geography value</label>
+            <input id="rumorDetailsFilterGeoValue" class="input" type="text" name="geography_value" placeholder="Name (e.g. Lusaka Province)" value="{{ filter_geography_value }}">
           </div>
 
           <div class="formBtnsContainer">
@@ -83,6 +97,31 @@
         </div>
         <p id="rumorDetailsDescTableEmpty" class="po-empty-state" hidden>No rumor descriptions recorded for the selected filters.</p>
       </section>
+
+      <div class="rumor-details-sentiment-row">
+        <section class="sectionContainer rds-col-left" id="rumorDetailsSentimentSection" data-component="sentiment-scatter">
+          <h2>Rumor Sentiment Over Time</h2>
+          <p class="dashboard-note rds-subtitle">
+            Each dot is one rumor report; vertical position is sentiment weighted by population affected. Green = positive, red = negative, gray = neutral (e.g. factual SRS programme reports). Bubble size scales with people affected. The dark line tracks monthly mean weighted sentiment.
+          </p>
+          <div class="rds-chart-wrap">
+            <canvas id="rumorDetailsSentimentChart" aria-label="Rumor sentiment scatter plot"></canvas>
+          </div>
+          <div id="rumorDetailsSentimentCounts" class="rds-counts" hidden></div>
+          <p id="rumorDetailsSentimentEmpty" class="po-empty-state" hidden>No sentiment data for the selected filters.</p>
+        </section>
+
+        <section class="sectionContainer rds-col-right" id="rumorDetailsSentimentByLocationSection" data-component="sentiment-by-location">
+          <h2>Sentiment by Location</h2>
+          <p class="dashboard-note rds-subtitle">
+            Mean weighted sentiment per <span id="rumorDetailsSentimentByLocationLevel">location</span>. Bars are coloured by overall tone (green = positive, red = negative, gray = neutral) and labelled with the rumor count.
+          </p>
+          <div class="rds-chart-wrap">
+            <canvas id="rumorDetailsSentimentByLocationChart" aria-label="Rumor sentiment by location bar chart"></canvas>
+          </div>
+          <p id="rumorDetailsSentimentByLocationEmpty" class="po-empty-state" hidden>No location-level sentiment data for the selected filters.</p>
+        </section>
+      </div>
 
       <section class="sectionContainer" id="rumorDetailsEnumeratorSection" data-component="enumerator-stats">
         <h2>Communities Reporting Most Rumors</h2>
