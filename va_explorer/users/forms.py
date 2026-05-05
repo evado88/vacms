@@ -245,6 +245,10 @@ class UserCommonFields(forms.ModelForm):
     )
     perm_view_death = forms.BooleanField(label="View Death", required=False)
     perm_change_death = forms.BooleanField(label="Edit Death", required=False)
+    perm_view_event = forms.BooleanField(label="View Scheduled VAs", required=False)
+    perm_change_event = forms.BooleanField(
+        label="Schedule VA Interview", required=False
+    )
     perm_view_datacleanup = forms.BooleanField(
         label="View Data Cleanup", required=False
     )

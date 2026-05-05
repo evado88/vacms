@@ -40,7 +40,7 @@
         </li>
       {% endif %}
 
-      {% if request.user.is_superuser or request.user|has_group:"Admins" or request.user|has_group:"Data Managers" %}
+      {% if request.user|can_view_va_schedule %}
         <ul
           class="collapse-section"
           id="case-section"

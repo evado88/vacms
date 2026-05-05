@@ -42,18 +42,10 @@ from va_explorer.vacms.notifications import (
     ensure_va_schedule_message,
     remove_va_schedule_message,
 )
-
-ALLOWED_VA_SCHEDULER_GROUPS = ("Admins", "Data Managers")
-
-
-def user_can_manage_va_schedule(user):
-    return bool(
-        getattr(user, "is_authenticated", False)
-        and (
-            user.is_superuser
-            or user.groups.filter(name__in=ALLOWED_VA_SCHEDULER_GROUPS).exists()
-        )
-    )
+from va_explorer.vacms.permissions import (
+    user_can_manage_va_schedule,
+    user_can_view_va_schedule,
+)
 
 
 def user_can_access_admin_panel(user):
@@ -64,6 +56,7 @@ def user_can_access_admin_panel(user):
 
 
 # event
+@method_decorator(login_required, name="dispatch")
 class EventListView(ListView):
     model = Event
     template_name = "va_cms/event_list.html"
@@ -98,9 +91,17 @@ class EventListView(ListView):
         )
         return queryset.order_by(direction + db_field, "id")
 
+    def dispatch(self, request, *args, **kwargs):
+        if not user_can_view_va_schedule(request.user):
+            return HttpResponseForbidden("You are not allowed to view VA schedules.")
+        return super().dispatch(request, *args, **kwargs)
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context["filters"] = self._filters_context
+        context["user_can_manage_schedule"] = user_can_manage_va_schedule(
+            self.request.user
+        )
         base_queryset = self.object_list
         context["scheduled_events"] = base_queryset.filter(
             va_interview_status__in=(
@@ -207,7 +208,10 @@ class EventCreateView(CreateView):
     template_name = "va_cms/event_create.html"
 
 
+@login_required
 def EventCreateDeathView(request, death):
+    if not user_can_manage_va_schedule(request.user):
+        return HttpResponseForbidden("You are not allowed to manage VA schedules.")
 
     if request.method == "POST":
 
@@ -507,6 +511,7 @@ def vacms_admin_command_stream(request):
     return response
 
 
+@method_decorator(login_required, name="dispatch")
 class EventScheduleVAInterviewView(UpdateView):
     model = Event
     fields = [

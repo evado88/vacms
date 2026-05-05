@@ -15,6 +15,7 @@ from va_explorer.utils.mixins import CustomAuthMixin, LocationRestrictedQuerySet
 from va_explorer.va_data_management.filters import DeathFilter
 from va_explorer.va_data_management.forms import DeathForm
 from va_explorer.va_data_management.models import Death
+from va_explorer.vacms.permissions import user_can_manage_va_schedule
 
 
 class Deaths(
@@ -68,6 +69,9 @@ class DeathDetail(
         context = super().get_context_data(**kwargs)
         context["id"] = self.object.id
         context["form"] = DeathForm(None, instance=self.object)
+        context["user_can_manage_schedule"] = user_can_manage_va_schedule(
+            self.request.user
+        )
         history = self.object.history.all().reverse()
         context["history"] = history
         return context

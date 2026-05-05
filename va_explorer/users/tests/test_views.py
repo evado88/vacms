@@ -214,6 +214,22 @@ def test_data_viewers_group_includes_default_data_view_permissions():
     }.issubset(actual_permissions)
 
 
+@pytest.mark.parametrize(
+    "group_name",
+    [("Mortality Surveillance Officer",), ("Community Surveillance Officer",)],
+)
+def test_mso_and_csa_groups_include_schedule_permissions(group_name):
+    group = seeded_group(group_name)
+
+    actual_permissions = set(
+        group.permissions.filter(content_type__app_label="vacms").values_list(
+            "codename", flat=True
+        )
+    )
+
+    assert {"view_event", "change_event"}.issubset(actual_permissions)
+
+
 class TestUserUpdateView:
     def test_get_success_url(self, user: User, rf: RequestFactory):
         view = UserUpdateView()

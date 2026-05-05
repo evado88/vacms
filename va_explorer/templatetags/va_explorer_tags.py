@@ -9,6 +9,10 @@ from django.utils import timezone
 
 from va_explorer.va_data_management.constants import PII_FIELDS, REDACTED_STRING
 from va_explorer.va_data_management.utils.date_parsing import parse_date
+from va_explorer.vacms.permissions import (
+    user_can_manage_va_schedule,
+    user_can_view_va_schedule,
+)
 
 register = template.Library()
 
@@ -215,3 +219,13 @@ def has_group(user, group_name):
     if not getattr(user, "is_authenticated", False):
         return False
     return user.groups.filter(name=group_name).exists()
+
+
+@register.filter
+def can_manage_va_schedule(user):
+    return user_can_manage_va_schedule(user)
+
+
+@register.filter
+def can_view_va_schedule(user):
+    return user_can_view_va_schedule(user)

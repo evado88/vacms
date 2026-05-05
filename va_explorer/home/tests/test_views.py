@@ -714,6 +714,61 @@ def test_rumor_details_api_endpoints_return_dashboard_payloads(user: User):
     assert sentiment_payload["range"] == {"start_month": None, "end_month": None}
 
 
+def test_rumor_source_by_province_resolves_coded_province_labels(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    ODKFormChoice.objects.bulk_create(
+        [
+            ODKFormChoice(
+                form_name="csa_daily_tracker",
+                field_name="province",
+                value="5",
+                label="Lusaka Province",
+            ),
+            ODKFormChoice(
+                form_name="csa_daily_tracker",
+                field_name="province",
+                value="9",
+                label="Southern Province",
+            ),
+        ]
+    )
+    CSADailyTracker.objects.create(
+        key="rumor-source-coded-province-1",
+        rum="1",
+        desci="Social rumor one",
+        sorce_rum="01",
+        province="05",
+        today="2026-03-01",
+    )
+    CSADailyTracker.objects.create(
+        key="rumor-source-coded-province-2",
+        rum="1",
+        desci="Social rumor two",
+        sorce_rum="01",
+        province="5.0",
+        today="2026-03-01",
+    )
+    CSADailyTracker.objects.create(
+        key="rumor-source-coded-province-3",
+        rum="1",
+        desci="Community rumor",
+        sorce_rum="02",
+        province="09",
+        today="2026-03-01",
+    )
+
+    response = client.get(reverse("home:rumor_overview_source_by_province_api"))
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["provinces"] == ["Lusaka Province", "Southern Province"]
+    series_by_label = {series["label"]: series["data"] for series in payload["series"]}
+    assert series_by_label["Social Media"] == [2, 0]
+    assert series_by_label["Community Group"] == [0, 1]
+
+
 def test_rumor_sentiment_endpoint_weights_by_population(user: User):
     import math
 

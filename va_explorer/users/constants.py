@@ -20,6 +20,8 @@ PERM_FIELD_MAP = {
     "perm_change_pregnancyoutcome": ("va_data_management", "change_pregnancyoutcome"),
     "perm_view_death": ("va_data_management", "view_death"),
     "perm_change_death": ("va_data_management", "change_death"),
+    "perm_view_event": ("vacms", "view_event"),
+    "perm_change_event": ("vacms", "change_event"),
     "perm_view_datacleanup": ("va_data_cleanup", "view_datacleanup"),
     "perm_download_datacleanup": ("va_data_cleanup", "download"),
     "perm_bulk_download": ("va_data_cleanup", "bulk_download"),

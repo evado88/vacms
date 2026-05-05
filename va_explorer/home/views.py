@@ -2146,6 +2146,7 @@ def _build_rumor_word_cloud_data(qs, *, max_nodes=_WC_MAX_NODES):
 
 
 def _build_rumor_source_by_province(qs):
+    province_choices = _get_csa_tracker_choice_label_map("province")
     rows = (
         qs.exclude(province__isnull=True)
         .exclude(province="")
@@ -2155,7 +2156,7 @@ def _build_rumor_source_by_province(qs):
     )
     data_map = {}
     for row in rows:
-        prov = row["province"]
+        prov = _resolve_csa_tracker_choice_label(province_choices, row["province"])
         code = (row.get("sorce_rum") or "").strip()
         label = RUMOR_SOURCE_LABELS.get(code, "Unknown")
         data_map.setdefault(prov, Counter())[label] += row["count"]
@@ -2223,6 +2224,8 @@ def _normalize_odk_lookup_value(value):
     text = str(value or "").strip()
     if re.fullmatch(r"\d+", text):
         return str(int(text))  # strips leading zeros (e.g. "01" → "1")
+    if re.fullmatch(r"\d+\.0+", text):
+        return str(int(text.split(".", 1)[0]))  # handles ODK exports like "01.0"
     return text
 
 

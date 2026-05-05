@@ -8,17 +8,37 @@ from va_explorer.va_data_management.models import Death
 from va_explorer.vacms.cmsmodels.events import Event
 from va_explorer.vacms.constants import VA_SCHEDULE_MESSAGE_SUBJECT
 from va_explorer.vacms.notifications import ensure_va_schedule_message
+from va_explorer.vacms.permissions import (
+    user_can_manage_va_schedule,
+    user_can_view_va_schedule,
+)
 
 pytestmark = pytest.mark.django_db
 
 
+@pytest.fixture(autouse=True)
+def disable_death_id_task(monkeypatch):
+    from va_explorer.va_data_management.tasks import assign_death_ids_task
+
+    monkeypatch.setattr(assign_death_ids_task, "delay", lambda *args, **kwargs: None)
+
+
+def _group(name):
+    group, _ = Group.objects.get_or_create(name=name)
+    return group
+
+
+def _user_in_group(name):
+    user = UserFactory()
+    user.groups.add(_group(name))
+    return user
+
+
 def test_assigning_va_creates_mailbox_message(client):
-    mso_group, _ = Group.objects.get_or_create(name="Mortality Surveillance Officer")
-
     assigned_user = UserFactory()
-    assigned_user.groups.add(mso_group)
+    assigned_user.groups.add(_group("Mortality Surveillance Officer"))
 
-    scheduler = UserFactory()
+    scheduler = _user_in_group("Data Managers")
 
     death = Death.objects.create(
         DE_03="Test Person",
@@ -85,10 +105,9 @@ def _schedule_event_for_user(client, scheduler, assigned_user, death):
 
 
 def _create_users_and_death():
-    mso_group, _ = Group.objects.get_or_create(name="Mortality Surveillance Officer")
     assigned_user = UserFactory()
-    assigned_user.groups.add(mso_group)
-    scheduler = UserFactory()
+    assigned_user.groups.add(_group("Mortality Surveillance Officer"))
+    scheduler = _user_in_group("Data Managers")
     death = Death.objects.create(
         DE_03="Test Person",
         DE_04="1980-01-01",
@@ -96,6 +115,40 @@ def _create_users_and_death():
         DE_06="2023-01-01",
     )
     return scheduler, assigned_user, death
+
+
+@pytest.mark.parametrize(
+    "group_name",
+    [("Mortality Surveillance Officer",), ("Community Surveillance Officer",)],
+)
+def test_mso_and_csa_have_va_schedule_rights(group_name):
+    user = _user_in_group(group_name)
+
+    assert user_can_manage_va_schedule(user)
+    assert user_can_view_va_schedule(user)
+
+
+def test_user_without_schedule_rights_cannot_manage_va_schedule():
+    user = UserFactory()
+
+    assert not user_can_manage_va_schedule(user)
+
+
+def test_user_without_schedule_rights_cannot_view_va_schedule():
+    user = UserFactory()
+
+    assert not user_can_view_va_schedule(user)
+
+
+def test_schedule_denial_overrides_scheduler_role():
+    user = _user_in_group("Mortality Surveillance Officer")
+    user.denied_permissions = ["vacms.change_event"]
+
+    assert not user_can_manage_va_schedule(user)
+    assert user_can_view_va_schedule(user)
+
+    user.denied_permissions = ["vacms.change_event", "vacms.view_event"]
+    assert not user_can_view_va_schedule(user)
 
 
 def test_va_schedule_message_only_created_once(client, rf):
