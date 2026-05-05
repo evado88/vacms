@@ -295,7 +295,13 @@ class UserUpdateView(
             there are any locations restrictions associated with the user in the
             database, they have location-specific access; else national access.
             (2) Set the facilities restrictions associated with the user, if any
+            (3) Pre-populate location_restrictions by reverse-mapping the user's
+            Location objects back to the corresponding SRSClusterLocation nodes.
         """
+        from django.db.models import Q
+
+        from va_explorer.va_data_management.models import SRSClusterLocation
+
         initial = super().get_initial()
 
         initial["group"] = self.get_object().groups.first()
@@ -307,6 +313,23 @@ class UserUpdateView(
         initial["facility_restrictions"] = (
             self.get_object().location_restrictions.filter(location_type="facility")
         )
+
+        # Reverse-map Location objects → SRSClusterLocation nodes so the
+        # location dropdown is pre-populated when editing an existing user.
+        # The form field only shows province/district-level SRS nodes, so we
+        # match against the user's Location restrictions at those levels.
+        user_locs = self.get_object().location_restrictions.filter(
+            location_type__in=["province", "district"]
+        )
+        if user_locs.exists():
+            reverse_q = Q()
+            for loc in user_locs:
+                reverse_q |= Q(
+                    name__iexact=loc.name, location_type__iexact=loc.location_type
+                )
+            initial["location_restrictions"] = SRSClusterLocation.objects.filter(
+                reverse_q
+            )
 
         initial["view_pii"] = self.get_object().can_view_pii
         initial["download_data"] = self.get_object().can_download_data

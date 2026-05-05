@@ -20,6 +20,9 @@ from va_explorer.va_data_management.models import Household
 from va_explorer.va_data_management.models.data_quality import (
     DataQualityIssue,
 )
+from va_explorer.va_data_management.utils.location_access import (
+    restrict_queryset_to_user_locations,
+)
 
 
 class HouseholdAccessMixin(LocationRestrictedQuerySetMixin, SingleObjectMixin):
@@ -33,8 +36,12 @@ class Households(
     model = Household
     template_name = "va_data_management/households.html"
     paginate_by = 15
-    # Household records only carry province-level geography
-    location_field_mapping = {"province": "province"}
+    location_field_mapping = {
+        "province": "province",
+        "district": "district",
+        "constituency": "constituency",
+        "ward": "ward",
+    }
 
     _SORT_FIELDS = {
         "id": "id",
@@ -148,6 +155,16 @@ class HouseholdDeleteAll(CustomAuthMixin, PermissionRequiredMixin, TemplateView)
     success_message = "All households successfully deleted."
 
     def post(self, request, *args, **kwargs):
-        Household.objects.all().delete()
+        qs = restrict_queryset_to_user_locations(
+            Household.objects.all(),
+            request.user,
+            field_mapping={
+                "province": "province",
+                "district": "district",
+                "constituency": "constituency",
+                "ward": "ward",
+            },
+        )
+        qs.delete()
         messages.success(request, self.success_message)
         return redirect(reverse("va_data_management:households"))

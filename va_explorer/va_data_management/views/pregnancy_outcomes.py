@@ -16,6 +16,9 @@ from va_explorer.utils.mixins import CustomAuthMixin, LocationRestrictedQuerySet
 from va_explorer.va_data_management.filters import PregnancyOutcomeFilter
 from va_explorer.va_data_management.forms import PregnancyOutcomeForm
 from va_explorer.va_data_management.models import PregnancyOutcome
+from va_explorer.va_data_management.utils.location_access import (
+    restrict_queryset_to_user_locations,
+)
 
 
 class PregnancyOutcomes(
@@ -135,7 +138,10 @@ class PregnancyOutcomeDeleteAll(CustomAuthMixin, PermissionRequiredMixin, Templa
     template_name = "va_data_management/pregnancy_outcome_confirm_delete_all.html"
 
     def post(self, request, *args, **kwargs):
-        PregnancyOutcome.objects.all().delete()
+        qs = restrict_queryset_to_user_locations(
+            PregnancyOutcome.objects.all(), request.user
+        )
+        qs.delete()
         messages.success(self.request, self.success_message)
         return redirect(self.success_url)
 

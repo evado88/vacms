@@ -15,6 +15,9 @@ from va_explorer.utils.mixins import CustomAuthMixin, LocationRestrictedQuerySet
 from va_explorer.va_data_management.filters import DeathFilter
 from va_explorer.va_data_management.forms import DeathForm
 from va_explorer.va_data_management.models import Death
+from va_explorer.va_data_management.utils.location_access import (
+    restrict_queryset_to_user_locations,
+)
 from va_explorer.vacms.permissions import user_can_manage_va_schedule
 
 
@@ -130,6 +133,7 @@ class DeathDeleteAll(CustomAuthMixin, PermissionRequiredMixin, TemplateView):
     success_message = "All death records successfully deleted."
 
     def post(self, request, *args, **kwargs):
-        Death.objects.all().delete()
+        qs = restrict_queryset_to_user_locations(Death.objects.all(), request.user)
+        qs.delete()
         messages.success(request, self.success_message)
         return redirect(reverse("va_data_management:deaths"))

@@ -27,6 +27,10 @@ from va_explorer.va_data_management.models import (
     PregnancyOutcome,
     SRSClusterLocation,
 )
+from va_explorer.va_data_management.utils.location_access import (
+    _allowed_location_names,
+    restrict_queryset_to_user_locations,
+)
 from va_explorer.va_export.forms import VADownloadForm
 
 EXPORT_DATASETS = {
@@ -221,7 +225,17 @@ def _export_rumor_surveillance(request, start_date, end_date, loc_query):
                     lambda v, m=label_map: _decode_odk_field(m, v)
                 )
 
-        # Apply location filter after decoding (SRS names are human-readable).
+        # Enforce user location restrictions on the decoded DataFrame.
+        # (Cannot apply ORM-level scoping because codes ≠ names stored in Location.)
+        user_allowed = _allowed_location_names(request.user)
+        if user_allowed:
+            user_mask = pd.Series(False, index=dataset_df.index)
+            for level, names in user_allowed.items():
+                if level in dataset_df.columns and names:
+                    user_mask |= dataset_df[level].isin(names)
+            dataset_df = dataset_df[user_mask]
+
+        # Apply explicit location filter after decoding (SRS names are human-readable).
         if loc_query:
             level_names = _get_srs_level_names(loc_query)
             if level_names:
@@ -256,20 +270,35 @@ def _export_non_va_dataset(request, dataset, params):
     }
     geo_filter = _build_geo_filter_from_srs(loc_query, field_mapping)
 
+    _household_field_mapping = {
+        "province": "province",
+        "district": "district",
+        "constituency": "constituency",
+        "ward": "ward",
+    }
+
     if dataset == "household":
-        queryset = Household.objects.all()
+        queryset = restrict_queryset_to_user_locations(
+            Household.objects.all(), request.user, _household_field_mapping
+        )
         date_field = "today"
         filename = "household_download.csv"
     elif dataset == "pregnancy":
-        queryset = Pregnancy.objects.all()
+        queryset = restrict_queryset_to_user_locations(
+            Pregnancy.objects.all(), request.user
+        )
         date_field = "today"
         filename = "pregnancy_download.csv"
     elif dataset == "pregnancy_outcome":
-        queryset = PregnancyOutcome.objects.all()
+        queryset = restrict_queryset_to_user_locations(
+            PregnancyOutcome.objects.all(), request.user
+        )
         date_field = "today"
         filename = "pregnancy_outcome_download.csv"
     else:
-        queryset = Death.objects.all()
+        queryset = restrict_queryset_to_user_locations(
+            Death.objects.all(), request.user
+        )
         date_field = "today"
         filename = "death_download.csv"
 
