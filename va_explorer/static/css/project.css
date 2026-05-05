@@ -1293,6 +1293,14 @@ body.modal-open {
   overflow: hidden !important;
 }
 
+.modal-backdrop {
+  z-index: 1240;
+}
+
+.modal {
+  z-index: 1250;
+}
+
 /* ------------------------------------------------------------
    Stage 3 shell alignment (Outcomes-style base layout + nav UX)
 ------------------------------------------------------------- */
