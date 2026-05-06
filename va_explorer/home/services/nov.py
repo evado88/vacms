@@ -1,6 +1,7 @@
 from collections import Counter
 from datetime import timedelta
 
+from django.core.exceptions import FieldDoesNotExist
 from django.db.models import Count, Max, Q, TextField
 from django.db.models.functions import Greatest
 from django.utils import timezone
@@ -91,7 +92,46 @@ def _latest_range_q(start_dt, end_dt):
     return query
 
 
+def _field_is_unique(model, field_name):
+    try:
+        return bool(model._meta.get_field(field_name).unique)
+    except FieldDoesNotExist:
+        return False
+
+
+def _aggregate_unique_key_windowed_counts(
+    queryset, key_field, date_fields, start_dt, end_dt
+):
+    latest_expr = _latest_text_expr(queryset.model, date_fields)
+    rows = (
+        queryset.exclude(**{f"{key_field}__isnull": True})
+        .exclude(**{key_field: ""})
+        .annotate(_latest_ts=latest_expr)
+        .exclude(_latest_ts__isnull=True)
+    )
+    windows, effective_end = _window_bounds(start_dt, end_dt)
+    aggregate = rows.aggregate(
+        total=Count("pk", filter=_latest_range_q(windows["total"], effective_end)),
+        today=Count("pk", filter=_latest_range_q(windows["today"], effective_end)),
+        week=Count("pk", filter=_latest_range_q(windows["week"], effective_end)),
+        last_30_days=Count(
+            "pk", filter=_latest_range_q(windows["last_30_days"], effective_end)
+        ),
+    )
+    return {
+        "today": aggregate.get("today") or 0,
+        "week": aggregate.get("week") or 0,
+        "last_30_days": aggregate.get("last_30_days") or 0,
+        "total": aggregate.get("total") or 0,
+    }
+
+
 def _db_windowed_counts(queryset, key_field, date_fields, start_dt, end_dt):
+    if _field_is_unique(queryset.model, key_field):
+        return _aggregate_unique_key_windowed_counts(
+            queryset, key_field, date_fields, start_dt, end_dt
+        )
+
     group_qs = _latest_group_queryset(queryset, key_field, date_fields)
     windows, effective_end = _window_bounds(start_dt, end_dt)
     return {
