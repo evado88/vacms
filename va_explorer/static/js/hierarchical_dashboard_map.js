@@ -502,6 +502,7 @@
       refresh,
       resize: () => {
         if (state.map) state.map.invalidateSize();
+        if (gpsLayerCtl) gpsLayerCtl.refresh();
       },
       resetDrill: async () => {
         state.path = [{ id: "ZM", name: "Zambia", levelLabel: "Country", levelIndex: 0 }];

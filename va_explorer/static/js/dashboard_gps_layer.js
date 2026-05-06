@@ -83,6 +83,10 @@
     }
 
     const renderer = L.canvas({ padding: 0.5, pane: paneName });
+    // Attach the renderer to the map so its onAdd fires and the backing
+    // canvas element is created in the GPS pane. Without this, circleMarkers
+    // referencing the renderer never get drawn (no _ctx, _redraw exits early).
+    renderer.addTo(map);
     const group = L.featureGroup();
     let groupAdded = false;
     let inFlight = null;
