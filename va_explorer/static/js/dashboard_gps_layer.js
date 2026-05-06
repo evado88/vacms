@@ -21,8 +21,11 @@
 
   const DOT_STYLE = {
     radius: 4,
+    fill: true,
+    color: "#14a384",
     fillColor: "#14a384",
-    fillOpacity: 0.7,
+    fillOpacity: 0.85,
+    opacity: 1,
     stroke: false,
     weight: 0,
   };
@@ -78,7 +81,7 @@
     }
     const pane = map.getPane(paneName);
     if (pane) {
-      pane.style.zIndex = 650;
+      pane.style.zIndex = options.zIndex || 675;
       pane.style.pointerEvents = "auto";
     }
 
@@ -91,7 +94,16 @@
     let groupAdded = false;
     let inFlight = null;
 
+    function ensureRendererAdded() {
+      if (typeof map.hasLayer === "function" && map.hasLayer(renderer)) return;
+      renderer.addTo(map);
+      if (renderer._container) {
+        renderer._container.style.zIndex = options.zIndex || 675;
+      }
+    }
+
     function ensureAdded() {
+      ensureRendererAdded();
       if (!groupAdded) {
         group.addTo(map);
         groupAdded = true;
@@ -99,6 +111,7 @@
     }
 
     function renderPoints(points) {
+      ensureAdded();
       group.clearLayers();
       const includeCoords = options.userCanViewPII;
       let shown = 0;
@@ -122,7 +135,7 @@
         marker.addTo(group);
         shown += 1;
       });
-      ensureAdded();
+      if (renderer._redraw) renderer._redraw();
       return shown;
     }
 

@@ -458,6 +458,7 @@
       if (gpsLayerCtl || !userCanViewPII) return gpsLayerCtl;
       if (!state.map || !window.DashboardGPSLayer) return null;
       gpsLayerCtl = window.DashboardGPSLayer.attachGPSLayer(state.map, {
+        idPrefix: containerId,
         userCanViewPII: true,
         fetchPoints: async () => {
           const params = buildParams(state.filters || {});
@@ -494,7 +495,7 @@
       await render();
       if (userCanViewPII) {
         const layer = gpsLayerCtl || ensureGPSLayer();
-        if (layer) layer.refresh();
+        if (layer) await layer.refresh();
       }
     };
 
@@ -502,7 +503,10 @@
       refresh,
       resize: () => {
         if (state.map) state.map.invalidateSize();
-        if (gpsLayerCtl) gpsLayerCtl.refresh();
+        if (userCanViewPII) {
+          const layer = gpsLayerCtl || ensureGPSLayer();
+          if (layer) layer.refresh().catch((err) => console.error(err));
+        }
       },
       resetDrill: async () => {
         state.path = [{ id: "ZM", name: "Zambia", levelLabel: "Country", levelIndex: 0 }];

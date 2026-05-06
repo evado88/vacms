@@ -5,15 +5,27 @@ from django.contrib.auth.models import Permission
 from django.urls import reverse
 
 from va_explorer.tests.factories import GroupFactory, UserFactory
-from va_explorer.va_data_management.models import Death, Pregnancy, PregnancyOutcome
+from va_explorer.va_data_management.models import (
+    Death,
+    Location,
+    Pregnancy,
+    PregnancyOutcome,
+    VerbalAutopsy,
+)
 
 
-def _make_user_with_perms(client, codenames):
+def _make_user_with_perms(client, codenames, *, location_restrictions=None):
     perms = list(Permission.objects.filter(codename__in=codenames))
     group = GroupFactory.create(permissions=perms)
-    user = UserFactory.create(groups=[group])
+    user = UserFactory.create(
+        groups=[group], location_restrictions=location_restrictions or []
+    )
     client.force_login(user)
     return user
+
+
+def _make_scoped_province(name="Scoped Province"):
+    return Location.add_root(name=name, location_type="province", is_active=True)
 
 
 @pytest.mark.django_db
@@ -131,6 +143,126 @@ class TestDeathsMapGPS:
         point = data["gps_points"][0]
         assert point["event_type"] == "death"
         assert point["latitude"] == -15.0
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    (
+        "endpoint_name",
+        "model",
+        "event_type",
+        "match_kwargs",
+        "other_kwargs",
+        "use_bulk_create",
+    ),
+    [
+        (
+            "va_analytics:pregnancy-map-api",
+            Pregnancy,
+            "pregnancy",
+            {
+                "key": "scoped-pregnancy-gps",
+                "PE_25": "-14.5 28.3",
+                "submissiondate": "2026-02-01",
+                "today": "2026-02-01",
+            },
+            {
+                "key": "outside-pregnancy-gps",
+                "PE_25": "-15.0 28.5",
+                "submissiondate": "2026-02-01",
+                "today": "2026-02-01",
+            },
+            False,
+        ),
+        (
+            "va_analytics:po-map-api",
+            PregnancyOutcome,
+            "pregnancy_outcome",
+            {
+                "key": "scoped-po-gps",
+                "gps": "-14.5 28.3",
+                "submissiondate": "2026-02-01",
+                "today": "2026-02-01",
+            },
+            {
+                "key": "outside-po-gps",
+                "gps": "-15.0 28.5",
+                "submissiondate": "2026-02-01",
+                "today": "2026-02-01",
+            },
+            False,
+        ),
+        (
+            "va_analytics:outcomes-deaths-map-api",
+            Death,
+            "death",
+            {
+                "key": "scoped-death-gps",
+                "DE_34": "-14.5 28.3",
+                "submissiondate": "2026-02-01",
+                "today": "2026-02-01",
+            },
+            {
+                "key": "outside-death-gps",
+                "DE_34": "-15.0 28.5",
+                "submissiondate": "2026-02-01",
+                "today": "2026-02-01",
+            },
+            True,
+        ),
+        (
+            "va_analytics:dashboard-api",
+            VerbalAutopsy,
+            "verbal_autopsy",
+            {
+                "instanceid": "scoped-va-gps",
+                "geopoint": "-14.5 28.3",
+                "Id10023": "2026-02-01",
+            },
+            {
+                "instanceid": "outside-va-gps",
+                "geopoint": "-15.0 28.5",
+                "Id10023": "2026-02-01",
+            },
+            False,
+        ),
+    ],
+)
+def test_location_scoped_pii_user_gets_only_scoped_gps_points(
+    client,
+    endpoint_name,
+    model,
+    event_type,
+    match_kwargs,
+    other_kwargs,
+    use_bulk_create,
+):
+    scoped_location = _make_scoped_province("Scoped Province")
+    match = {"province": "Scoped Province", **match_kwargs}
+    other = {"province": "Other Province", **other_kwargs}
+
+    if use_bulk_create:
+        model.objects.bulk_create([model(**match), model(**other)])
+    else:
+        model.objects.create(**match)
+        model.objects.create(**other)
+
+    _make_user_with_perms(
+        client,
+        ["view_dashboard", "view_pii"],
+        location_restrictions=[scoped_location],
+    )
+
+    data = client.get(reverse(endpoint_name), {"include_gps_points": "true"}).json()
+
+    assert data.get("gps_pii_denied") is False
+    assert data.get("gps_total") == 1
+    assert len(data["gps_points"]) == 1
+    point = data["gps_points"][0]
+    assert point["event_type"] == event_type
+    assert point["province"] == "Scoped Province"
+    assert point["latitude"] == -14.5
+    assert point["longitude"] == 28.3
 
 
 @pytest.mark.django_db
