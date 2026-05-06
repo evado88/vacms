@@ -28,6 +28,8 @@ def test_homepage_metrics_include_facility_and_community_vas_in_scope():
         province="Southern",
         district="District 1",
         community_va="no",
+        duplicate=False,
+        Id10017="Facility",
     )
     VerbalAutopsyFactory.create(
         instanceid="metrics-community-1",
@@ -38,6 +40,8 @@ def test_homepage_metrics_include_facility_and_community_vas_in_scope():
         ward="Ward 1",
         ea="EA 2001",
         community_va="yes",
+        duplicate=False,
+        Id10017="Community",
     )
     VerbalAutopsyFactory.create(
         instanceid="metrics-community-outside-1",
@@ -48,6 +52,8 @@ def test_homepage_metrics_include_facility_and_community_vas_in_scope():
         ward="Ward X",
         ea="EA X",
         community_va="yes",
+        duplicate=False,
+        Id10017="Outside",
     )
 
     user = UserFactory.create(location_restrictions=[province])

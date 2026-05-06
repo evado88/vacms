@@ -253,13 +253,17 @@ def test_trends_section_model_only(user: User):
 
 
 def _seed_home_dashboard_scope_data():
-    southern = LocationFactory.create(name="Southern", location_type="province")
+    southern = LocationFactory.create(
+        name="Southern", location_type="province", path="0001"
+    )
     southern_district = southern.add_child(name="Choma", location_type="district")
     southern_facility = southern_district.add_child(
         name="Choma Facility", location_type="facility"
     )
 
-    lusaka = LocationFactory.create(name="Lusaka", location_type="province")
+    lusaka = LocationFactory.create(
+        name="Lusaka", location_type="province", path="0002"
+    )
     lusaka_district = lusaka.add_child(name="Lusaka", location_type="district")
     lusaka_facility = lusaka_district.add_child(
         name="Lusaka Facility", location_type="facility"
@@ -324,23 +328,27 @@ def _seed_home_dashboard_scope_data():
         PO_41=today,
     )
 
-    Death.objects.create(
-        key="death-southern",
-        submissiondate=today,
-        today=today,
-        start=today,
-        province="Southern",
-        district="Choma",
-        DE_06=today,
-    )
-    Death.objects.create(
-        key="death-lusaka",
-        submissiondate=today,
-        today=today,
-        start=today,
-        province="Lusaka",
-        district="Lusaka",
-        DE_06=today,
+    Death.objects.bulk_create(
+        [
+            Death(
+                key="death-southern",
+                submissiondate=today,
+                today=today,
+                start=today,
+                province="Southern",
+                district="Choma",
+                DE_06=today,
+            ),
+            Death(
+                key="death-lusaka",
+                submissiondate=today,
+                today=today,
+                start=today,
+                province="Lusaka",
+                district="Lusaka",
+                DE_06=today,
+            ),
+        ]
     )
 
     VerbalAutopsyFactory.create(
@@ -422,11 +430,15 @@ def test_home_dashboard_kpis_include_last_30_days_counts():
             today=recorded_on,
             start=recorded_on,
         )
-        Death.objects.create(
-            key=f"death-{index}",
-            submissiondate=recorded_on,
-            today=recorded_on,
-            start=recorded_on,
+        Death.objects.bulk_create(
+            [
+                Death(
+                    key=f"death-{index}",
+                    submissiondate=recorded_on,
+                    today=recorded_on,
+                    start=recorded_on,
+                )
+            ]
         )
         va = VerbalAutopsyFactory.create(
             instanceid=f"va-{index}",
@@ -1331,11 +1343,12 @@ def test_mso_uses_only_va_base_names_and_fuzzy_maps_event_aggregates(user: User)
         province="Lusaka",
     )
 
-    death = Death.objects.create(
+    death = Death(
         DE_06="2024-02-03",
         province="Lusaka",
         enumerator="CSA_One_101",
     )
+    Death.objects.bulk_create([death])
     Event.objects.create(
         va=out_of_scope_va,
         death=death,
@@ -1695,7 +1708,7 @@ def test_csa_component_paginates_ten_rows_per_page(user: User):
     for idx in range(11):
         CSADailyTracker.objects.create(
             key=f"page-{idx}",
-            enumerator=f"CSA_{idx}",
+            enumerator=f"CSA_{idx}_Name",
             province="Lusaka",
             district="Lusaka",
             ward="Ward 1",
@@ -1716,7 +1729,7 @@ def test_mso_component_paginates_ten_rows_per_page(user: User):
 
     for idx in range(11):
         VerbalAutopsyFactory.create(
-            Id10010=f"MSO {idx}",
+            Id10010=f"MSO {idx} Name",
             Id10012="2024-02-01",
             Id10011="09:00:00",
             Id10481="2024-02-01 09:30:00",

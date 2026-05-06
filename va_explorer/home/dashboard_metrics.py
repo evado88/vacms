@@ -217,7 +217,7 @@ def _compute_homepage_metrics(user=None) -> dict[str, int]:
     total_people = HouseholdMember.objects.count()
     if user and getattr(user, "is_authenticated", False):
         total_people = HouseholdMember.objects.filter(
-            household__in=households_qs.values_list("pk", flat=True)
+            household_id__in=households_qs.values_list("key", flat=True)
         ).count()
     today_people = (
         HouseholdMember.objects.filter(

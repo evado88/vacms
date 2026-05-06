@@ -2,6 +2,8 @@ from django.core.cache import cache
 
 HOME_DASHBOARD_FASTPATH_VERSION_KEY = "home_dashboard_fastpath:version"
 HOME_DASHBOARD_PREWARM_KEY = "home_dashboard_fastpath:prewarm:nov_bundle:national_all"
+HOME_DASHBOARD_PREWARM_KPIS_KEY = "home_dashboard_fastpath:prewarm:kpis:national_all"
+HOME_DASHBOARD_PREWARM_CHART_KEY = "home_dashboard_fastpath:prewarm:chart:national_all"
 HOME_DASHBOARD_PREWARM_TTL = 6 * 60  # 6 minutes — refreshed every 5 min by beat task
 
 

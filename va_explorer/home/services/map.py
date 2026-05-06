@@ -1,0 +1,563 @@
+import logging
+from collections import Counter, defaultdict
+from datetime import datetime, time, timedelta
+
+from django.db.models import Max, OuterRef, Q, Subquery, TextField
+from django.db.models.functions import Greatest, Substr
+from django.utils import timezone
+from django.utils.dateparse import parse_date as django_parse_date
+from django.utils.dateparse import parse_datetime as django_parse_datetime
+
+from va_explorer.home.services.common import (
+    apply_text_geography_filter,
+    build_date_expr,
+    parse_submission_timestamp,
+)
+from va_explorer.home.services.nov import CORE_EVENT_DATE_FIELDS, VA_DATE_FIELDS
+from va_explorer.utils.profiling import timed_block
+from va_explorer.va_analytics.utils.loading import (
+    _derive_va_geo_levels,
+    _resolve_geo_name,
+)
+from va_explorer.va_data_management.models import (
+    Death,
+    Location,
+    Pregnancy,
+    PregnancyOutcome,
+    VerbalAutopsy,
+)
+from va_explorer.va_data_management.utils.location_access import (
+    restrict_queryset_to_user_locations,
+)
+
+logger = logging.getLogger(__name__)
+
+HOME_GEO_LEVEL_LABELS = {
+    "province": "Province",
+    "district": "District",
+    "constituency": "Constituency",
+    "ward": "Ward",
+    "ea": "EA",
+}
+
+
+def _normalize_geo_value(value, level=None):
+    normalized = " ".join(str(value or "").split()).strip()
+    if not normalized:
+        return ""
+    if normalized.lower() in {"nan", "none", "null", "na", "n/a"}:
+        return ""
+    if level:
+        return _resolve_geo_name(normalized, level)
+    return normalized
+
+
+def _serialize_geo_counter_with_breakdown(counter, output_key, breakdown_counters):
+    rows = []
+    for name, count in sorted(counter.items(), key=lambda item: item[0].lower()):
+        row = {output_key: name, "count": count}
+        for field_name, field_counter in breakdown_counters.items():
+            row[field_name] = int(field_counter.get(name, 0))
+        rows.append(row)
+    return rows
+
+
+def _parse_home_map_filters(request):
+    time_preset = (request.GET.get("time_preset") or "all_time").strip().lower()
+    start_raw = (request.GET.get("start_datetime") or "").strip()
+    end_raw = (request.GET.get("end_datetime") or "").strip()
+    map_view = (request.GET.get("map_view") or "Province").strip() or "Province"
+    geography_level = (request.GET.get("geography_level") or "").strip().lower()
+    geography_value = (request.GET.get("geography_value") or "").strip()
+
+    now = timezone.localtime(timezone.now())
+    start_dt = None
+    end_dt = now
+
+    if time_preset == "last_30_days":
+        start_dt = now - timedelta(days=30)
+    elif time_preset == "last_7_days":
+        start_dt = now - timedelta(days=7)
+    elif time_preset == "last_24_hours":
+        start_dt = now - timedelta(hours=24)
+
+    parsed_start = django_parse_datetime(start_raw) if start_raw else None
+    parsed_end = django_parse_datetime(end_raw) if end_raw else None
+    if parsed_start is None and start_raw:
+        parsed_date = django_parse_date(start_raw)
+        if parsed_date:
+            parsed_start = datetime.combine(parsed_date, time.min)
+    if parsed_end is None and end_raw:
+        parsed_date = django_parse_date(end_raw)
+        if parsed_date:
+            parsed_end = datetime.combine(parsed_date, time.max)
+
+    if parsed_start is not None:
+        if timezone.is_naive(parsed_start):
+            parsed_start = timezone.make_aware(
+                parsed_start, timezone.get_current_timezone()
+            )
+        start_dt = timezone.localtime(parsed_start)
+    if parsed_end is not None:
+        if timezone.is_naive(parsed_end):
+            parsed_end = timezone.make_aware(
+                parsed_end, timezone.get_current_timezone()
+            )
+        end_dt = timezone.localtime(parsed_end)
+
+    if start_dt and end_dt and start_dt > end_dt:
+        start_dt, end_dt = end_dt, start_dt
+
+    allowed_levels = {"province", "district", "constituency", "ward", "ea"}
+    if geography_level not in allowed_levels:
+        geography_level = ""
+        geography_value = ""
+
+    return {
+        "time_preset": time_preset,
+        "start_dt": start_dt,
+        "end_dt": end_dt,
+        "map_view": map_view,
+        "geography_level": geography_level,
+        "geography_value": geography_value,
+    }
+
+
+def _latest_timestamp_from_mapping(row, date_fields):
+    timestamps = [
+        parse_submission_timestamp(row.get(field_name)) for field_name in date_fields
+    ]
+    timestamps = [timestamp for timestamp in timestamps if timestamp is not None]
+    return max(timestamps) if timestamps else None
+
+
+def _latest_timestamp_from_object(obj, date_fields):
+    timestamps = [
+        parse_submission_timestamp(getattr(obj, field_name, None))
+        for field_name in date_fields
+    ]
+    timestamps = [timestamp for timestamp in timestamps if timestamp is not None]
+    return max(timestamps) if timestamps else None
+
+
+def _latest_geo_by_identifier(queryset, key_field, date_fields, start_dt, end_dt):
+    geo_fields = ("province", "district", "constituency", "ward", "ea")
+    date_exprs = [build_date_expr(queryset.model, f) for f in date_fields]
+    latest_expr = (
+        Greatest(*date_exprs, output_field=TextField())
+        if len(date_exprs) > 1
+        else date_exprs[0]
+    )
+
+    base = queryset.exclude(**{f"{key_field}__isnull": True}).exclude(**{key_field: ""})
+
+    max_rows = (
+        base.values(key_field)
+        .annotate(_latest_ts=Max(latest_expr))
+        .values_list(key_field, "_latest_ts")
+        .iterator()
+    )
+    max_ts_by_key = {}
+    for identifier, raw_ts in max_rows:
+        if not identifier or not raw_ts:
+            continue
+        ts = parse_submission_timestamp(raw_ts)
+        if ts is None:
+            continue
+        if start_dt and ts < start_dt:
+            continue
+        if end_dt and ts > end_dt:
+            continue
+        max_ts_by_key[identifier] = ts
+
+    if not max_ts_by_key:
+        return {}
+
+    latest = {}
+    for row in (
+        base.filter(**{f"{key_field}__in": list(max_ts_by_key)})
+        .values(key_field, *date_fields, *geo_fields)
+        .iterator(chunk_size=2000)
+    ):
+        identifier = row.get(key_field)
+        if not identifier or identifier not in max_ts_by_key:
+            continue
+        row_ts = _latest_timestamp_from_mapping(row, date_fields)
+        if row_ts is None:
+            continue
+        if start_dt and row_ts < start_dt:
+            continue
+        if end_dt and row_ts > end_dt:
+            continue
+        if identifier in latest and row_ts <= latest[identifier][0]:
+            continue
+        latest[identifier] = (
+            row_ts,
+            {
+                "province": _normalize_geo_value(
+                    row.get("province"), HOME_GEO_LEVEL_LABELS["province"]
+                ),
+                "district": _normalize_geo_value(
+                    row.get("district"), HOME_GEO_LEVEL_LABELS["district"]
+                ),
+                "constituency": _normalize_geo_value(
+                    row.get("constituency"), HOME_GEO_LEVEL_LABELS["constituency"]
+                ),
+                "ward": _normalize_geo_value(
+                    row.get("ward"), HOME_GEO_LEVEL_LABELS["ward"]
+                ),
+                "ea": _normalize_geo_value(row.get("ea"), HOME_GEO_LEVEL_LABELS["ea"]),
+            },
+        )
+    return latest
+
+
+def _annotate_va_location_names(queryset):
+    return queryset.annotate(
+        province_name_from_location=Subquery(
+            Location.objects.values("name").filter(
+                Q(path=Substr(OuterRef("location__path"), 1, 8)),
+                Q(depth=2),
+            )[:1]
+        ),
+        district_name_from_location=Subquery(
+            Location.objects.values("name").filter(
+                Q(path=Substr(OuterRef("location__path"), 1, 12)),
+                Q(depth=3),
+            )[:1]
+        ),
+    )
+
+
+def _va_matches_resolved_geography(va, geography_level, geography_value):
+    if not geography_level or not geography_value:
+        return True
+    level_label = HOME_GEO_LEVEL_LABELS.get(geography_level)
+    if not level_label:
+        return True
+
+    expected = _normalize_geo_value(geography_value, level_label).casefold()
+    if not expected:
+        return True
+
+    geo = _derive_va_geo_levels(va)
+    actual = _normalize_geo_value(geo.get(level_label), level_label).casefold()
+    return bool(actual and actual == expected)
+
+
+def _apply_va_geography_filter(queryset, geography_level, geography_value):
+    if not geography_level or geography_level == "national" or not geography_value:
+        return queryset
+
+    matching_ids = []
+    for va in (
+        _annotate_va_location_names(queryset)
+        .select_related("location", "cluster")
+        .iterator(chunk_size=2000)
+    ):
+        if _va_matches_resolved_geography(va, geography_level, geography_value):
+            matching_ids.append(va.pk)
+    return queryset.filter(pk__in=matching_ids)
+
+
+def _latest_va_geo_by_identifier(queryset, start_dt, end_dt):
+    key_field = "instanceid"
+    date_exprs = [build_date_expr(queryset.model, field) for field in VA_DATE_FIELDS]
+    latest_expr = Greatest(*date_exprs, output_field=TextField())
+    base = queryset.exclude(instanceid__isnull=True).exclude(instanceid="")
+
+    max_rows = (
+        base.values(key_field)
+        .annotate(_latest_ts=Max(latest_expr))
+        .values_list(key_field, "_latest_ts")
+        .iterator()
+    )
+    max_ts_by_key = {}
+    for identifier, raw_ts in max_rows:
+        if not identifier or not raw_ts:
+            continue
+        ts = parse_submission_timestamp(raw_ts)
+        if ts is None:
+            continue
+        if start_dt and ts < start_dt:
+            continue
+        if end_dt and ts > end_dt:
+            continue
+        max_ts_by_key[identifier] = ts
+
+    if not max_ts_by_key:
+        return {}
+
+    annotated = _annotate_va_location_names(
+        base.filter(instanceid__in=list(max_ts_by_key))
+    )
+
+    latest = {}
+    for va in annotated.select_related("location", "cluster").iterator(chunk_size=2000):
+        identifier = va.instanceid
+        if not identifier or identifier not in max_ts_by_key:
+            continue
+        row_ts = _latest_timestamp_from_object(va, VA_DATE_FIELDS)
+        if row_ts is None:
+            continue
+        if start_dt and row_ts < start_dt:
+            continue
+        if end_dt and row_ts > end_dt:
+            continue
+        if identifier in latest and row_ts <= latest[identifier][0]:
+            continue
+
+        geo = _derive_va_geo_levels(va)
+        latest[identifier] = (
+            row_ts,
+            {
+                "province": geo.get("Province", ""),
+                "district": geo.get("District", ""),
+                "constituency": geo.get("Constituency", ""),
+                "ward": geo.get("Ward", ""),
+                "ea": geo.get("EA", ""),
+            },
+        )
+    return latest
+
+
+def build_home_combined_map_payload(request):
+    filters = _parse_home_map_filters(request)
+    geography_level = filters["geography_level"]
+    geography_value = filters["geography_value"]
+    start_dt = filters["start_dt"]
+    end_dt = filters["end_dt"]
+
+    with timed_block("home.map.qs.build", request=request):
+        user = getattr(request, "user", None)
+        pregnancies_qs = apply_text_geography_filter(
+            restrict_queryset_to_user_locations(Pregnancy.objects.all(), user),
+            Pregnancy,
+            geography_level or "national",
+            geography_value,
+        )
+        outcomes_qs = apply_text_geography_filter(
+            restrict_queryset_to_user_locations(PregnancyOutcome.objects.all(), user),
+            PregnancyOutcome,
+            geography_level or "national",
+            geography_value,
+        )
+        deaths_qs = apply_text_geography_filter(
+            restrict_queryset_to_user_locations(Death.objects.all(), user),
+            Death,
+            geography_level or "national",
+            geography_value,
+        )
+        if user:
+            vas_qs = user.verbal_autopsies().filter(
+                deleted_at__isnull=True, duplicate=False
+            )
+        else:
+            vas_qs = VerbalAutopsy.objects.filter(
+                deleted_at__isnull=True, duplicate=False
+            )
+        vas_qs = _apply_va_geography_filter(vas_qs, geography_level, geography_value)
+
+    with timed_block("home.map.aggregate", request=request):
+        model_sets = (
+            (
+                "pregnancies_count",
+                _latest_geo_by_identifier(
+                    pregnancies_qs,
+                    "key",
+                    CORE_EVENT_DATE_FIELDS,
+                    start_dt,
+                    end_dt,
+                ),
+            ),
+            (
+                "pregnancy_outcomes_count",
+                _latest_geo_by_identifier(
+                    outcomes_qs,
+                    "key",
+                    CORE_EVENT_DATE_FIELDS,
+                    start_dt,
+                    end_dt,
+                ),
+            ),
+            (
+                "deaths_count",
+                _latest_geo_by_identifier(
+                    deaths_qs,
+                    "key",
+                    CORE_EVENT_DATE_FIELDS,
+                    start_dt,
+                    end_dt,
+                ),
+            ),
+            (
+                "verbal_autopsies_count",
+                _latest_va_geo_by_identifier(vas_qs, start_dt, end_dt),
+            ),
+        )
+
+        province_counts = Counter()
+        district_counts = Counter()
+        constituency_counts = Counter()
+        ward_counts = Counter()
+        ea_counts = Counter()
+
+        province_type_counts = defaultdict(Counter)
+        district_type_counts = defaultdict(Counter)
+        constituency_type_counts = defaultdict(Counter)
+        ward_type_counts = defaultdict(Counter)
+        ea_type_counts = defaultdict(Counter)
+        total_events = 0
+
+        for type_key, latest_map in model_sets:
+            total_events += len(latest_map)
+            for _identifier, (_timestamp, geo) in latest_map.items():
+                if geo.get("province"):
+                    province_name = geo["province"]
+                    province_counts[province_name] += 1
+                    province_type_counts[type_key][province_name] += 1
+                if geo.get("district"):
+                    district_name = geo["district"]
+                    district_counts[district_name] += 1
+                    district_type_counts[type_key][district_name] += 1
+                if geo.get("constituency"):
+                    constituency_name = geo["constituency"]
+                    constituency_counts[constituency_name] += 1
+                    constituency_type_counts[type_key][constituency_name] += 1
+                if geo.get("ward"):
+                    ward_name = geo["ward"]
+                    ward_counts[ward_name] += 1
+                    ward_type_counts[type_key][ward_name] += 1
+                if geo.get("ea"):
+                    ea_name = geo["ea"]
+                    ea_counts[ea_name] += 1
+                    ea_type_counts[type_key][ea_name] += 1
+
+    province_sums = _serialize_geo_counter_with_breakdown(
+        province_counts,
+        "province_name",
+        province_type_counts,
+    )
+    district_sums = _serialize_geo_counter_with_breakdown(
+        district_counts,
+        "district_name",
+        district_type_counts,
+    )
+    constituency_sums = _serialize_geo_counter_with_breakdown(
+        constituency_counts,
+        "constituency_name",
+        constituency_type_counts,
+    )
+    ward_sums = _serialize_geo_counter_with_breakdown(
+        ward_counts,
+        "ward_name",
+        ward_type_counts,
+    )
+    ea_sums = _serialize_geo_counter_with_breakdown(
+        ea_counts,
+        "ea_name",
+        ea_type_counts,
+    )
+
+    counts_by_view = {
+        "Province": [
+            {"name": row["province_name"], "count": row["count"]}
+            for row in province_sums
+        ],
+        "District": [
+            {"name": row["district_name"], "count": row["count"]}
+            for row in district_sums
+        ],
+        "Constituency": [
+            {"name": row["constituency_name"], "count": row["count"]}
+            for row in constituency_sums
+        ],
+        "Ward": [
+            {"name": row["ward_name"], "count": row["count"]} for row in ward_sums
+        ],
+        "EA": [{"name": row["ea_name"], "count": row["count"]} for row in ea_sums],
+    }
+
+    payload = {
+        "map_view": filters["map_view"],
+        "counts": counts_by_view.get(filters["map_view"], counts_by_view["Province"]),
+        "province_counts": counts_by_view["Province"],
+        "district_counts": counts_by_view["District"],
+        "constituency_counts": counts_by_view["Constituency"],
+        "ward_counts": counts_by_view["Ward"],
+        "ea_counts": counts_by_view["EA"],
+        "map_total_events": total_events,
+        "map_province_sums": province_sums,
+        "map_district_sums": district_sums,
+        "map_constituency_sums": constituency_sums,
+        "map_ward_sums": ward_sums,
+        "map_ea_sums": ea_sums,
+    }
+
+    _attach_home_gps_payload(
+        payload,
+        request,
+        pregnancies_qs=pregnancies_qs,
+        outcomes_qs=outcomes_qs,
+        deaths_qs=deaths_qs,
+        vas_qs=vas_qs,
+    )
+    return payload
+
+
+def _attach_home_gps_payload(
+    payload, request, *, pregnancies_qs, outcomes_qs, deaths_qs, vas_qs
+):
+    """Attach combined GPS points across all four event models to the home payload."""
+    from va_explorer.va_analytics.views import (
+        GPS_DEFAULT_LIMIT,
+        _build_gps_points,
+        _gps_request_params,
+        _qs_cache_signature,
+    )
+
+    include, limit, offset = _gps_request_params(request)
+    if not include:
+        return
+    user = getattr(request, "user", None)
+    if not (user and user.is_authenticated and user.has_perm("va_analytics.view_pii")):
+        logger.info(
+            "PII GPS access denied for home overview",
+            extra={"user_id": getattr(user, "id", None), "path": request.path},
+        )
+        payload["gps_points"] = []
+        payload["gps_total"] = 0
+        payload["gps_truncated"] = False
+        payload["gps_pii_denied"] = True
+        return
+
+    sources = (
+        (pregnancies_qs, "PE_25", "pregnancy"),
+        (outcomes_qs, "gps", "pregnancy_outcome"),
+        (deaths_qs, "DE_34", "death"),
+        (vas_qs, "geopoint", "verbal_autopsy"),
+    )
+    combined_points = []
+    combined_total = 0
+    truncated_any = False
+    remaining = max(0, min(limit, GPS_DEFAULT_LIMIT))
+    for qs, gps_field, event_type in sources:
+        per_model_limit = remaining if remaining > 0 else 0
+        points, total, truncated = _build_gps_points(
+            qs,
+            gps_field=gps_field,
+            event_type=event_type,
+            limit=per_model_limit,
+            offset=0,
+            cache_signature=_qs_cache_signature(qs),
+        )
+        combined_total += total
+        if truncated:
+            truncated_any = True
+        if points:
+            combined_points.extend(points)
+            remaining = max(0, remaining - len(points))
+    payload["gps_points"] = combined_points
+    payload["gps_total"] = combined_total
+    payload["gps_truncated"] = truncated_any or combined_total > len(combined_points)
+    payload["gps_pii_denied"] = False

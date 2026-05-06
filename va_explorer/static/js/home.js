@@ -190,7 +190,18 @@ const setVAChart = (x, y, canvas) => {
 
   const existingChart = chartInstances.get(canvas);
   if (existingChart) {
-    existingChart.destroy();
+    existingChart.data.labels = x;
+    if (existingChart.data.datasets[0]) {
+      existingChart.data.datasets[0].data = y;
+      existingChart.data.datasets[0].borderColor = BORDER_COLOR;
+    } else {
+      existingChart.data.datasets = [{
+        data: y,
+        borderColor: BORDER_COLOR,
+      }];
+    }
+    existingChart.update("none");
+    return;
   }
 
   const chart = new Chart(ctx, {
