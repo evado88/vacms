@@ -284,7 +284,6 @@
     const points = (data && data.points) || [];
     const counts = (data && data.counts) || { positive: 0, neutral: 0, negative: 0 };
     const range = (data && data.range) || {};
-    const monthlyMeans = (data && data.monthly_means) || [];
 
     setEmptyState("rumorDetailsSentimentEmpty", points.length === 0);
     renderSentimentCounts(counts);
@@ -302,8 +301,6 @@
     const rangeEnd = monthToIndex(range.end_month);
     const minX = (rangeStart != null) ? rangeStart - 0.5 : Math.min(...allX) - 0.5;
     const maxX = (rangeEnd != null) ? rangeEnd + 0.5 : Math.max(...allX) + 0.5;
-
-    const trendPoints = monthlyMeans.map((m) => ({ x: m.x, y: m.mean, count: m.count }));
 
     sentimentChart = new Chart(canvas.getContext("2d"), {
       type: "bubble",
@@ -330,20 +327,6 @@
             borderColor: "rgba(220, 38, 38, 0.9)",
             borderWidth: 1,
           },
-          {
-            type: "line",
-            label: "Monthly mean",
-            data: trendPoints,
-            borderColor: "rgba(15, 23, 42, 0.65)",
-            backgroundColor: "rgba(15, 23, 42, 0.65)",
-            borderWidth: 1.5,
-            pointRadius: 3,
-            pointHoverRadius: 4,
-            pointStyle: "circle",
-            tension: 0.25,
-            fill: false,
-            order: 0,
-          },
         ],
       },
       options: {
@@ -357,18 +340,10 @@
               title: (items) => {
                 const it = items?.[0];
                 if (!it) return "";
-                if (it.dataset?.label === "Monthly mean") {
-                  return indexToMonthLabel(it.raw?.x);
-                }
                 const m = it.raw?.meta;
                 return m ? `${m.date} · ${indexToMonthLabel(monthToIndex(m.month))}` : "";
               },
               label: (item) => {
-                if (item.dataset?.label === "Monthly mean") {
-                  const v = Number(item.raw?.y) || 0;
-                  const n = Number(item.raw?.count) || 0;
-                  return [`Monthly mean: ${v.toFixed(2)}`, `Reports in month: ${n}`];
-                }
                 const m = item.raw?.meta;
                 if (!m) return "";
                 const desc = m.description.length > 140 ? `${m.description.slice(0, 140)}…` : m.description;
