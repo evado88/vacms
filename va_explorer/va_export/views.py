@@ -1,4 +1,5 @@
 import json
+import re
 import zipfile
 from urllib.parse import urlencode
 
@@ -13,19 +14,24 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.generic import TemplateView, View
 from django.views.generic.edit import FormView
 
+from va_explorer.users.utils.location_mapping import map_srs_clusters_to_locations
 from va_explorer.utils.mixins import CustomAuthMixin
 from va_explorer.va_data_management.constants import PII_FIELDS, REDACTED_STRING
-from va_explorer.users.utils.location_mapping import map_srs_clusters_to_locations
 from va_explorer.va_data_management.models import (
+    CSADailyTracker,
     Death,
     Household,
     Location,
+    ODKFormChoice,
     Pregnancy,
     PregnancyOutcome,
     SRSClusterLocation,
 )
+from va_explorer.va_data_management.utils.location_access import (
+    _allowed_location_names,
+    restrict_queryset_to_user_locations,
+)
 from va_explorer.va_export.forms import VADownloadForm
-
 
 EXPORT_DATASETS = {
     "verbalautopsy",
@@ -33,7 +39,37 @@ EXPORT_DATASETS = {
     "pregnancy",
     "pregnancy_outcome",
     "death",
+    "rumor_surveillance",
 }
+
+_RUMOR_SURVEILLANCE_COLUMNS = [
+    "id",
+    "key",
+    "submissiondate",
+    "instanceid",
+    "instancename",
+    "submitterid",
+    "submittername",
+    "formversion",
+    "deviceid",
+    "today",
+    "start",
+    "province",
+    "district",
+    "constituency",
+    "ward",
+    "ea",
+    "enumerator",
+    "hh_gps_latitude",
+    "hh_gps_longitude",
+    "hh_gps_altitude",
+    "hh_gps_accuracy",
+    "rum",
+    "sorce_rum",
+    "other_rum",
+    "desci",
+    "ru_num",
+]
 
 
 def _normalize_export_format(raw_value, dataset):
@@ -65,7 +101,7 @@ def _build_geo_filter_from_srs(loc_query, field_mapping):
         descendants = descendants | node.get_descendants()
     descendants = descendants.distinct()
 
-    level_names = {level: set() for level in field_mapping.keys()}
+    level_names = {level: set() for level in field_mapping}
     for node in descendants:
         level = str(node.location_type or "").lower()
         if level in level_names and node.name:
@@ -113,10 +149,117 @@ def _apply_date_filter(qs, start_date, end_date, date_field):
     return qs
 
 
+def _normalize_odk_code(val):
+    """Normalise an ODK choice value so '05', '5', and '5.0' all map to '5'."""
+    text = str(val or "").strip()
+    if re.fullmatch(r"\d+", text):
+        return str(int(text))
+    if re.fullmatch(r"\d+\.0+", text):
+        return str(int(text.split(".", 1)[0]))
+    return text
+
+
+def _build_odk_label_map(field_name, form_name=None):
+    """Return {normalised_code: human_readable_label} from ODKFormChoice.
+
+    When form_name is None all forms are searched (first match wins), which is
+    needed for geographic fields (province/district/constituency/ward) whose
+    choices are stored under the pregnancy/pregnancy_outcome forms.
+    """
+    qs = ODKFormChoice.objects.filter(field_name=field_name).order_by("id")
+    if form_name is not None:
+        qs = qs.filter(form_name=form_name)
+    lookup = {}
+    for row in qs.values("value", "label"):
+        key = _normalize_odk_code(row["value"])
+        if key and key not in lookup:
+            lookup[key] = (row["label"] or "").strip()
+    return lookup
+
+
+def _decode_odk_field(label_map, raw_value):
+    """Resolve a coded field value to its human-readable label."""
+    text = str(raw_value or "").strip()
+    if not text:
+        return text
+    return label_map.get(_normalize_odk_code(text), text)
+
+
+def _get_srs_level_names(loc_query):
+    """Return {level: set_of_names} for all SRS descendants of the selected nodes."""
+    if not loc_query:
+        return {}
+    id_list = [int(pk) for pk in str(loc_query).split(",") if pk]
+    if not id_list:
+        return {}
+    selected = SRSClusterLocation.objects.filter(pk__in=id_list)
+    descendants = selected
+    for node in selected:
+        descendants = descendants | node.get_descendants()
+    descendants = descendants.distinct()
+    level_names: dict[str, set] = {}
+    for node in descendants:
+        level = str(node.location_type or "").lower()
+        if node.name:
+            level_names.setdefault(level, set()).add(str(node.name).strip())
+    return level_names
+
+
+def _export_rumor_surveillance(request, start_date, end_date, loc_query):
+    queryset = (
+        CSADailyTracker.objects.exclude(desci__isnull=True)
+        .exclude(desci="")
+        .values(*_RUMOR_SURVEILLANCE_COLUMNS)
+    )
+    queryset = _apply_date_filter(queryset, start_date, end_date, "today")
+
+    dataset_df = pd.DataFrame.from_records(queryset)
+
+    if not dataset_df.empty:
+        # Decode province/district/constituency/ward from ODK codes to labels.
+        # The household form choices share the same geographic code table.
+        for col in ("province", "district", "constituency", "ward"):
+            if col in dataset_df.columns:
+                label_map = _build_odk_label_map(col)
+                dataset_df[col] = dataset_df[col].apply(
+                    lambda v, m=label_map: _decode_odk_field(m, v)
+                )
+
+        # Enforce user location restrictions on the decoded DataFrame.
+        # (Cannot apply ORM-level scoping because codes ≠ names stored in Location.)
+        user_allowed = _allowed_location_names(request.user)
+        if user_allowed:
+            user_mask = pd.Series(False, index=dataset_df.index)
+            for level, names in user_allowed.items():
+                if level in dataset_df.columns and names:
+                    user_mask |= dataset_df[level].isin(names)
+            dataset_df = dataset_df[user_mask]
+
+        # Apply explicit location filter after decoding (SRS names are human-readable).
+        if loc_query:
+            level_names = _get_srs_level_names(loc_query)
+            if level_names:
+                mask = pd.Series(False, index=dataset_df.index)
+                for level, names in level_names.items():
+                    if level in dataset_df.columns and names:
+                        mask |= dataset_df[level].isin(names)
+                dataset_df = dataset_df[mask]
+
+    return _build_zip_response(
+        filename="rumor_surveillance.csv.zip",
+        body=("rumor_surveillance_download.csv", dataset_df.to_csv(index=False)),
+    )
+
+
 def _export_non_va_dataset(request, dataset, params):
     start_date = params.get("start_date") or None
     end_date = params.get("end_date") or None
     loc_query = params.get("locations") or None
+
+    # Rumor surveillance has coded location values that need ODK-choice decoding,
+    # so it uses its own export path rather than the shared geo-filter pattern.
+    if dataset == "rumor_surveillance":
+        return _export_rumor_surveillance(request, start_date, end_date, loc_query)
 
     field_mapping = {
         "province": "province",
@@ -127,20 +270,35 @@ def _export_non_va_dataset(request, dataset, params):
     }
     geo_filter = _build_geo_filter_from_srs(loc_query, field_mapping)
 
+    _household_field_mapping = {
+        "province": "province",
+        "district": "district",
+        "constituency": "constituency",
+        "ward": "ward",
+    }
+
     if dataset == "household":
-        queryset = Household.objects.all()
+        queryset = restrict_queryset_to_user_locations(
+            Household.objects.all(), request.user, _household_field_mapping
+        )
         date_field = "today"
         filename = "household_download.csv"
     elif dataset == "pregnancy":
-        queryset = Pregnancy.objects.all()
+        queryset = restrict_queryset_to_user_locations(
+            Pregnancy.objects.all(), request.user
+        )
         date_field = "today"
         filename = "pregnancy_download.csv"
     elif dataset == "pregnancy_outcome":
-        queryset = PregnancyOutcome.objects.all()
+        queryset = restrict_queryset_to_user_locations(
+            PregnancyOutcome.objects.all(), request.user
+        )
         date_field = "today"
         filename = "pregnancy_outcome_download.csv"
     else:
-        queryset = Death.objects.all()
+        queryset = restrict_queryset_to_user_locations(
+            Death.objects.all(), request.user
+        )
         date_field = "today"
         filename = "death_download.csv"
 
@@ -309,7 +467,13 @@ class VaApi(CustomAuthMixin, View):
                 if va.get("cluster_id") in cluster_ancestors:
                     for ancestor in cluster_ancestors[va["cluster_id"]]:
                         loc_type = str(ancestor.location_type or "").lower()
-                        if loc_type in {"province", "district", "constituency", "ward", "ea"}:
+                        if loc_type in {
+                            "province",
+                            "district",
+                            "constituency",
+                            "ward",
+                            "ea",
+                        }:
                             va[loc_type] = _first_non_empty(
                                 va.get(loc_type),
                                 ancestor.name,
@@ -322,7 +486,9 @@ class VaApi(CustomAuthMixin, View):
                 va["ea"] = _first_non_empty(va.get("ea"))
 
                 # Clean up location fields.
-                va["location"] = _first_non_empty(va.get("loc_name"), va.get("cluster_name"))
+                va["location"] = _first_non_empty(
+                    va.get("loc_name"), va.get("cluster_name")
+                )
                 del (va["loc_name"], va["loc_id"], va["cluster_name"], va["cluster_id"])
 
             # convert results to dataframe

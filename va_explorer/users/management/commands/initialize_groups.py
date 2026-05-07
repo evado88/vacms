@@ -6,12 +6,13 @@ from va_explorer.users.models import User
 from va_explorer.va_analytics.models import Dashboard
 from va_explorer.va_data_cleanup.models import DataCleanup
 from va_explorer.va_data_management.models import (
-    VerbalAutopsy,
+    Death,
     Household,
     Pregnancy,
     PregnancyOutcome,
-    Death,
+    VerbalAutopsy,
 )
+from va_explorer.vacms.cmsmodels.events import Event
 
 GROUPS_PERMISSIONS = {
     "Admins": {
@@ -27,6 +28,7 @@ GROUPS_PERMISSIONS = {
         Pregnancy: ["view_pregnancy", "change_pregnancy"],
         PregnancyOutcome: ["view_pregnancyoutcome", "change_pregnancyoutcome"],
         Death: ["view_death", "change_death"],
+        Event: ["view_event", "change_event"],
         DataCleanup: ["view_datacleanup", "download", "bulk_download"],
     },
     "Data Managers": {
@@ -40,6 +42,7 @@ GROUPS_PERMISSIONS = {
         Pregnancy: ["view_pregnancy", "change_pregnancy"],
         PregnancyOutcome: ["view_pregnancyoutcome", "change_pregnancyoutcome"],
         Death: ["view_death", "change_death"],
+        Event: ["view_event", "change_event"],
         DataCleanup: ["view_datacleanup", "download", "bulk_download"],
     },
     "Data Viewers": {
@@ -50,18 +53,21 @@ GROUPS_PERMISSIONS = {
         Pregnancy: ["view_pregnancy"],
         PregnancyOutcome: ["view_pregnancyoutcome"],
         Death: ["view_death"],
+        Event: [],
         DataCleanup: [],
     },
     "Senior Management": {
         Dashboard: ["view_dashboard", "supervise_users"],
         User: [],
         VerbalAutopsy: [],
+        Event: [],
         DataCleanup: [],
     },
     "Field Workers": {
         Dashboard: ["view_dashboard"],
         User: [],
         VerbalAutopsy: ["view_verbalautopsy"],
+        Event: [],
         DataCleanup: [],
     },
     "Mortality Surveillance Officer": {
@@ -75,6 +81,7 @@ GROUPS_PERMISSIONS = {
         Pregnancy: ["view_pregnancy"],
         PregnancyOutcome: ["view_pregnancyoutcome"],
         Death: ["view_death"],
+        Event: ["view_event", "change_event"],
         DataCleanup: ["view_datacleanup", "download", "bulk_download"],
     },
     "Community Surveillance Officer": {
@@ -88,6 +95,7 @@ GROUPS_PERMISSIONS = {
         Pregnancy: ["view_pregnancy"],
         PregnancyOutcome: ["view_pregnancyoutcome"],
         Death: ["view_death"],
+        Event: ["view_event", "change_event"],
         DataCleanup: ["view_datacleanup", "download", "bulk_download"],
     },
 }

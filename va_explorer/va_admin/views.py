@@ -1,3 +1,4 @@
+import csv
 import io
 import json
 import os
@@ -8,8 +9,8 @@ from datetime import timedelta
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.core.management import call_command
+from django.http import HttpResponseForbidden, JsonResponse, StreamingHttpResponse
 from django.middleware.csrf import get_token
-from django.http import HttpResponseForbidden, JsonResponse
 from django.shortcuts import render
 from django.utils import timezone
 from django.utils.dateparse import parse_date as django_parse_date
@@ -26,7 +27,6 @@ from va_explorer.va_admin.command_registry import (
 from va_explorer.va_admin.models import AdminPanelAlert
 from va_explorer.vacms.models import AdminCommandRun
 
-
 PRODUCTION_SETTINGS_MODULE = "config.settings.production"
 DISABLED_IN_PRODUCTION = {"dummify_and_dump"}
 MAX_ALERT_FEED_ITEMS = 60
@@ -41,7 +41,7 @@ def _is_production_environment():
 
 
 def _client_ip(request):
-    forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR", "")
+    forwarded_for = request.headers.get("x-forwarded-for", "")
     if forwarded_for:
         return forwarded_for.split(",")[0].strip()
     return str(request.META.get("REMOTE_ADDR", "") or "")
@@ -72,14 +72,18 @@ def _serialize_alert(alert):
         "category": alert.get_category_display(),
         "severity": alert.get_severity_display(),
         "severity_level": alert.severity,
-        "created_at": timezone.localtime(alert.created_at).strftime("%Y-%m-%d %H:%M:%S"),
+        "created_at": timezone.localtime(alert.created_at).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        ),
         "color_class": _alert_color_class(alert),
     }
 
 
 def _fetch_alert_feed(limit=MAX_ALERT_FEED_ITEMS):
     alerts = list(
-        AdminPanelAlert.objects.select_related("user").order_by("-created_at")[:max(limit * 2, limit)]
+        AdminPanelAlert.objects.select_related("user").order_by("-created_at")[
+            : max(limit * 2, limit)
+        ]
     )
     alerts.sort(key=_alert_rank_score, reverse=True)
     return alerts[:limit]
@@ -103,7 +107,11 @@ def _record_alert(
     try:
         _prune_old_alerts()
         AdminPanelAlert.objects.create(
-            user=request.user if getattr(request.user, "is_authenticated", False) else None,
+            user=(
+                request.user
+                if getattr(request.user, "is_authenticated", False)
+                else None
+            ),
             category=category,
             severity=severity,
             title=title[:255],
@@ -112,7 +120,7 @@ def _record_alert(
             context=context or {},
             path=str(request.path or "")[:512],
             ip_address=_client_ip(request)[:64],
-            user_agent=str(request.META.get("HTTP_USER_AGENT", "") or "")[:512],
+            user_agent=str(request.headers.get("user-agent", "") or "")[:512],
         )
     except Exception:
         # Alerting should never break the main workflow.
@@ -120,10 +128,7 @@ def _record_alert(
 
 
 def user_can_run_admin_commands(user):
-    return bool(
-        getattr(user, "is_authenticated", False)
-        and user.is_superuser
-    )
+    return bool(getattr(user, "is_authenticated", False) and user.is_superuser)
 
 
 @login_required
@@ -212,7 +217,11 @@ def _sanitize_input_value(field, raw_value):
                         value = candidate
                         break
                 if not value:
-                    expected = ", ".join(standardized_candidates) if standardized_candidates else standardized
+                    expected = (
+                        ", ".join(standardized_candidates)
+                        if standardized_candidates
+                        else standardized
+                    )
                     raise ValueError(
                         f"Standardized file not found in static/data: {expected}"
                     )
@@ -224,7 +233,9 @@ def _sanitize_input_value(field, raw_value):
         if not resolved_file.exists():
             raise ValueError(f"File not found in static/data: {value}")
         if field.allowed_pattern and not re.match(field.allowed_pattern, value):
-            raise ValueError(f"Filename does not match allowed pattern for {field.name}")
+            raise ValueError(
+                f"Filename does not match allowed pattern for {field.name}"
+            )
         return value
 
     if raw_value is None:
@@ -309,7 +320,9 @@ def admin_panel_run_view(request):
             title="Invalid command payload",
             summary="Admin command run endpoint received invalid JSON payload.",
         )
-        return JsonResponse({"ok": False, "output": "Invalid JSON payload."}, status=400)
+        return JsonResponse(
+            {"ok": False, "output": "Invalid JSON payload."}, status=400
+        )
 
     command_id = str(payload.get("command_id") or payload.get("command") or "").strip()
     inputs = payload.get("inputs", {}) or {}
@@ -324,7 +337,10 @@ def admin_panel_run_view(request):
             context={"command_id": command_id},
         )
         return JsonResponse(
-            {"ok": False, "output": f"Command '{command_id}' is disabled in production."},
+            {
+                "ok": False,
+                "output": f"Command '{command_id}' is disabled in production.",
+            },
             status=403,
         )
 
@@ -337,9 +353,13 @@ def admin_panel_run_view(request):
             summary=f"Command '{command_id}' is not allowlisted.",
             context={"command_id": command_id},
         )
-        return JsonResponse({"ok": False, "output": "Command is not allowlisted."}, status=400)
+        return JsonResponse(
+            {"ok": False, "output": "Command is not allowlisted."}, status=400
+        )
     if not isinstance(inputs, dict):
-        return JsonResponse({"ok": False, "output": "inputs must be an object."}, status=400)
+        return JsonResponse(
+            {"ok": False, "output": "inputs must be an object."}, status=400
+        )
 
     try:
         cmd_args, safe_inputs, filenames = _build_call_command_args(command_id, inputs)
@@ -571,7 +591,9 @@ def admin_panel_logs_view(request):
 @login_required
 def admin_panel_csrf_token_view(request):
     if not user_can_run_admin_commands(request.user):
-        return HttpResponseForbidden("You are not allowed to access CSRF token endpoint.")
+        return HttpResponseForbidden(
+            "You are not allowed to access CSRF token endpoint."
+        )
     return JsonResponse({"ok": True, "csrf_token": get_token(request)})
 
 
@@ -596,7 +618,9 @@ def admin_panel_alert_log_view(request):
     except Exception:
         return JsonResponse({"ok": False, "error": "Invalid JSON payload."}, status=400)
 
-    category = str(payload.get("category") or AdminPanelAlert.INTERACTION).strip().lower()
+    category = (
+        str(payload.get("category") or AdminPanelAlert.INTERACTION).strip().lower()
+    )
     if category not in {
         AdminPanelAlert.INTERACTION,
         AdminPanelAlert.SECURITY,
@@ -625,3 +649,106 @@ def admin_panel_alert_log_view(request):
         context=context,
     )
     return JsonResponse({"ok": True})
+
+
+# ── User Activity Log ──────────────────────────────────────────────────────────
+
+_ACTIVITY_LOG_PAGE_SIZE = 100
+_ACTIVITY_CSV_FIELDS = [
+    "timestamp",
+    "user_email",
+    "action",
+    "path",
+    "method",
+    "ip_address",
+    "user_agent",
+    "session_key",
+    "extra",
+]
+
+
+def _build_activity_queryset(params):
+    from va_explorer.users.models import UserActivity
+
+    qs = UserActivity.objects.select_related("user").order_by("-timestamp")
+
+    user_email = (params.get("user_email") or "").strip()
+    if user_email:
+        qs = qs.filter(user_email__icontains=user_email)
+
+    action = (params.get("action") or "").strip()
+    if action:
+        qs = qs.filter(action=action)
+
+    start = django_parse_date((params.get("start_date") or "").strip())
+    if start:
+        qs = qs.filter(timestamp__date__gte=start)
+
+    end = django_parse_date((params.get("end_date") or "").strip())
+    if end:
+        qs = qs.filter(timestamp__date__lte=end)
+
+    return qs
+
+
+@login_required
+def user_activity_log_view(request):
+    if not user_can_run_admin_commands(request.user):
+        return HttpResponseForbidden("You are not allowed to view the activity log.")
+
+    from va_explorer.users.models import UserActivity
+
+    qs = _build_activity_queryset(request.GET)
+
+    try:
+        page = max(1, int(request.GET.get("page") or 1))
+    except (ValueError, TypeError):
+        page = 1
+
+    offset = (page - 1) * _ACTIVITY_LOG_PAGE_SIZE
+    activities = qs[offset : offset + _ACTIVITY_LOG_PAGE_SIZE]
+    total = qs.count()
+    total_pages = max(
+        1, (total + _ACTIVITY_LOG_PAGE_SIZE - 1) // _ACTIVITY_LOG_PAGE_SIZE
+    )
+
+    context = {
+        "activities": activities,
+        "action_choices": UserActivity.ACTION_CHOICES,
+        "filters": request.GET,
+        "page": page,
+        "total": total,
+        "total_pages": total_pages,
+        "has_prev": page > 1,
+        "has_next": page < total_pages,
+    }
+    return render(request, "va_admin/user_activity_log.html", context)
+
+
+@login_required
+def user_activity_log_download_view(request):
+    if not user_can_run_admin_commands(request.user):
+        return HttpResponseForbidden(
+            "You are not allowed to download the activity log."
+        )
+
+    qs = _build_activity_queryset(request.GET).values(*_ACTIVITY_CSV_FIELDS)
+
+    def _rows():
+        buf = io.StringIO()
+        writer = csv.DictWriter(buf, fieldnames=_ACTIVITY_CSV_FIELDS)
+        writer.writeheader()
+        yield buf.getvalue()
+
+        for row in qs.iterator():
+            buf = io.StringIO()
+            writer = csv.DictWriter(buf, fieldnames=_ACTIVITY_CSV_FIELDS)
+            writer.writerow(
+                {k: ("" if row[k] is None else row[k]) for k in _ACTIVITY_CSV_FIELDS}
+            )
+            yield buf.getvalue()
+
+    filename = f"user_activity_{timezone.now().strftime('%Y%m%dT%H%M%SZ')}.csv"
+    response = StreamingHttpResponse(_rows(), content_type="text/csv")
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response

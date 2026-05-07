@@ -8,6 +8,7 @@ from dateutil.relativedelta import relativedelta
 from dateutil.tz import gettz
 from django.contrib.auth.models import Permission
 from django.core.cache import cache
+from django.core.management import call_command
 from django.test import Client
 from django.urls import reverse
 
@@ -19,15 +20,18 @@ from va_explorer.tests.factories import (
     UserFactory,
     VerbalAutopsyFactory,
 )
+from va_explorer.users.models import User
 from va_explorer.va_data_management.models import (
     CSADailyTracker,
     CSASupervisorTargetMap,
     Death,
     Household,
+    HouseholdMember,
+    ODKFormChoice,
     Pregnancy,
     PregnancyOutcome,
+    SRSClusterLocation,
 )
-from va_explorer.users.models import User
 from va_explorer.vacms.cmsmodels.events import Event
 
 pytestmark = pytest.mark.django_db
@@ -249,13 +253,17 @@ def test_trends_section_model_only(user: User):
 
 
 def _seed_home_dashboard_scope_data():
-    southern = LocationFactory.create(name="Southern", location_type="province")
+    southern = LocationFactory.create(
+        name="Southern", location_type="province", path="0001"
+    )
     southern_district = southern.add_child(name="Choma", location_type="district")
     southern_facility = southern_district.add_child(
         name="Choma Facility", location_type="facility"
     )
 
-    lusaka = LocationFactory.create(name="Lusaka", location_type="province")
+    lusaka = LocationFactory.create(
+        name="Lusaka", location_type="province", path="0002"
+    )
     lusaka_district = lusaka.add_child(name="Lusaka", location_type="district")
     lusaka_facility = lusaka_district.add_child(
         name="Lusaka Facility", location_type="facility"
@@ -320,23 +328,27 @@ def _seed_home_dashboard_scope_data():
         PO_41=today,
     )
 
-    Death.objects.create(
-        key="death-southern",
-        submissiondate=today,
-        today=today,
-        start=today,
-        province="Southern",
-        district="Choma",
-        DE_06=today,
-    )
-    Death.objects.create(
-        key="death-lusaka",
-        submissiondate=today,
-        today=today,
-        start=today,
-        province="Lusaka",
-        district="Lusaka",
-        DE_06=today,
+    Death.objects.bulk_create(
+        [
+            Death(
+                key="death-southern",
+                submissiondate=today,
+                today=today,
+                start=today,
+                province="Southern",
+                district="Choma",
+                DE_06=today,
+            ),
+            Death(
+                key="death-lusaka",
+                submissiondate=today,
+                today=today,
+                start=today,
+                province="Lusaka",
+                district="Lusaka",
+                DE_06=today,
+            ),
+        ]
     )
 
     VerbalAutopsyFactory.create(
@@ -382,6 +394,81 @@ def test_home_dashboard_kpis_are_scoped_to_user_province():
     assert kpis["vas"]["total"] == 1
 
 
+@time_machine.travel(dt.datetime(2026, 4, 27, 12, 0, tzinfo=gettz("Africa/Lusaka")))
+def test_home_dashboard_kpis_include_last_30_days_counts():
+    cache.clear()
+    permission = Permission.objects.filter(codename="view_dashboard").first()
+    group = GroupFactory.create(permissions=[permission] if permission else [])
+    user = UserFactory.create(groups=[group])
+    client = Client()
+    client.force_login(user=user)
+
+    recent_dates = ("2026-04-27", "2026-04-17")
+    old_date = "2026-03-27"
+
+    for index, recorded_on in enumerate((*recent_dates, old_date), start=1):
+        household = Household.objects.create(
+            key=f"household-{index}",
+            ea=f"cluster-{index}",
+            submissiondate=recorded_on,
+            today=recorded_on,
+            start=recorded_on,
+        )
+        HouseholdMember.objects.create(
+            household=household,
+            first_name=f"Person {index}",
+        )
+        Pregnancy.objects.create(
+            key=f"pregnancy-{index}",
+            submissiondate=recorded_on,
+            today=recorded_on,
+            start=recorded_on,
+        )
+        PregnancyOutcome.objects.create(
+            key=f"pregnancy-outcome-{index}",
+            submissiondate=recorded_on,
+            today=recorded_on,
+            start=recorded_on,
+        )
+        Death.objects.bulk_create(
+            [
+                Death(
+                    key=f"death-{index}",
+                    submissiondate=recorded_on,
+                    today=recorded_on,
+                    start=recorded_on,
+                )
+            ]
+        )
+        va = VerbalAutopsyFactory.create(
+            instanceid=f"va-{index}",
+            Id10012=recorded_on,
+            Id10023=recorded_on,
+            submissiondate=recorded_on,
+        )
+        type(va).objects.filter(pk=va.pk).update(
+            created=dt.datetime.fromisoformat(f"{recorded_on}T00:00:00+02:00")
+        )
+
+    response = client.get(reverse("va_analytics:home-dashboard-kpis-api"))
+    assert response.status_code == 200
+    kpis = response.json()["kpis"]
+
+    for key in (
+        "eas",
+        "households",
+        "people",
+        "pregnancies",
+        "preg_outcomes",
+        "deaths",
+        "vas",
+    ):
+        assert kpis[key]["today"] == 1
+        assert kpis[key]["week"] == 1
+        assert kpis[key]["last_30_days"] == 2
+        assert kpis[key]["total"] == 3
+
+
 def test_home_dashboard_overview_chart_is_scoped_to_user_province():
     cache.clear()
     southern = _seed_home_dashboard_scope_data()
@@ -404,15 +491,755 @@ def test_home_dashboard_overview_chart_is_scoped_to_user_province():
     assert sum(payload["va"]) == 1
 
 
+def test_home_overview_map_va_ea_counts_use_resolved_va_geography(user: User):
+    cache.clear()
+    client = Client()
+    client.force_login(user=user)
+
+    srs_province = SRSClusterLocation.add_root(
+        name="Southern", location_type="province", code="P1", status="Active"
+    )
+    srs_district = srs_province.add_child(
+        name="District 1", location_type="district", code="D1", status="Active"
+    )
+    srs_constituency = srs_district.add_child(
+        name="Constituency 1",
+        location_type="constituency",
+        code="C1",
+        status="Active",
+    )
+    srs_ward = srs_constituency.add_child(
+        name="Ward 10", location_type="ward", code="W10", status="Active"
+    )
+    srs_ea = srs_ward.add_child(
+        name="EA 2001", location_type="ea", code="EA2001", status="Active"
+    )
+
+    VerbalAutopsyFactory.create(
+        instanceid="home-map-community-va-1",
+        location=None,
+        cluster=srs_ea,
+        province="",
+        district="",
+        constituency="",
+        ward="",
+        ea="",
+        community_va="yes",
+        Id10017="Community",
+        Id10018="One",
+        Id10019="Female",
+        Id10012="2021-03-21",
+        Id10023="2021-03-21",
+        submissiondate="2021-03-21",
+    )
+    VerbalAutopsyFactory.create(
+        instanceid="home-map-direct-va-1",
+        province="Southern",
+        district="District 1",
+        constituency="Constituency 1",
+        ward="Ward 10",
+        ea="EA 3001",
+        community_va="yes",
+        Id10017="Direct",
+        Id10018="Two",
+        Id10019="Male",
+        Id10012="2021-03-21",
+        Id10023="2021-03-21",
+        submissiondate="2021-03-21",
+    )
+    VerbalAutopsyFactory.create(
+        instanceid="home-map-other-ward-va-1",
+        province="Southern",
+        district="District 1",
+        constituency="Constituency 1",
+        ward="Ward 99",
+        ea="EA 4001",
+        community_va="yes",
+        Id10017="Other",
+        Id10018="Ward",
+        Id10019="Female",
+        Id10012="2021-03-21",
+        Id10023="2021-03-21",
+        submissiondate="2021-03-21",
+    )
+
+    response = client.get("/national-operational/map-data/", {"map_view": "EA"})
+
+    assert response.status_code == 200
+    rows_by_ea = {row["ea_name"]: row for row in response.json()["map_ea_sums"]}
+    assert rows_by_ea["EA 2001"]["verbal_autopsies_count"] == 1
+    assert rows_by_ea["EA 2001"]["count"] == 1
+    assert rows_by_ea["EA 3001"]["verbal_autopsies_count"] == 1
+    assert rows_by_ea["EA 3001"]["count"] == 1
+    assert rows_by_ea["EA 4001"]["verbal_autopsies_count"] == 1
+
+    ward_response = client.get(
+        "/national-operational/map-data/",
+        {
+            "map_view": "EA",
+            "geography_level": "ward",
+            "geography_value": "Ward 10",
+        },
+    )
+    ward_rows_by_ea = {
+        row["ea_name"]: row for row in ward_response.json()["map_ea_sums"]
+    }
+    assert ward_rows_by_ea["EA 2001"]["verbal_autopsies_count"] == 1
+    assert ward_rows_by_ea["EA 3001"]["verbal_autopsies_count"] == 1
+    assert "EA 4001" not in ward_rows_by_ea
+
+
 def test_regional_operations_page_loads(user: User):
     client = Client()
     client.force_login(user=user)
 
     response = client.get("/regional-operations/", follow=True)
     assert response.status_code == 200
-    assert b"id=\"regionalFiltersComponent\"" in response.content
-    assert b"id=\"regionalCsaComponent\"" in response.content
-    assert b"id=\"regionalMsoComponent\"" in response.content
+    assert b'id="regionalFiltersComponent"' in response.content
+    assert b'id="regionalCsaComponent"' in response.content
+    assert b'id="regionalMsoComponent"' in response.content
+
+
+def test_operational_dashboard_includes_rumor_details_tab(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    response = client.get("/", {"tab": "rumor_details"}, follow=True)
+
+    assert response.status_code == 200
+    assert b"Rumor Details" in response.content
+    assert b"Rumor Overview" in response.content
+    assert b'data-tab="rumor_details"' in response.content
+    assert b'data-tab="rumor_overview"' in response.content
+    assert b'id="rumorDetailsDashboardApp"' in response.content
+    assert b'id="rumorOverviewDashboardApp"' in response.content
+    # Tab-6 (Details): has enumerator section, description table
+    assert b'id="rumorSummaryCards"' not in response.content
+    assert b'id="rumorTrendChart"' not in response.content
+    assert b'id="rumorGpsCoverageChart"' not in response.content
+    assert b'id="rumorDetailsEnumeratorTable"' in response.content
+    assert b'id="rumorDetailsDescTable"' in response.content
+    # Tab-7 (Overview): has map, no word cloud
+    assert b'id="rumorOverviewMapContainer"' in response.content
+    assert b'id="rumorOverviewWordCloud"' not in response.content
+    # Both tabs reference their own JS
+    assert b"rumor_details_dashboard.js" in response.content
+    assert b"rumor_overview_dashboard.js" in response.content
+    # New endpoints present in templates
+    assert b"rumor-overview/source-by-province/" in response.content
+    assert b"rumor-overview/affected-population/" in response.content
+    assert b"rumor-details/enumerator-stats/" in response.content
+    assert b"rumor-details/description-table/" in response.content
+    assert b"pregnancyDashboardApp" not in response.content
+
+
+def test_rumor_details_api_endpoints_return_dashboard_payloads(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    summary_response = client.get(reverse("home:rumor_overview_summary_api"))
+    trend_response = client.get(reverse("home:rumor_overview_trend_api"))
+    top_rumors_trend_response = client.get(
+        reverse("home:rumor_overview_top_rumors_trend_api")
+    )
+    map_response = client.get(reverse("home:rumor_overview_map_api"))
+    source_prov_response = client.get(
+        reverse("home:rumor_overview_source_by_province_api")
+    )
+    affected_pop_response = client.get(
+        reverse("home:rumor_overview_affected_population_api")
+    )
+    enumerator_response = client.get(reverse("home:rumor_details_enumerator_stats_api"))
+    gps_coverage_response = client.get(reverse("home:rumor_overview_gps_coverage_api"))
+    desc_table_response = client.get(
+        reverse("home:rumor_details_description_table_api")
+    )
+
+    for resp in [
+        summary_response,
+        trend_response,
+        top_rumors_trend_response,
+        map_response,
+        source_prov_response,
+        affected_pop_response,
+        enumerator_response,
+        gps_coverage_response,
+        desc_table_response,
+    ]:
+        assert resp.status_code == 200
+
+    summary = summary_response.json()
+    assert summary["card_last_data_update"] == "N/A"
+    assert summary["card_number_of_events"] == 0
+    assert "card_provinces_reporting" in summary
+    assert "card_eas_reporting" in summary
+    assert "card_enumerators" in summary
+    assert "card_top_source" in summary
+    assert "card_gps_coverage_pct" in summary
+    assert "card_total_affected" in summary
+    assert "card_days_since_last" in summary
+    assert "card_mean_age" not in summary
+
+    assert set(trend_response.json()) == {"labels", "data"}
+    assert set(top_rumors_trend_response.json()) == {
+        "has_rumors",
+        "labels",
+        "periods",
+        "series",
+    }
+
+    map_payload = map_response.json()
+    assert map_payload["map_view"] == "Province"
+    assert "map_province_sums" in map_payload
+
+    assert set(source_prov_response.json()) == {"provinces", "series"}
+    assert set(affected_pop_response.json()) == {
+        "labels",
+        "event_counts",
+        "affected_counts",
+    }
+    assert "rows" in enumerator_response.json()
+    assert set(gps_coverage_response.json()) == {"provinces", "with_gps", "missing_gps"}
+
+    desc_table = desc_table_response.json()
+    assert set(desc_table) >= {"rows", "total_rows", "page", "page_size", "total_pages"}
+    assert desc_table["page_size"] == 5
+    assert desc_table["rows"] == []
+    assert desc_table["total_rows"] == 0
+
+    sentiment_response = client.get(reverse("home:rumor_details_sentiment_api"))
+    assert sentiment_response.status_code == 200
+    sentiment_payload = sentiment_response.json()
+    assert set(sentiment_payload) == {
+        "points",
+        "total",
+        "has_data",
+        "counts",
+        "monthly_means",
+        "range",
+    }
+    assert sentiment_payload["points"] == []
+    assert sentiment_payload["total"] == 0
+    assert sentiment_payload["has_data"] is False
+    assert sentiment_payload["counts"] == {"positive": 0, "neutral": 0, "negative": 0}
+    assert sentiment_payload["monthly_means"] == []
+    assert sentiment_payload["range"] == {"start_month": None, "end_month": None}
+
+
+def test_rumor_source_by_province_resolves_coded_province_labels(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    ODKFormChoice.objects.bulk_create(
+        [
+            ODKFormChoice(
+                form_name="csa_daily_tracker",
+                field_name="province",
+                value="5",
+                label="Lusaka Province",
+            ),
+            ODKFormChoice(
+                form_name="csa_daily_tracker",
+                field_name="province",
+                value="9",
+                label="Southern Province",
+            ),
+        ]
+    )
+    CSADailyTracker.objects.create(
+        key="rumor-source-coded-province-1",
+        rum="1",
+        desci="Social rumor one",
+        sorce_rum="01",
+        province="05",
+        today="2026-03-01",
+    )
+    CSADailyTracker.objects.create(
+        key="rumor-source-coded-province-2",
+        rum="1",
+        desci="Social rumor two",
+        sorce_rum="01",
+        province="5.0",
+        today="2026-03-01",
+    )
+    CSADailyTracker.objects.create(
+        key="rumor-source-coded-province-3",
+        rum="1",
+        desci="Community rumor",
+        sorce_rum="02",
+        province="09",
+        today="2026-03-01",
+    )
+
+    response = client.get(reverse("home:rumor_overview_source_by_province_api"))
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["provinces"] == ["Lusaka Province", "Southern Province"]
+    series_by_label = {series["label"]: series["data"] for series in payload["series"]}
+    assert series_by_label["Social Media"] == [2, 0]
+    assert series_by_label["Community Group"] == [0, 1]
+
+
+def test_rumor_sentiment_endpoint_weights_by_population(user: User):
+    import math
+
+    client = Client()
+    client.force_login(user=user)
+
+    CSADailyTracker.objects.create(
+        key="sentiment-row-positive",
+        rum="1",
+        desci="The community is grateful for the rapid and excellent help.",
+        ru_num="10",
+        sorce_rum="01",
+        province="Lusaka Province",
+        district="Lusaka District",
+        today="2026-03-15",
+    )
+    CSADailyTracker.objects.create(
+        key="sentiment-row-negative",
+        rum="1",
+        desci="A terrible cholera outbreak is killing people; this is a disaster.",
+        ru_num="50",
+        sorce_rum="04",
+        other_rum="Field worker",
+        province="Lusaka Province",
+        district="Lusaka District",
+        today="2026-03-15",
+    )
+    # Excluded: rum is empty (negative report)
+    CSADailyTracker.objects.create(
+        key="sentiment-row-not-rumor",
+        rum="",
+        desci="Should not appear.",
+        ru_num="999",
+        today="2026-03-15",
+    )
+    # Excluded: empty desci
+    CSADailyTracker.objects.create(
+        key="sentiment-row-empty-desci",
+        rum="1",
+        desci="",
+        ru_num="3",
+        today="2026-03-15",
+    )
+
+    response = client.get(reverse("home:rumor_details_sentiment_api"))
+    assert response.status_code == 200
+    payload = response.json()
+
+    assert payload["has_data"] is True
+    assert payload["total"] == 2
+    points = {p["id"]: p for p in payload["points"]}
+    assert len(points) == 2
+
+    by_key = {p["description"]: p for p in payload["points"]}
+
+    pos = by_key["The community is grateful for the rapid and excellent help."]
+    neg = by_key["A terrible cholera outbreak is killing people; this is a disaster."]
+
+    assert pos["sentiment"] > 0
+    assert neg["sentiment"] < 0
+    assert pos["weighted"] > 0
+    assert neg["weighted"] < 0
+
+    assert pos["ru_num"] == 10
+    assert neg["ru_num"] == 50
+    assert math.isclose(
+        pos["weighted"], pos["sentiment"] * math.log1p(10), rel_tol=1e-3, abs_tol=1e-3
+    )
+    assert math.isclose(
+        neg["weighted"], neg["sentiment"] * math.log1p(50), rel_tol=1e-3, abs_tol=1e-3
+    )
+
+    for p in (pos, neg):
+        assert p["month"] == "2026-03"
+        assert p["date"] == "2026-03-15"
+        assert p["province"] == "Lusaka Province"
+        assert p["district"] == "Lusaka District"
+
+    assert pos["source"] == "Social Media"
+    assert neg["source"].startswith("Other")
+    assert "Field worker" in neg["source"]
+
+    # Each point carries category and is_srs_domain (used by tooltip/colors).
+    for p in (pos, neg):
+        assert "category" in p
+        assert "is_srs_domain" in p
+        assert p["is_srs_domain"] is False  # neither sample mentions SRS terms
+
+    # Counts: pos > 0 → positive, neg < 0 → negative
+    assert payload["counts"] == {"positive": 1, "neutral": 0, "negative": 1}
+
+    # Monthly means: one entry for 2026-03 covering both points.
+    assert len(payload["monthly_means"]) == 1
+    mm = payload["monthly_means"][0]
+    assert mm["month"] == "2026-03"
+    assert mm["count"] == 2
+    expected_mean = (pos["weighted"] + neg["weighted"]) / 2
+    assert math.isclose(mm["mean"], expected_mean, rel_tol=1e-3, abs_tol=1e-3)
+
+    # Range falls back to observed months when filter is all_time.
+    assert payload["range"]["start_month"] == "2026-03"
+    assert payload["range"]["end_month"] == "2026-03"
+
+    # Domain-neutral assertions: SRS programme language should score 0 unless
+    # the writing carries a clear connotation beyond the threshold.
+    # Domain-neutral: factual SRS programme language with no emotional content.
+    # VADER would normally score "verbal autopsy" context as negative; the
+    # domain rule pins it to 0 when the compound stays within the threshold.
+    CSADailyTracker.objects.create(
+        key="sentiment-domain-neutral",
+        rum="1",
+        desci="A verbal autopsy was conducted in the local community.",
+        ru_num="1",
+        today="2026-03-15",
+    )
+    # Domain-positive: SRS language with clearly positive connotation (VADER
+    # compound >> 0.25), so the domain rule lets the positive score through.
+    CSADailyTracker.objects.create(
+        key="sentiment-domain-positive",
+        rum="1",
+        desci="The verbal autopsy team did a wonderful and outstanding job helping families.",
+        ru_num="1",
+        today="2026-03-15",
+    )
+
+    response2 = client.get(reverse("home:rumor_details_sentiment_api"))
+    payload2 = response2.json()
+    by_key2 = {p["description"]: p for p in payload2["points"]}
+
+    neutral_domain = by_key2["A verbal autopsy was conducted in the local community."]
+    positive_domain = by_key2[
+        "The verbal autopsy team did a wonderful and outstanding job helping families."
+    ]
+
+    # Factual SRS description → pinned to neutral (VADER compound == 0.0)
+    assert neutral_domain["sentiment"] == 0.0
+    assert neutral_domain["weighted"] == 0.0
+
+    # Clearly positive SRS description → domain rule lets it through (compound > 0.25)
+    assert positive_domain["sentiment"] > 0
+
+
+def test_rumor_sentiment_endpoint_recognises_extended_domain_terms(user: User):
+    """birth, death, certificate, pregnancy, autopsy, health, maternal are all
+    treated as SRS programme subject matter — flagged is_srs_domain=True. When
+    the surrounding text is neutral, the score is pinned to 0; when VADER
+    detects strong polarity, the score still passes through."""
+    client = Client()
+    client.force_login(user=user)
+
+    # Each of these uses one of the newly-added domain terms with otherwise
+    # neutral wording — VADER returns 0 and the domain rule keeps it at 0.
+    neutral_cases = {
+        "domain-birth": "A birth was registered at the local clinic.",
+        "domain-pregnancy": "A pregnancy was reported in the area.",
+        "domain-maternal": "Maternal health discussion in the community.",
+        "domain-certificate": "The certificate was collected by the family.",
+        "domain-autopsy": "An autopsy was scheduled.",
+    }
+    for key, desci in neutral_cases.items():
+        CSADailyTracker.objects.create(
+            key=key, rum="1", desci=desci, ru_num="1", today="2026-03-15"
+        )
+
+    response = client.get(reverse("home:rumor_details_sentiment_api"))
+    payload = response.json()
+    by_desc = {p["description"]: p for p in payload["points"]}
+
+    for desci in neutral_cases.values():
+        p = by_desc[desci]
+        assert p["is_srs_domain"] is True, desci
+        assert p["sentiment"] == 0.0, desci
+        assert p["weighted"] == 0.0, desci
+
+    # All five rolled into the neutral count.
+    assert payload["counts"]["neutral"] >= 5
+    assert payload["counts"]["positive"] == 0
+    assert payload["counts"]["negative"] == 0
+
+
+@time_machine.travel(dt.datetime(2026, 3, 20, 12, 0, tzinfo=eastern_tz))
+def test_rumor_sentiment_endpoint_filters_by_date_range(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    CSADailyTracker.objects.create(
+        key="sentiment-recent",
+        rum="1",
+        desci="Outbreak panic spreading rapidly.",
+        ru_num="20",
+        today="2026-03-18",
+    )
+    CSADailyTracker.objects.create(
+        key="sentiment-old",
+        rum="1",
+        desci="Old fear about water.",
+        ru_num="5",
+        today="2025-12-01",
+    )
+
+    response = client.get(
+        reverse("home:rumor_details_sentiment_api"),
+        {"time_preset": "last_7_days"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    descriptions = [p["description"] for p in payload["points"]]
+    assert "Outbreak panic spreading rapidly." in descriptions
+    assert "Old fear about water." not in descriptions
+    assert payload["total"] == 1
+
+    # Range comes from the filter window (last_7_days), not from observed
+    # points — ends at the frozen "now" month, starts 7 days earlier.
+    assert payload["range"]["end_month"] == "2026-03"
+    assert payload["range"]["start_month"] == "2026-03"
+
+
+def test_rumor_details_tables_show_top_rumors_and_locations(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    district_labels = {
+        1: "Lusaka District",
+        2: "Kafue District",
+        3: "Choma District",
+        4: "Monze District",
+        5: "Mazabuka District",
+        6: "Livingstone District",
+    }
+    ward_labels = {
+        1: "Ward 1",
+        2: "Ward 2",
+        3: "Ward 3",
+        4: "Ward 4",
+        5: "Ward 5",
+        6: "Ward 6",
+    }
+    constituency_labels = {
+        1: "Lusaka Central",
+        2: "Kafue Central",
+        3: "Choma Central",
+        4: "Monze Central",
+        5: "Mazabuka Central",
+        6: "Livingstone Central",
+    }
+    ODKFormChoice.objects.bulk_create(
+        [
+            ODKFormChoice(
+                form_name="csa_daily_tracker",
+                field_name="district",
+                value=str(code),
+                label=label,
+            )
+            for code, label in district_labels.items()
+        ]
+        + [
+            ODKFormChoice(
+                form_name="csa_daily_tracker",
+                field_name="constituency",
+                value=str(code),
+                label=label,
+            )
+            for code, label in constituency_labels.items()
+        ]
+        + [
+            ODKFormChoice(
+                form_name="csa_daily_tracker",
+                field_name="ward",
+                value=str(code),
+                label=label,
+            )
+            for code, label in ward_labels.items()
+        ]
+    )
+
+    total_events = 0
+    for idx in range(12):
+        count = 12 - idx
+        total_events += count
+        location_code = (idx % 6) + 1
+        raw_district_code = (
+            f" {location_code:02d} " if idx < 6 else f"{location_code}.0"
+        )
+        raw_constituency_code = (
+            f" {location_code:02d}.0 " if idx < 6 else f"{location_code:02d}"
+        )
+        raw_ward_code = f" {location_code}.0 " if idx < 6 else f"{location_code:02d}"
+        for event_idx in range(count):
+            CSADailyTracker.objects.create(
+                key=f"rumor-detail-{idx}-{event_idx}",
+                rum="1",
+                desci=f"Rumor {idx}",
+                sorce_rum="01",
+                district=raw_district_code,
+                constituency=raw_constituency_code,
+                ward=raw_ward_code,
+                today="2026-03-01",
+            )
+
+    desc_response = client.get(reverse("home:rumor_details_description_table_api"))
+    location_response = client.get(reverse("home:rumor_details_enumerator_stats_api"))
+
+    assert desc_response.status_code == 200
+    desc_payload = desc_response.json()
+    assert desc_payload["page_size"] == 5
+    assert desc_payload["total_rows"] == 5
+    assert desc_payload["total_pages"] == 1
+    assert len(desc_payload["rows"]) == 5
+    assert [row["description"] for row in desc_payload["rows"]] == [
+        f"Rumor {idx}" for idx in range(5)
+    ]
+    assert desc_payload["rows"][0]["count"] == 12
+    assert desc_payload["rows"][0]["pct"] == round(12 * 100 / total_events, 1)
+
+    assert location_response.status_code == 200
+    location_payload = location_response.json()
+    assert [row["name"] for row in location_payload["rows"]] == [
+        "Lusaka District - Lusaka Central - Ward 1",
+        "Kafue District - Kafue Central - Ward 2",
+        "Choma District - Choma Central - Ward 3",
+        "Monze District - Monze Central - Ward 4",
+        "Mazabuka District - Mazabuka Central - Ward 5",
+    ]
+    assert [row["district"] for row in location_payload["rows"]] == [
+        "Lusaka District",
+        "Kafue District",
+        "Choma District",
+        "Monze District",
+        "Mazabuka District",
+    ]
+    assert [row["constituency"] for row in location_payload["rows"]] == [
+        "Lusaka Central",
+        "Kafue Central",
+        "Choma Central",
+        "Monze Central",
+        "Mazabuka Central",
+    ]
+    assert [row["ward"] for row in location_payload["rows"]] == [
+        "Ward 1",
+        "Ward 2",
+        "Ward 3",
+        "Ward 4",
+        "Ward 5",
+    ]
+    assert [row["count"] for row in location_payload["rows"]] == [18, 16, 14, 12, 10]
+
+
+def test_rumor_details_top_locations_resolves_separate_location_fields(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    ODKFormChoice.objects.bulk_create(
+        [
+            ODKFormChoice(
+                form_name="csa_daily_tracker",
+                field_name="district",
+                value="1",
+                label="Lusaka District",
+            ),
+            ODKFormChoice(
+                form_name="csa_daily_tracker",
+                field_name="ward",
+                value="1",
+                label="Ward 1",
+            ),
+            ODKFormChoice(
+                form_name="csa_daily_tracker",
+                field_name="constituency",
+                value="1",
+                label="Lusaka Central",
+            ),
+        ]
+    )
+
+    # Numeric variants resolve and aggregate across separate location fields.
+    CSADailyTracker.objects.create(
+        key="rumor-shape-leading-zeroes",
+        rum="1",
+        desci="Leading zero codes",
+        district="01",
+        constituency="01",
+        ward="1.0",
+        today="2026-03-01",
+    )
+    CSADailyTracker.objects.create(
+        key="rumor-shape-float-codes",
+        rum="1",
+        desci="Float-like codes",
+        district="1.0",
+        constituency="1.0",
+        ward="01",
+        today="2026-03-02",
+    )
+    # Already-resolved labels with no matching ODKFormChoice rows must
+    #    pass through unchanged (no `01_1` leak from the old fallback).
+    CSADailyTracker.objects.create(
+        key="rumor-shape-labels",
+        rum="1",
+        desci="Pre-resolved labels",
+        district="Kafue District",
+        constituency="Kafue_Constituency",
+        ward="Ward 7",
+        today="2026-03-04",
+    )
+
+    response = client.get(reverse("home:rumor_details_enumerator_stats_api"))
+    assert response.status_code == 200
+    rows = response.json()["rows"]
+    names = {row["name"] for row in rows}
+
+    assert "Lusaka District - Lusaka Central - Ward 1" in names
+    assert "Kafue District - Kafue Constituency - Ward 7" in names
+    assert {(row["district"], row["constituency"], row["ward"]) for row in rows} >= {
+        ("Lusaka District", "Lusaka Central", "Ward 1"),
+        ("Kafue District", "Kafue Constituency", "Ward 7"),
+    }
+    # No coded leakage should appear in any rendered name.
+    for name in names:
+        assert "01" not in name
+        assert "1.0" not in name
+        assert "_" not in name
+
+
+def test_rumor_overview_trend_tracks_top_five_rumors(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    rumor_counts = {
+        "Cholera rumor": 6,
+        "Measles rumor": 5,
+        "Vaccine concern": 4,
+        "Clinic closed": 3,
+        "Water contamination": 2,
+        "Not top five": 1,
+    }
+    month_by_index = ["2026-01-10", "2026-02-10"]
+    for rumor, count in rumor_counts.items():
+        for index in range(count):
+            CSADailyTracker.objects.create(
+                key=f"rumor-trend-{rumor}-{index}",
+                rum="1",
+                desci=rumor,
+                today=month_by_index[index % len(month_by_index)],
+            )
+
+    response = client.get(reverse("home:rumor_overview_top_rumors_trend_api"))
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["has_rumors"] is True
+    assert payload["labels"] == ["Jan 2026", "Feb 2026"]
+    assert [series["name"] for series in payload["series"]] == [
+        "Cholera rumor",
+        "Measles rumor",
+        "Vaccine concern",
+        "Clinic closed",
+        "Water contamination",
+    ]
+    assert payload["series"][0]["values"] == [3, 3]
 
 
 def test_regional_operations_components_refresh_independently(user: User):
@@ -425,8 +1252,8 @@ def test_regional_operations_components_refresh_independently(user: User):
         follow=True,
     )
     assert filters_response.status_code == 200
-    assert b"id=\"geographyFilterSelect\"" in filters_response.content
-    assert b"value=\"lusaka\" selected" in filters_response.content
+    assert b'id="geographyFilterSelect"' in filters_response.content
+    assert b'value="lusaka" selected' in filters_response.content
 
     csa_response = client.get(
         "/regional-operations/components/csa/",
@@ -434,7 +1261,8 @@ def test_regional_operations_components_refresh_independently(user: User):
         follow=True,
     )
     assert csa_response.status_code == 200
-    assert b"CSA Name (Search)" in csa_response.content
+    assert b"CSA Name" in csa_response.content
+    assert b'id="csaSupervisorSearch"' in csa_response.content
     assert b"regional-sort-link" in csa_response.content
     assert b"regional-page-link" in csa_response.content
 
@@ -444,8 +1272,8 @@ def test_regional_operations_components_refresh_independently(user: User):
         follow=True,
     )
     assert mso_response.status_code == 200
-    assert b"id=\"msoSourceSelect\"" in mso_response.content
-    assert b"value=\"facility\" selected" in mso_response.content
+    assert b'id="msoSourceSelect"' in mso_response.content
+    assert b'value="facility" selected' in mso_response.content
     assert b"regional-sort-link" in mso_response.content
     assert b"regional-page-link" in mso_response.content
 
@@ -503,7 +1331,7 @@ def test_mso_uses_only_va_base_names_and_fuzzy_maps_event_aggregates(user: User)
     client.force_login(user=user)
 
     # In-scope VA base row.
-    in_scope_va = VerbalAutopsyFactory.create(
+    VerbalAutopsyFactory.create(
         Id10010="Jane Doe",
         Id10012="2024-02-02",
         province="Lusaka",
@@ -515,11 +1343,12 @@ def test_mso_uses_only_va_base_names_and_fuzzy_maps_event_aggregates(user: User)
         province="Lusaka",
     )
 
-    death = Death.objects.create(
+    death = Death(
         DE_06="2024-02-03",
         province="Lusaka",
         enumerator="CSA_One_101",
     )
+    Death.objects.bulk_create([death])
     Event.objects.create(
         va=out_of_scope_va,
         death=death,
@@ -559,6 +1388,42 @@ def test_mso_uses_only_va_base_names_and_fuzzy_maps_event_aggregates(user: User)
     assert jane_row["va_scheduled"] > 0
 
 
+def test_mso_component_filters_by_province_search(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    VerbalAutopsyFactory.create(
+        Id10010="MSO Lusaka",
+        Id10012="2024-02-02",
+        province="Lusaka",
+    )
+    VerbalAutopsyFactory.create(
+        Id10010="MSO Copperbelt",
+        Id10012="2024-02-02",
+        province="Copperbelt",
+    )
+
+    response = client.get(
+        "/regional-operations/components/mso/",
+        {"mso_province_search": "lusa"},
+        follow=True,
+    )
+
+    assert response.status_code == 200
+    assert response.context["mso_province_search"] == "lusa"
+    assert [row["province"] for row in response.context["mso_stats"]] == ["Lusaka"]
+
+
+def test_regional_operations_filters_default_to_all_time(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    response = client.get("/regional-operations/components/filters/", follow=True)
+
+    assert response.status_code == 200
+    assert response.context["selected_time_preset"] == "timeAll"
+
+
 # Get the about page and make sure it returns successfully
 def test_about(user: User):
     client = Client()
@@ -578,10 +1443,10 @@ def test_csa_component_enriches_supervisor_target_and_coverage(user: User):
         csa_name_normalized="alice",
         supervisor_name="Supervisor Alpha",
         csa_target=10,
+        status=CSASupervisorTargetMap.STATUS_ACTIVE,
     )
 
-    # CSA numerator for coverage uses the number of tracker visits in the rolling
-    # past 7 days, while the table's Visits column remains the full filtered count.
+    # Explicit rolling 7-day CSA supervision requests exclude older tracker rows.
     CSADailyTracker.objects.create(
         key="k1",
         enumerator="Alice_1",
@@ -605,7 +1470,11 @@ def test_csa_component_enriches_supervisor_target_and_coverage(user: User):
         num_outcome="0",
     )
 
-    response = client.get("/regional-operations/components/csa/", follow=True)
+    response = client.get(
+        "/regional-operations/components/csa/",
+        {"time_preset": "time7"},
+        follow=True,
+    )
     assert response.status_code == 200
     assert b"Supervisor" in response.content
     assert b"CSA Target" in response.content
@@ -614,9 +1483,82 @@ def test_csa_component_enriches_supervisor_target_and_coverage(user: User):
     rows = response.context["csa_stats"]
     alice = next(row for row in rows if row["name"] == "Alice")
     assert alice["supervisor"] == "Supervisor Alpha"
+    assert alice["status"] == CSASupervisorTargetMap.STATUS_ACTIVE
     assert alice["csa_target"] == 10
-    assert alice["visits"] == 2
+    assert alice["visits"] == 1
     assert alice["coverage_pct"] == 10.0
+
+
+@time_machine.travel(dt.datetime(2026, 3, 29, 12, 0, tzinfo=eastern_tz))
+def test_csa_component_scales_displayed_target_by_window(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    CSASupervisorTargetMap.objects.create(
+        csa_name_raw="Alice_1",
+        csa_display_name="Alice",
+        csa_name_normalized="alice",
+        supervisor_name="Supervisor Alpha",
+        csa_target=10,
+        tracker_first_date=date(2026, 3, 10),
+        status=CSASupervisorTargetMap.STATUS_ACTIVE,
+    )
+    for key, tracker_date in (("k1", "2026-03-28"), ("k2", "2026-03-10")):
+        CSADailyTracker.objects.create(
+            key=key,
+            enumerator="Alice_1",
+            province="Lusaka",
+            district="Lusaka",
+            ward="Ward 1",
+            today=tracker_date,
+            num_death="0",
+            num_preg="0",
+            num_outcome="0",
+        )
+
+    response_30 = client.get(
+        "/regional-operations/components/csa/",
+        {"time_preset": "time30"},
+        follow=True,
+    )
+    alice_30 = next(
+        row for row in response_30.context["csa_stats"] if row["name"] == "Alice"
+    )
+    assert alice_30["csa_target"] == 43
+    assert alice_30["coverage_pct"] == 4.7
+
+    response_24 = client.get(
+        "/regional-operations/components/csa/",
+        {"time_preset": "time24"},
+        follow=True,
+    )
+    alice_24 = next(
+        row for row in response_24.context["csa_stats"] if row["name"] == "Alice"
+    )
+    assert alice_24["csa_target"] == 1
+    assert alice_24["coverage_pct"] == 70.0
+
+    response_custom = client.get(
+        "/regional-operations/components/csa/",
+        {"start_date": "2026-03-20", "end_date": "2026-03-29"},
+        follow=True,
+    )
+    alice_custom = next(
+        row for row in response_custom.context["csa_stats"] if row["name"] == "Alice"
+    )
+    assert alice_custom["csa_target"] == 14
+    assert alice_custom["coverage_pct"] == 7.0
+
+    response_all = client.get(
+        "/regional-operations/components/csa/",
+        {"time_preset": "timeAll"},
+        follow=True,
+    )
+    alice_all = next(
+        row for row in response_all.context["csa_stats"] if row["name"] == "Alice"
+    )
+    assert alice_all["csa_target"] == 29
+    assert alice_all["coverage_pct"] == 7.0
 
 
 def test_csa_component_handles_unmatched_mapping_safely(user: User):
@@ -642,11 +1584,34 @@ def test_csa_component_handles_unmatched_mapping_safely(user: User):
     row = next(r for r in rows if r["name"] == "No Map CSA")
     assert row["supervisor"] == "—"
     assert row["csa_target"] == 0
+    assert row["status"] == CSASupervisorTargetMap.STATUS_INACTIVE
     assert row["coverage_pct"] is None
 
 
+@time_machine.travel(dt.datetime(2026, 4, 26, 12, 0, tzinfo=eastern_tz))
+def test_csa_component_default_all_time_shows_available_tracker_rows(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    CSADailyTracker.objects.create(
+        key="older-default-row",
+        enumerator="Older_CSA_1",
+        province="Lusaka",
+        district="Lusaka",
+        ward="Ward 1",
+        today="2026-03-28",
+    )
+
+    response = client.get("/regional-operations/components/csa/", follow=True)
+
+    assert response.status_code == 200
+    assert any(row["name"] == "Older CSA" for row in response.context["csa_stats"])
+
+
 @time_machine.travel(dt.datetime(2026, 3, 29, 12, 0, tzinfo=eastern_tz))
-def test_csa_component_matches_mapping_by_display_name_when_normalized_differs(user: User):
+def test_csa_component_matches_mapping_by_display_name_when_normalized_differs(
+    user: User,
+):
     client = Client()
     client.force_login(user=user)
 
@@ -670,7 +1635,11 @@ def test_csa_component_matches_mapping_by_display_name_when_normalized_differs(u
         num_outcome="0",
     )
 
-    response = client.get("/regional-operations/components/csa/", follow=True)
+    response = client.get(
+        "/regional-operations/components/csa/",
+        {"time_preset": "time7"},
+        follow=True,
+    )
     assert response.status_code == 200
 
     rows = response.context["csa_stats"]
@@ -678,3 +1647,136 @@ def test_csa_component_matches_mapping_by_display_name_when_normalized_differs(u
     assert alice["supervisor"] == "Supervisor Beta"
     assert alice["csa_target"] == 8
     assert alice["coverage_pct"] == 12.5
+
+
+def test_csa_component_filters_by_supervisor_district_and_ward(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    CSASupervisorTargetMap.objects.create(
+        csa_name_raw="Alice_1",
+        csa_display_name="Alice",
+        csa_name_normalized="alice",
+        supervisor_name="Supervisor Alpha",
+        csa_target=10,
+    )
+    CSASupervisorTargetMap.objects.create(
+        csa_name_raw="Bob_1",
+        csa_display_name="Bob",
+        csa_name_normalized="bob",
+        supervisor_name="Supervisor Beta",
+        csa_target=10,
+    )
+    CSADailyTracker.objects.create(
+        key="filter-a",
+        enumerator="Alice_1",
+        province="Lusaka",
+        district="Lusaka",
+        ward="Ward 1",
+        today=date.today().isoformat(),
+    )
+    CSADailyTracker.objects.create(
+        key="filter-b",
+        enumerator="Bob_1",
+        province="Lusaka",
+        district="Kafue",
+        ward="Ward 2",
+        today=date.today().isoformat(),
+    )
+
+    response = client.get(
+        "/regional-operations/components/csa/",
+        {
+            "csa_supervisor_search": "beta",
+            "csa_district_search": "kaf",
+            "csa_ward_search": "2",
+        },
+        follow=True,
+    )
+
+    assert response.status_code == 200
+    assert response.context["csa_supervisor_search"] == "beta"
+    assert response.context["csa_district_search"] == "kaf"
+    assert response.context["csa_ward_search"] == "2"
+    assert [row["name"] for row in response.context["csa_stats"]] == ["Bob"]
+
+
+def test_csa_component_paginates_ten_rows_per_page(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    for idx in range(11):
+        CSADailyTracker.objects.create(
+            key=f"page-{idx}",
+            enumerator=f"CSA_{idx}_Name",
+            province="Lusaka",
+            district="Lusaka",
+            ward="Ward 1",
+            today=date.today().isoformat(),
+        )
+
+    response = client.get("/regional-operations/components/csa/", follow=True)
+
+    assert response.status_code == 200
+    assert response.context["csa_visible_count"] == 10
+    assert response.context["csa_total_count"] == 11
+    assert response.context["csa_total_pages"] == 2
+
+
+def test_mso_component_paginates_ten_rows_per_page(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    for idx in range(11):
+        VerbalAutopsyFactory.create(
+            Id10010=f"MSO {idx} Name",
+            Id10012="2024-02-01",
+            Id10011="09:00:00",
+            Id10481="2024-02-01 09:30:00",
+            province="Lusaka",
+        )
+
+    response = client.get("/regional-operations/components/mso/", follow=True)
+
+    assert response.status_code == 200
+    assert response.context["mso_visible_count"] == 10
+    assert response.context["mso_total_count"] == 11
+    assert response.context["mso_total_pages"] == 2
+
+
+@time_machine.travel(dt.datetime(2026, 3, 29, 12, 0, tzinfo=eastern_tz))
+def test_refresh_csa_first_dates_sets_status_from_recent_tracker_dates(user: User):
+    CSASupervisorTargetMap.objects.create(
+        csa_name_raw="Active_1",
+        csa_display_name="Active",
+        csa_name_normalized="active",
+        supervisor_name="Supervisor Active",
+        csa_target=10,
+    )
+    CSASupervisorTargetMap.objects.create(
+        csa_name_raw="Inactive_1",
+        csa_display_name="Inactive",
+        csa_name_normalized="inactive",
+        supervisor_name="Supervisor Inactive",
+        csa_target=10,
+        status=CSASupervisorTargetMap.STATUS_ACTIVE,
+    )
+    CSADailyTracker.objects.create(
+        key="recent",
+        enumerator="Active_1",
+        today="2026-03-16",
+    )
+    CSADailyTracker.objects.create(
+        key="stale",
+        enumerator="Inactive_1",
+        today="2026-02-27",
+    )
+
+    call_command("refresh_csa_first_dates")
+
+    active = CSASupervisorTargetMap.objects.get(csa_name_normalized="active")
+    inactive = CSASupervisorTargetMap.objects.get(csa_name_normalized="inactive")
+    assert active.tracker_first_date == date(2026, 3, 16)
+    assert active.status == CSASupervisorTargetMap.STATUS_ACTIVE
+    assert inactive.tracker_first_date == date(2026, 2, 27)
+    assert inactive.status == CSASupervisorTargetMap.STATUS_INACTIVE

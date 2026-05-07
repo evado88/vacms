@@ -65,7 +65,10 @@ ODK_PULL_FORMS = [
         "form_id": env("ODK_ZNPHI_VA_FORM_ID", default=env("ODK_FORM_ID", default="")),
         "form_name": "verbal_autopsy",
         "project_id": ODK_DEFAULT_PROJECT_ID,
-        "enabled": env.bool("ODK_ZNPHI_VA_FORM_ENABLED", default=env.bool("ODK_FORM_ENABLED", default=True)),
+        "enabled": env.bool(
+            "ODK_ZNPHI_VA_FORM_ENABLED",
+            default=env.bool("ODK_FORM_ENABLED", default=True),
+        ),
         "schedule_key": "va_hourly",
     },
     {
@@ -163,8 +166,8 @@ THIRD_PARTY_APPS = [
     "django_filters",
     "django_pivot",
     "corsheaders",
-    "bootstrap_datepicker_plus",#required for date picker to work properly
-] 
+    "bootstrap_datepicker_plus",  # required for date picker to work properly
+]
 
 LOCAL_APPS = [
     "va_explorer.home.apps.HomeConfig",
@@ -227,14 +230,44 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     # Track which user makes VA data edits
     "simple_history.middleware.HistoryRequestMiddleware",
-    # Lightweight profiling for dashboard request/DB/render timings.
-    "va_explorer.utils.middleware.DashboardProfilingMiddleware",
     "debug_toolbar.middleware.DebugToolbarMiddleware",
+    # Track authenticated user page views
+    "va_explorer.utils.middleware.UserActivityMiddleware",
 ]
+
+# Profiling middleware is dev-only — adds per-request overhead in production.
+if env.bool("DJANGO_DEBUG", False):
+    MIDDLEWARE.append("va_explorer.utils.middleware.DashboardProfilingMiddleware")
+
+
+def _show_debug_toolbar(request):
+    """Only show the toolbar for full HTML page loads, not AJAX/JSON fan-out."""
+    from django.conf import settings
+
+    if not settings.DEBUG:
+        return False
+    # Skip for AJAX requests (dashboard component loads, filter-data, trends, map-data)
+    if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+        return False
+    # Skip for paths that serve JSON — they receive no HTML to inject the toolbar into
+    _json_prefixes = (
+        "/national-operational/",
+        "/regional-operations/",
+        "/trends/",
+        "/components/",
+        "/va_analytics/api/",
+    )
+    if any(request.path.startswith(p) for p in _json_prefixes):
+        return False
+    from debug_toolbar.middleware import show_toolbar  # default check (INTERNAL_IPS)
+
+    return show_toolbar(request)
+
 
 DEBUG_TOOLBAR_CONFIG = {
     "DISABLE_PANELS": ["debug_toolbar.panels.redirects.RedirectsPanel"],
     "SHOW_TEMPLATE_CONTEXT": True,
+    "SHOW_TOOLBAR_CALLBACK": "config.settings.base._show_debug_toolbar",
 }
 
 # Static
@@ -316,7 +349,9 @@ FIXTURE_DIRS = (str(APPS_DIR / "fixtures"),)
 SESSION_COOKIE_HTTPONLY = True
 CSRF_COOKIE_HTTPONLY = True
 SECURE_BROWSER_XSS_FILTER = True
-DATA_UPLOAD_MAX_MEMORY_SIZE = None
+# OSM public tile servers block requests when the browser omits Referer.
+SECURE_REFERRER_POLICY = "strict-origin-when-cross-origin"
+DATA_UPLOAD_MAX_MEMORY_SIZE = 100 * 1024 * 1024  # 100 MB — prevent OOM on large imports
 
 # Email
 
@@ -365,6 +400,10 @@ CACHES = {
     "default": {
         "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
         "LOCATION": "",
+        "OPTIONS": {
+            "MAX_ENTRIES": 500,
+            "CULL_FREQUENCY": 4,
+        },
     }
 }
 
@@ -376,6 +415,7 @@ CELERY_RESULT_BACKEND = CELERY_BROKER_URL
 CELERY_RESULT_EXTENDED = True
 CELERY_RESULT_BACKEND_ALWAYS_RETRY = True
 CELERY_RESULT_BACKEND_MAX_RETRIES = 5
+CELERY_RESULT_EXPIRES = 3600  # Expire task results after 1 hour to prevent Redis bloat
 CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"

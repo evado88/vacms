@@ -60,10 +60,14 @@ class Command(BaseCommand):
 
         # Drop empty keys and de-duplicate updates by instanceid (last row wins).
         before = len(df)
-        df = df[df["instanceid"].notna() & (df["instanceid"].astype(str).str.strip() != "")]
+        df = df[
+            df["instanceid"].notna() & (df["instanceid"].astype(str).str.strip() != "")
+        ]
         dropped_blank = before - len(df)
         before_dedupe = len(df)
-        df = df.sort_values("instanceid").drop_duplicates(subset=["instanceid"], keep="last")
+        df = df.sort_values("instanceid").drop_duplicates(
+            subset=["instanceid"], keep="last"
+        )
         deduped = before_dedupe - len(df)
 
         update_columns = [
@@ -91,7 +95,8 @@ class Command(BaseCommand):
         hospitals = {
             normalize_string(row.get("hospital")).strip()
             for row in rows
-            if row.get("hospital") is not None and str(row.get("hospital")).strip() != ""
+            if row.get("hospital") is not None
+            and str(row.get("hospital")).strip() != ""
         }
         location_map = {
             key_name_pair[0]: key_name_pair[1]
@@ -186,9 +191,7 @@ class Command(BaseCommand):
 
         action = "Would update" if dry_run else "Updated"
         self.stdout.write(
-            (
-                f"{action} {changed} verbal autopsy row(s); "
-                f"matched={matched}, unmatched={unmatched}, "
-                f"dropped_blank_instanceid={dropped_blank}, deduped_rows={deduped}."
-            )
+            f"{action} {changed} verbal autopsy row(s); "
+            f"matched={matched}, unmatched={unmatched}, "
+            f"dropped_blank_instanceid={dropped_blank}, deduped_rows={deduped}."
         )

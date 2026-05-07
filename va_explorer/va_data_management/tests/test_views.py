@@ -15,7 +15,10 @@ from va_explorer.tests.factories import (
 from va_explorer.users.management.commands.initialize_groups import GROUPS_PERMISSIONS
 from va_explorer.users.models import User
 from va_explorer.va_data_management.constants import REDACTED_STRING
-from va_explorer.va_data_management.models import Death, Household, Pregnancy, PregnancyOutcome, VerbalAutopsy
+from va_explorer.va_data_management.models import (
+    Household,
+    VerbalAutopsy,
+)
 
 pytestmark = pytest.mark.django_db
 
@@ -643,10 +646,18 @@ def test_non_privileged_user_cannot_access_restricted_data_views(url_name):
 
 def test_data_manager_verbal_autopsies_are_scoped_to_assigned_location():
     province = LocationFactory.create(name="Scoped Province")
-    allowed_district = province.add_child(name="Allowed District", location_type="district")
-    blocked_district = province.add_child(name="Blocked District", location_type="district")
-    allowed_facility = allowed_district.add_child(name="Allowed Facility", location_type="facility")
-    blocked_facility = blocked_district.add_child(name="Blocked Facility", location_type="facility")
+    allowed_district = province.add_child(
+        name="Allowed District", location_type="district"
+    )
+    blocked_district = province.add_child(
+        name="Blocked District", location_type="district"
+    )
+    allowed_facility = allowed_district.add_child(
+        name="Allowed Facility", location_type="facility"
+    )
+    blocked_facility = blocked_district.add_child(
+        name="Blocked Facility", location_type="facility"
+    )
 
     user = UserFactory.create(
         groups=[seeded_group("Data Managers")],
@@ -675,7 +686,9 @@ def test_data_manager_verbal_autopsies_are_scoped_to_assigned_location():
 
 def test_data_manager_households_are_scoped_to_assigned_location():
     province = LocationFactory.create(name="Province Scope")
-    allowed_district = province.add_child(name="Allowed Household District", location_type="district")
+    allowed_district = province.add_child(
+        name="Allowed Household District", location_type="district"
+    )
     province.add_child(name="Blocked Household District", location_type="district")
 
     user = UserFactory.create(

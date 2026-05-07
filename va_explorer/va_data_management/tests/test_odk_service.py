@@ -1,6 +1,7 @@
+from datetime import timedelta
+
 import pandas as pd
 import pytest
-from datetime import timedelta
 from django.core.management import call_command
 from django.utils import timezone
 
@@ -17,7 +18,6 @@ from va_explorer.va_data_management.odk.service import (
     import_dataframe_records,
 )
 
-
 pytestmark = pytest.mark.django_db
 
 
@@ -33,7 +33,9 @@ def test_pull_form_updates_state_and_counts(monkeypatch):
 
     calls = {}
 
-    def fake_list_submissions(form_id, project_id, since=None, include_attachments=False):
+    def fake_list_submissions(
+        form_id, project_id, since=None, include_attachments=False
+    ):
         calls["since"] = since
         df = pd.DataFrame([{"createdAt": "2024-01-01T00:00:00Z"}])
         return df, {
@@ -240,6 +242,8 @@ def test_upsert_into_models_wraps_va_loader_in_atomic_transaction(monkeypatch):
     )
 
     with pytest.raises(RuntimeError, match="boom"):
-        service.upsert_into_models(pd.DataFrame([{"instanceid": "va-1"}]), form_name="verbal_autopsy")
+        service.upsert_into_models(
+            pd.DataFrame([{"instanceid": "va-1"}]), form_name="verbal_autopsy"
+        )
 
     assert not Household.objects.filter(key="tx-house").exists()

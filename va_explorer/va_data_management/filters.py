@@ -1,12 +1,11 @@
+from crispy_forms.helper import FormHelper
 from django import forms
 from django.core.exceptions import ValidationError
 from django.forms import Select, TextInput
 from django_filters import BooleanFilter, CharFilter, DateFilter, FilterSet
-from crispy_forms.helper import FormHelper
 from fuzzywuzzy import fuzz
 
-from .models import VerbalAutopsy, Pregnancy, Household, PregnancyOutcome, Death
-
+from .models import Death, Household, Pregnancy, PregnancyOutcome, VerbalAutopsy
 
 TRUE_FALSE_CHOICES = (
     (False, "No"),
@@ -24,6 +23,48 @@ def validate_integer(value: str):
 
 class DateInput(forms.DateInput):
     input_type = "date"
+
+
+# =============================================================
+# Shared base filter — province / district / ward / enumerator
+# are declared on every list FilterSet.  Subclasses inherit
+# these fields and only need to declare model-specific extras.
+# =============================================================
+class GeoEnumeratorFilterSet(FilterSet):
+    """Abstract base providing shared geography + enumerator filters.
+
+    Concrete subclasses must declare their own ``class Meta`` with ``model``
+    and ``fields``; they do NOT need to redeclare province/district/ward/enumerator.
+    """
+
+    province = CharFilter(
+        field_name="province",
+        lookup_expr="icontains",
+        label="Province",
+        widget=TextInput(attrs={"class": "form-text"}),
+    )
+    district = CharFilter(
+        field_name="district",
+        lookup_expr="icontains",
+        label="District",
+        widget=TextInput(attrs={"class": "form-text"}),
+    )
+    ward = CharFilter(
+        field_name="ward",
+        lookup_expr="icontains",
+        label="Ward",
+        widget=TextInput(attrs={"class": "form-text"}),
+    )
+    enumerator = CharFilter(
+        field_name="enumerator",
+        lookup_expr="icontains",
+        label="Enumerator",
+        widget=TextInput(attrs={"class": "form-text"}),
+    )
+
+    class Meta:
+        abstract = True
+        fields = []
 
 
 # =========================
@@ -107,35 +148,11 @@ class VAFilter(FilterSet):
 # =========================
 # Pregnancy list
 # =========================
-class PregnancyFilter(FilterSet):
+class PregnancyFilter(GeoEnumeratorFilterSet):
     id = CharFilter(
         field_name="id",
         lookup_expr="icontains",
         label="ID",
-        widget=TextInput(attrs={"class": "form-text"}),
-    )
-    province = CharFilter(
-        field_name="province",
-        lookup_expr="icontains",
-        label="Province",
-        widget=TextInput(attrs={"class": "form-text"}),
-    )
-    district = CharFilter(
-        field_name="district",
-        lookup_expr="icontains",
-        label="District",
-        widget=TextInput(attrs={"class": "form-text"}),
-    )
-    ward = CharFilter(
-        field_name="ward",
-        lookup_expr="icontains",
-        label="Ward",
-        widget=TextInput(attrs={"class": "form-text"}),
-    )
-    enumerator = CharFilter(
-        field_name="enumerator",
-        lookup_expr="icontains",
-        label="Enumerator",
         widget=TextInput(attrs={"class": "form-text"}),
     )
     start_date = DateFilter(
@@ -159,35 +176,11 @@ class PregnancyFilter(FilterSet):
 # =========================
 # Household list
 # =========================
-class HouseholdFilter(FilterSet):
+class HouseholdFilter(GeoEnumeratorFilterSet):
     id = CharFilter(
         field_name="id",
         lookup_expr="icontains",
         label="ID",
-        widget=TextInput(attrs={"class": "form-text"}),
-    )
-    province = CharFilter(
-        field_name="province",
-        lookup_expr="icontains",
-        label="Province",
-        widget=TextInput(attrs={"class": "form-text"}),
-    )
-    district = CharFilter(
-        field_name="district",
-        lookup_expr="icontains",
-        label="District",
-        widget=TextInput(attrs={"class": "form-text"}),
-    )
-    ward = CharFilter(
-        field_name="ward",
-        lookup_expr="icontains",
-        label="Ward",
-        widget=TextInput(attrs={"class": "form-text"}),
-    )
-    enumerator = CharFilter(
-        field_name="enumerator",
-        lookup_expr="icontains",
-        label="Enumerator",
         widget=TextInput(attrs={"class": "form-text"}),
     )
     supervisor = CharFilter(
@@ -205,31 +198,7 @@ class HouseholdFilter(FilterSet):
 # =========================
 # Pregnancy Outcome list
 # =========================
-class PregnancyOutcomeFilter(FilterSet):
-    province = CharFilter(
-        field_name="province",
-        lookup_expr="icontains",
-        label="Province",
-        widget=TextInput(attrs={"class": "form-text"}),
-    )
-    district = CharFilter(
-        field_name="district",
-        lookup_expr="icontains",
-        label="District",
-        widget=TextInput(attrs={"class": "form-text"}),
-    )
-    ward = CharFilter(
-        field_name="ward",
-        lookup_expr="icontains",
-        label="Ward",
-        widget=TextInput(attrs={"class": "form-text"}),
-    )
-    enumerator = CharFilter(
-        field_name="enumerator",
-        lookup_expr="icontains",
-        label="Enumerator",
-        widget=TextInput(attrs={"class": "form-text"}),
-    )
+class PregnancyOutcomeFilter(GeoEnumeratorFilterSet):
     outcome_type = CharFilter(
         field_name="po_group",
         lookup_expr="icontains",
@@ -257,31 +226,7 @@ class PregnancyOutcomeFilter(FilterSet):
 # =========================
 # Death list
 # =========================
-class DeathFilter(FilterSet):
-    province = CharFilter(
-        field_name="province",
-        lookup_expr="icontains",
-        label="Province",
-        widget=TextInput(attrs={"class": "form-text"}),
-    )
-    district = CharFilter(
-        field_name="district",
-        lookup_expr="icontains",
-        label="District",
-        widget=TextInput(attrs={"class": "form-text"}),
-    )
-    ward = CharFilter(
-        field_name="ward",
-        lookup_expr="icontains",
-        label="Ward",
-        widget=TextInput(attrs={"class": "form-text"}),
-    )
-    enumerator = CharFilter(
-        field_name="enumerator",
-        lookup_expr="icontains",
-        label="Enumerator",
-        widget=TextInput(attrs={"class": "form-text"}),
-    )
+class DeathFilter(GeoEnumeratorFilterSet):
     deceased = CharFilter(
         field_name="DE_03",
         lookup_expr="icontains",
@@ -304,4 +249,3 @@ class DeathFilter(FilterSet):
     class Meta:
         model = Death
         fields = []
-

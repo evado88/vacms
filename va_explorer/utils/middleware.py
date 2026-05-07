@@ -5,6 +5,48 @@ from django.db import connection
 from va_explorer.utils.profiling import logger, top_steps
 
 
+class UserActivityMiddleware:
+    """
+    Records a PAGE_VIEW entry in UserActivity for every authenticated GET
+    request that returns an HTML page. Skips static/media files, API
+    (JSON/XML) responses, and the activity-log endpoints themselves to avoid
+    noise and circular growth.
+    """
+
+    SKIP_PREFIXES = (
+        "/static/",
+        "/media/",
+        "/__debug__/",
+        "/admin-panel/activity/",
+    )
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        response = self.get_response(request)
+        self._maybe_log(request, response)
+        return response
+
+    def _maybe_log(self, request, response):
+        if request.method != "GET":
+            return
+        if not getattr(request, "user", None) or not request.user.is_authenticated:
+            return
+        path = request.path or ""
+        if any(path.startswith(p) for p in self.SKIP_PREFIXES):
+            return
+        content_type = getattr(response, "get", lambda k, d="": d)("Content-Type", "")
+        if "html" not in content_type:
+            return
+        try:
+            from va_explorer.users.models import UserActivity
+
+            UserActivity.log(UserActivity.PAGE_VIEW, user=request.user, request=request)
+        except Exception:
+            pass
+
+
 class DashboardProfilingMiddleware:
     """
     Lightweight request profiler for Home/Outcomes dashboard routes.
@@ -51,9 +93,10 @@ class DashboardProfilingMiddleware:
 
         started = time.perf_counter()
         sql_started_at = time.perf_counter()
+        # Under DEBUG=True Django already captures connection.queries; we read
+        # the count before/after without forcing the debug cursor ourselves,
+        # which previously added overhead and grew per-thread memory.
         initial_query_count = len(connection.queries)
-        previous_debug_cursor = connection.force_debug_cursor
-        connection.force_debug_cursor = True
 
         response = self.get_response(request)
         response_ready_at = time.perf_counter()
@@ -68,10 +111,13 @@ class DashboardProfilingMiddleware:
             db_query_count = len(new_queries)
             db_window_ms = (time.perf_counter() - sql_started_at) * 1000.0
 
-            step_summary = ", ".join(
-                f"{step['name']}={step['duration_ms']:.2f}ms"
-                for step in top_steps(request, limit=5)
-            ) or "none"
+            step_summary = (
+                ", ".join(
+                    f"{step['name']}={step['duration_ms']:.2f}ms"
+                    for step in top_steps(request, limit=5)
+                )
+                or "none"
+            )
 
             logger.info(
                 (
@@ -91,7 +137,6 @@ class DashboardProfilingMiddleware:
                 step_summary,
             )
 
-            connection.force_debug_cursor = previous_debug_cursor
             return _response
 
         if hasattr(response, "add_post_render_callback"):

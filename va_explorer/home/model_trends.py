@@ -6,7 +6,12 @@ from django.db.models import Max
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
 
-from va_explorer.va_data_management.models import Death, Household, Pregnancy, PregnancyOutcome
+from va_explorer.va_data_management.models import (
+    Death,
+    Household,
+    Pregnancy,
+    PregnancyOutcome,
+)
 from va_explorer.va_data_management.utils.location_access import (
     restrict_queryset_to_user_locations,
 )
@@ -67,7 +72,9 @@ def _sub_calendar_months(dt, months):
 
 
 def _month_sequence_12(now_local):
-    start = _sub_calendar_months(now_local.replace(day=1, hour=0, minute=0, second=0, microsecond=0), 11)
+    start = _sub_calendar_months(
+        now_local.replace(day=1, hour=0, minute=0, second=0, microsecond=0), 11
+    )
     months = []
     current = start
     for _ in range(12):
@@ -81,7 +88,7 @@ def _month_sequence_12(now_local):
 
 def _empty_metric_trend(month_labels):
     return {
-        "table": {"recorded": {label: 0 for label in WINDOW_COLUMNS}},
+        "table": {"recorded": dict.fromkeys(WINDOW_COLUMNS, 0)},
         "graphs": {"recorded": {"x": month_labels, "y": [0.0] * len(month_labels)}},
     }
 
@@ -127,8 +134,12 @@ def build_trend_for_queryset(queryset, key_field="key"):
         return output
     output["table"]["recorded"]["Overall"] = len(timestamps)
     output["table"]["recorded"]["24"] = sum(1 for ts in timestamps if ts >= since_day)
-    output["table"]["recorded"]["1 week"] = sum(1 for ts in timestamps if ts >= since_week)
-    output["table"]["recorded"]["1 month"] = sum(1 for ts in timestamps if ts >= since_month)
+    output["table"]["recorded"]["1 week"] = sum(
+        1 for ts in timestamps if ts >= since_week
+    )
+    output["table"]["recorded"]["1 month"] = sum(
+        1 for ts in timestamps if ts >= since_month
+    )
 
     month_counter = Counter(ts.strftime("%Y-%m") for ts in timestamps)
     monthly_counts = [float(month_counter.get(key, 0)) for key in month_keys]
@@ -139,7 +150,9 @@ def build_trend_for_queryset(queryset, key_field="key"):
 def get_model_trends_data(user=None):
     households_qs = restrict_queryset_to_user_locations(Household.objects.all(), user)
     pregnancies_qs = restrict_queryset_to_user_locations(Pregnancy.objects.all(), user)
-    outcomes_qs = restrict_queryset_to_user_locations(PregnancyOutcome.objects.all(), user)
+    outcomes_qs = restrict_queryset_to_user_locations(
+        PregnancyOutcome.objects.all(), user
+    )
     deaths_qs = restrict_queryset_to_user_locations(Death.objects.all(), user)
     return {
         "households": build_trend_for_queryset(households_qs),

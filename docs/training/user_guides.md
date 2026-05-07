@@ -178,17 +178,16 @@ does not currently support any features unique to your role. Please consult the
 
 ## Field Workers
 
-Field Workers are similar to Data Viewers. However, they only see {term}`VA`s for their 
-own location and can partially repair {term}`VA` Errors & Warnings for those {term}`VA`s. For a 
+Field Workers are similar to Data Viewers. However, they only see {term}`VA`s for their
+own location and can partially repair {term}`VA` Errors & Warnings for those {term}`VA`s. For a
 full listing of these, see [Common Actions](general/common_actions) or see below
 for an explanation  of the "partial repair" workflow.
 
 ### Partially Repairing VA Errors & Warnings
 
-As a Field Worker, you have the ability to make corrections to {term}`VA`s for your own 
-location as a way of assisting Data Managers with the correction of any warnings 
+As a Field Worker, you have the ability to make corrections to {term}`VA`s for your own
+location as a way of assisting Data Managers with the correction of any warnings
 or errors reported by VA Explorer. See [Repairing VA Errors & Warnings](#repairing-va-errors--warnings)
-for details. However, you will not be able to create any {term}`VA` coding jobs to re-run 
-cause of death assignment. Please reach out to the appropriate Data Manager or 
+for details. However, you will not be able to create any {term}`VA` coding jobs to re-run
+cause of death assignment. Please reach out to the appropriate Data Manager or
 Admin to do this for you.
-

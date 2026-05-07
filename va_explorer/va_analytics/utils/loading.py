@@ -1,6 +1,6 @@
 import csv
-import json
 import itertools
+import json
 import os
 from datetime import date, datetime
 from functools import lru_cache
@@ -11,7 +11,6 @@ from django.db.models import (
     Case,
     CharField,
     Count,
-    DateField,
     F,
     OuterRef,
     Q,
@@ -19,7 +18,7 @@ from django.db.models import (
     Value,
     When,
 )
-from django.db.models.functions import Cast, Substr, TruncMonth
+from django.db.models.functions import Substr
 
 from va_explorer.va_data_management.models import (
     CauseOfDeath,
@@ -191,10 +190,19 @@ def _resolve_geo_name(value, level):
         return ""
 
     lookup = _geojson_level_lookup().get(level, {})
-    mapped = (
-        lookup.get(text.lower())
-        or lookup.get(text)
-        or lookup.get(_to_int_string(text))
+    lookup_keys = [text.lower(), text, _to_int_string(text)]
+    if level == "EA":
+        digit_token = "".join(char for char in text if char.isdigit())
+        if digit_token:
+            lookup_keys.extend(
+                [
+                    digit_token,
+                    digit_token.lstrip("0"),
+                    _to_int_string(digit_token),
+                ]
+            )
+    mapped = next(
+        (lookup.get(key) for key in lookup_keys if key and lookup.get(key)), None
     )
     return _strip_geo_suffix(mapped or text, level)
 
@@ -248,9 +256,15 @@ def _va_region_values(va, region_level):
     if mode == "community":
         cluster = context.get("cluster")
         if region_level == "Province":
-            return [context.get("province"), *_cluster_region_candidates(cluster, "Province")]
+            return [
+                context.get("province"),
+                *_cluster_region_candidates(cluster, "Province"),
+            ]
         if region_level == "District":
-            return [context.get("district"), *_cluster_region_candidates(cluster, "District")]
+            return [
+                context.get("district"),
+                *_cluster_region_candidates(cluster, "District"),
+            ]
         if region_level == "Constituency":
             return [
                 context.get("constituency"),
@@ -267,7 +281,10 @@ def _va_region_values(va, region_level):
 
     # Facility mode fallback keeps legacy behavior.
     if region_level == "Province":
-        return [context.get("province"), getattr(va, "province_name_from_location", None)]
+        return [
+            context.get("province"),
+            getattr(va, "province_name_from_location", None),
+        ]
     if region_level == "District":
         return [
             context.get("area"),
@@ -387,14 +404,13 @@ def _next_comparison_level(region_level):
     return order.get(region_level, "Province")
 
 
-def _collapse_top_n_with_other(rows, label_key, value_key="count", top_n=10):
+def _top_n_rows(rows, label_key, value_key="count", top_n=10):
     rows = list(rows)
     top = rows[:top_n]
-    other_total = sum((row.get(value_key) or 0) for row in rows[top_n:])
-    collapsed = [{label_key: row.get(label_key), value_key: row.get(value_key) or 0} for row in top]
-    if other_total > 0:
-        collapsed.append({label_key: "Other", value_key: other_total})
-    return collapsed
+    return [
+        {label_key: row.get(label_key), value_key: row.get(value_key) or 0}
+        for row in top
+    ]
 
 
 def _month_starts_between(start_month, end_month):
@@ -413,20 +429,32 @@ def _month_starts_between(start_month, end_month):
 
 
 def _build_va_cause_trend_payload(filtered_qs, top_causes):
+    start_key = COD_TREND_START_MONTH.strftime("%Y-%m")
     rows = (
         filtered_qs.exclude(final_cause__isnull=True)
         .exclude(final_cause="")
-        .annotate(month=TruncMonth(Cast("Id10023", output_field=DateField())))
-        .exclude(month__lt=COD_TREND_START_MONTH)
-        .exclude(month__isnull=True)
-        .values("month", cause=F("final_cause"))
+        .exclude(Id10023__isnull=True)
+        .exclude(Id10023="")
+        .exclude(Id10023__iexact="nan")
+        .exclude(Id10023__iexact="nat")
+        .exclude(Id10023__iexact="none")
+        .exclude(Id10023__iexact="null")
+        .exclude(Id10023__iexact="dk")
+        .filter(Id10023__regex=r"^\d{4}-\d{2}-\d{2}")
+        .filter(Id10023__gte=COD_TREND_START_MONTH.strftime("%Y-%m-%d"))
+        .annotate(month_key=Substr("Id10023", 1, 7))
+        .filter(month_key__gte=start_key)
+        .values("month_key", cause=F("final_cause"))
         .annotate(count=Count("pk"))
-        .order_by("month")
+        .order_by("month_key")
     )
 
-    row_months = sorted({row["month"] for row in rows if row.get("month")})
-    if row_months:
-        month_range = _month_starts_between(COD_TREND_START_MONTH, row_months[-1])
+    row_month_keys = sorted({row["month_key"] for row in rows if row.get("month_key")})
+    if row_month_keys:
+        last_month = (
+            datetime.strptime(row_month_keys[-1], "%Y-%m").date().replace(day=1)
+        )
+        month_range = _month_starts_between(COD_TREND_START_MONTH, last_month)
     else:
         month_range = []
 
@@ -443,20 +471,16 @@ def _build_va_cause_trend_payload(filtered_qs, top_causes):
         }
 
     cause_buckets = list(top_causes)
-    if cause_buckets:
-        cause_buckets.append("Other")
-    trend_map = {cause: {k: 0 for k in month_keys} for cause in cause_buckets}
+    trend_map = {cause: dict.fromkeys(month_keys, 0) for cause in cause_buckets}
 
     for row in rows:
-        month = row.get("month")
-        if not month:
+        mk = row.get("month_key")
+        if not mk:
             continue
         cause = row.get("cause")
-        month_key = month.strftime("%Y-%m")
-        bucket = cause if cause in top_causes else "Other"
-        if bucket not in trend_map:
+        if cause not in trend_map:
             continue
-        trend_map[bucket][month_key] += row.get("count") or 0
+        trend_map[cause][mk] += row.get("count") or 0
 
     series_rows = []
     datasets = []
@@ -511,7 +535,6 @@ def _build_regional_cod_comparison(filtered_qs, region_of_interest, top_causes):
     cod_categories = list(top_causes)
     if not cod_categories:
         return _empty_regional_cod_comparison(compare_key)
-    cod_categories.append("Other")
 
     grouped_counts = {}
     coded_qs = (
@@ -534,11 +557,12 @@ def _build_regional_cod_comparison(filtered_qs, region_of_interest, top_causes):
                 group_name = "Unknown Province"
 
         cause_name = getattr(va, "final_cause", None)
-        bucket = cause_name if cause_name in top_causes else "Other"
+        if cause_name not in top_causes:
+            continue
         group_bucket = grouped_counts.setdefault(
-            group_name, {category: 0 for category in cod_categories}
+            group_name, dict.fromkeys(cod_categories, 0)
         )
-        group_bucket[bucket] += 1
+        group_bucket[cause_name] += 1
 
     if compare_key == "age":
         order = {
@@ -547,19 +571,27 @@ def _build_regional_cod_comparison(filtered_qs, region_of_interest, top_causes):
             "Adult (> 12 years)": 2,
             "Unknown": 3,
         }
-        groups = sorted(grouped_counts.keys(), key=lambda name: (order.get(name, 9), name))
+        groups = sorted(
+            grouped_counts.keys(), key=lambda name: (order.get(name, 9), name)
+        )
     elif compare_key == "source":
         order = {"Community VA": 0, "Facility VA": 1, "Unknown Source": 2}
-        groups = sorted(grouped_counts.keys(), key=lambda name: (order.get(name, 9), name))
+        groups = sorted(
+            grouped_counts.keys(), key=lambda name: (order.get(name, 9), name)
+        )
     else:
         groups = sorted(grouped_counts.keys(), key=lambda name: name.lower())
 
     matrix_percent = []
     for group in groups:
-        row_counts = [grouped_counts[group].get(category, 0) for category in cod_categories]
+        row_counts = [
+            grouped_counts[group].get(category, 0) for category in cod_categories
+        ]
         row_total = sum(row_counts)
         if row_total > 0:
-            matrix_percent.append([round((count / row_total) * 100, 1) for count in row_counts])
+            matrix_percent.append(
+                [round((count / row_total) * 100, 1) for count in row_counts]
+            )
         else:
             matrix_percent.append([0.0 for _ in cod_categories])
 
@@ -617,9 +649,25 @@ def _apply_source_filter(queryset, source):
     if source_key in {"all", "any", "*"}:
         return queryset
 
-    if source_key in {"community", "community_va", "community va", "yes", "y", "1", "true"}:
+    if source_key in {
+        "community",
+        "community_va",
+        "community va",
+        "yes",
+        "y",
+        "1",
+        "true",
+    }:
         return queryset.filter(community_va__iexact="yes")
-    if source_key in {"facility", "facility_va", "facility va", "no", "n", "0", "false"}:
+    if source_key in {
+        "facility",
+        "facility_va",
+        "facility va",
+        "no",
+        "n",
+        "0",
+        "false",
+    }:
         return queryset.filter(community_va__iexact="no")
     return queryset
 
@@ -831,9 +879,11 @@ def load_va_data(
         .order_by("-count")
     )
     cod_sums_rows = list(cod_sums_qs)
-    top_causes_for_trend = [row.get("cause") for row in cod_sums_rows[:5] if row.get("cause")]
+    top_causes_for_trend = [
+        row.get("cause") for row in cod_sums_rows[:5] if row.get("cause")
+    ]
     cod_total = sum((row.get("count") or 0) for row in cod_sums_rows)
-    COD_sums = _collapse_top_n_with_other(
+    COD_sums = _top_n_rows(
         cod_sums_rows,
         label_key="cause",
         value_key="count",
@@ -842,14 +892,20 @@ def load_va_data(
     COD_sums = [{**row, "total": cod_total} for row in COD_sums]
 
     COD_trend = (
-        user_vas_filtered.annotate(
-            month=TruncMonth(Cast("Id10023", output_field=DateField()))
-        )
-        .exclude(month__lt=COD_TREND_START_MONTH)
-        .filter(causes__isnull=False)
-        .values("month")
+        user_vas_filtered.filter(causes__isnull=False)
+        .exclude(Id10023__isnull=True)
+        .exclude(Id10023="")
+        .exclude(Id10023__iexact="nan")
+        .exclude(Id10023__iexact="nat")
+        .exclude(Id10023__iexact="none")
+        .exclude(Id10023__iexact="null")
+        .exclude(Id10023__iexact="dk")
+        .filter(Id10023__regex=r"^\d{4}-\d{2}-\d{2}")
+        .filter(Id10023__gte=COD_TREND_START_MONTH.strftime("%Y-%m-%d"))
+        .annotate(month_key=Substr("Id10023", 1, 7))
+        .values("month_key")
         .annotate(count=Count("pk"))
-        .order_by("month")
+        .order_by("month_key")
     )
     va_cause_trend = _build_va_cause_trend_payload(
         user_vas_filtered, top_causes_for_trend
@@ -898,13 +954,17 @@ def load_va_data(
         ea = geo["EA"]
 
         if province:
-            map_counts["Province"][province] = map_counts["Province"].get(province, 0) + 1
+            map_counts["Province"][province] = (
+                map_counts["Province"].get(province, 0) + 1
+            )
             if is_coded:
                 coded_geo_counts["Province"][province] = (
                     coded_geo_counts["Province"].get(province, 0) + 1
                 )
         if district:
-            map_counts["District"][district] = map_counts["District"].get(district, 0) + 1
+            map_counts["District"][district] = (
+                map_counts["District"].get(district, 0) + 1
+            )
             if is_coded:
                 coded_geo_counts["District"][district] = (
                     coded_geo_counts["District"].get(district, 0) + 1
@@ -939,8 +999,12 @@ def load_va_data(
         ],
         "va_cause_trend": va_cause_trend,
         "regional_cod_comparison": regional_cod_comparison,
-        "map_province_sums": _serialize_geo_counts(map_counts["Province"], "province_name"),
-        "map_district_sums": _serialize_geo_counts(map_counts["District"], "district_name"),
+        "map_province_sums": _serialize_geo_counts(
+            map_counts["Province"], "province_name"
+        ),
+        "map_district_sums": _serialize_geo_counts(
+            map_counts["District"], "district_name"
+        ),
         "map_constituency_sums": _serialize_geo_counts(
             map_counts["Constituency"], "constituency_name"
         ),

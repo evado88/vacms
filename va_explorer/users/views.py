@@ -22,7 +22,6 @@ from django.views.generic import (
 
 from ..utils.mixins import CustomAuthMixin, UserDetailViewMixin
 from .constants import PERM_FIELD_MAP
-from .utils.user_form_backend import parse_users_from_file, save_users_from_data
 from .forms import (
     ExtendedUserCreationForm,
     FeedbackForm,
@@ -34,6 +33,7 @@ from .forms import (
     UserUpdateForm,
 )
 from .models import Feedback
+from .utils.user_form_backend import parse_users_from_file, save_users_from_data
 
 User = get_user_model()
 
@@ -59,6 +59,7 @@ class SystemAdminRequiredMixin(UserPassesTestMixin):
 
     def test_func(self):
         return user_is_system_admin(self.request.user)
+
 
 class UserIndexView(CustomAuthMixin, PermissionRequiredMixin, ListView):
     # https://github.com/pennersr/django-allauth/blob/c19a212c6ee786af1bb8bc1b07eb2aa8e2bf531b/allauth/account/urls.py
@@ -104,20 +105,24 @@ user_create_view = UserCreateView.as_view()
 def UserImportView(request):
 
     if request.method == "POST":
-        
+
         if "confirm_import" in request.POST:
             # Step 2: Confirmation
             valid_users = request.session.get("valid_users_import")
             if not valid_users:
-                messages.error(request, "No user data found to import or session expired.")
+                messages.error(
+                    request, "No user data found to import or session expired."
+                )
                 return redirect(reverse("users:import"))
-            
+
             saved_users = save_users_from_data(valid_users)
-            messages.success(request, f"Successfully imported {len(saved_users)} users.")
-            
+            messages.success(
+                request, f"Successfully imported {len(saved_users)} users."
+            )
+
             # Clean up session
             del request.session["valid_users_import"]
-            
+
             return redirect(reverse("users:index"))
 
         else:
@@ -125,27 +130,37 @@ def UserImportView(request):
             form = UserImportForm(request.POST, request.FILES)
 
             if form.is_valid():
-                uploaded_file = form.cleaned_data['file']
+                uploaded_file = form.cleaned_data["file"]
                 group = form.cleaned_data.get("groups")
-                
-                if not uploaded_file.name.endswith('.csv'):
-                    messages.error(request, 'File is not a CSV type.')
+
+                if not uploaded_file.name.endswith(".csv"):
+                    messages.error(request, "File is not a CSV type.")
                     return render(request, "users/user_import.html", {"form": form})
 
                 # Parse the users
-                valid_users_raw, valid_users_display, invalid_users = parse_users_from_file(uploaded_file, default_group=group)
-                
+                valid_users_raw, valid_users_display, invalid_users = (
+                    parse_users_from_file(uploaded_file, default_group=group)
+                )
+
                 # Store valid users in session for the confirmation step
                 request.session["valid_users_import"] = valid_users_raw
-                
+
                 # Render the review page
-                return render(request, "users/user_import_review.html", {
-                    "valid_users": valid_users_display,
-                    "headers": list(valid_users_display[0].keys()) if valid_users_display else [],
-                    "invalid_users": invalid_users,
-                    "total_valid": len(valid_users_raw),
-                    "total_invalid": len(invalid_users)
-                })
+                return render(
+                    request,
+                    "users/user_import_review.html",
+                    {
+                        "valid_users": valid_users_display,
+                        "headers": (
+                            list(valid_users_display[0].keys())
+                            if valid_users_display
+                            else []
+                        ),
+                        "invalid_users": invalid_users,
+                        "total_valid": len(valid_users_raw),
+                        "total_invalid": len(invalid_users),
+                    },
+                )
 
             else:
                 # Form is invalid, re-render with errors
@@ -174,25 +189,28 @@ def UserPasswordUpdateView(request, pk):
         if form.is_valid():
             # Process the valid data from form.cleaned_data
             password1 = form.cleaned_data["password1"]
-        
+
             try:
                 userDetail = User.objects.get(id=pk)
 
                 if userDetail.is_superuser and not request.user.is_superuser:
-                    messages.error(request, "You cannot edit the password for this user.")
+                    messages.error(
+                        request, "You cannot edit the password for this user."
+                    )
                     return redirect(reverse("users:index"))
-                
+
                 userDetail.set_password(password1)
                 userDetail.has_valid_password = True
                 userDetail.save()
-                
-                messages.success(request, 'The user password has been updated successfully.')
-                
-            except User.DoesNotExist:
-                messages.error(request, 'The specified user cannot be found!')
-                
-            return redirect(reverse("users:index"))
 
+                messages.success(
+                    request, "The user password has been updated successfully."
+                )
+
+            except User.DoesNotExist:
+                messages.error(request, "The specified user cannot be found!")
+
+            return redirect(reverse("users:index"))
 
         else:
             # Form is invalid, re-render with errors
@@ -210,7 +228,7 @@ def UserPasswordUpdateView(request, pk):
                 "mobile1": userDetail.mobile1,
                 "mobile2": userDetail.mobile2,
             }
-            
+
             if userDetail.is_superuser and not request.user.is_superuser:
                 messages.error(request, "You cannot edit the password for this user.")
                 return redirect(reverse("users:index"))
@@ -223,7 +241,7 @@ def UserPasswordUpdateView(request, pk):
             {"form": UserPasswordUpdateForm(initial=initials)},
         )
 
-        
+
 class UserDetailView(CustomAuthMixin, UserDetailViewMixin, DetailView):
     login_url = reverse_lazy("account_login")
     model = User
@@ -277,7 +295,13 @@ class UserUpdateView(
             there are any locations restrictions associated with the user in the
             database, they have location-specific access; else national access.
             (2) Set the facilities restrictions associated with the user, if any
+            (3) Pre-populate location_restrictions by reverse-mapping the user's
+            Location objects back to the corresponding SRSClusterLocation nodes.
         """
+        from django.db.models import Q
+
+        from va_explorer.va_data_management.models import SRSClusterLocation
+
         initial = super().get_initial()
 
         initial["group"] = self.get_object().groups.first()
@@ -289,6 +313,23 @@ class UserUpdateView(
         initial["facility_restrictions"] = (
             self.get_object().location_restrictions.filter(location_type="facility")
         )
+
+        # Reverse-map Location objects → SRSClusterLocation nodes so the
+        # location dropdown is pre-populated when editing an existing user.
+        # The form field only shows province/district-level SRS nodes, so we
+        # match against the user's Location restrictions at those levels.
+        user_locs = self.get_object().location_restrictions.filter(
+            location_type__in=["province", "district"]
+        )
+        if user_locs.exists():
+            reverse_q = Q()
+            for loc in user_locs:
+                reverse_q |= Q(
+                    name__iexact=loc.name, location_type__iexact=loc.location_type
+                )
+            initial["location_restrictions"] = SRSClusterLocation.objects.filter(
+                reverse_q
+            )
 
         initial["view_pii"] = self.get_object().can_view_pii
         initial["download_data"] = self.get_object().can_download_data
@@ -403,9 +444,7 @@ class FeedbackSubmitView(CustomAuthMixin, SuccessMessageMixin, CreateView):
 feedback_submit_view = FeedbackSubmitView.as_view()
 
 
-class FeedbackMailboxListView(
-    CustomAuthMixin, SystemAdminRequiredMixin, ListView
-):
+class FeedbackMailboxListView(CustomAuthMixin, SystemAdminRequiredMixin, ListView):
     login_url = reverse_lazy("account_login")
     model = Feedback
     template_name = "users/feedback_list.html"
@@ -434,9 +473,7 @@ class FeedbackMailboxListView(
 feedback_mailbox_view = FeedbackMailboxListView.as_view()
 
 
-class FeedbackMailboxDetailView(
-    CustomAuthMixin, SystemAdminRequiredMixin, DetailView
-):
+class FeedbackMailboxDetailView(CustomAuthMixin, SystemAdminRequiredMixin, DetailView):
     login_url = reverse_lazy("account_login")
     model = Feedback
     template_name = "users/feedback_detail.html"

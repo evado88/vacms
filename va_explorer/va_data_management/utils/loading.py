@@ -7,12 +7,20 @@ import pandas as pd
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.db.models import Count, Max, Q
-from simple_history.utils import bulk_create_with_history
+from simple_history.utils import bulk_create_with_history, bulk_update_with_history
 
 from va_explorer.users.utils.demo_users import make_field_workers_for_facilities
-from va_explorer.va_data_management.models import Location, VerbalAutopsy, SRSClusterLocation
+from va_explorer.va_data_management.models import (
+    Location,
+    SRSClusterLocation,
+    VerbalAutopsy,
+)
 from va_explorer.va_data_management.odk.normalization import build_odk_rename_map
 from va_explorer.va_data_management.utils.date_parsing import parse_date
+from va_explorer.va_data_management.utils.geopoint import (
+    compose_geopoint,
+    find_geopoint_columns,
+)
 from va_explorer.va_data_management.utils.location_assignment import (
     assign_va_location,
 )
@@ -22,14 +30,18 @@ from ..constants import _checkbox_choices
 
 User = get_user_model()
 
+
 def normalize_string(s):
     """Strip whitespace, replace hyphens with underscores, remove surrounding quotes."""
     if pd.isnull(s):
         return ""
     s = str(s).strip().replace("-", "_")
-    if s.startswith(("'", '"')): s = s[1:]
-    if s.endswith(("'", '"')): s = s[:-1]
+    if s.startswith(("'", '"')):
+        s = s[1:]
+    if s.endswith(("'", '"')):
+        s = s[:-1]
     return s
+
 
 def normalize_value(val):
     """Remove leading zeros, normalize .0 floats to int, preserve case."""
@@ -41,7 +53,7 @@ def normalize_value(val):
             val = int(val)
         s = str(val).strip()
         # If string looks like '1.0', '02.0', etc.
-        if s.replace('.', '', 1).isdigit():
+        if s.replace(".", "", 1).isdigit():
             float_val = float(s)
             if float_val.is_integer():
                 s = str(int(float_val))
@@ -58,6 +70,27 @@ def _has_meaningful_value(value):
         return False
     normalized = normalize_string(value).lower()
     return normalized not in {"", "nan", "none", "null"}
+
+
+def merge_geopoint_columns(df):
+    geopoint_columns = find_geopoint_columns(df.columns)
+    if not geopoint_columns:
+        return df
+
+    df = df.copy()
+    derived_geopoint = df.apply(compose_geopoint, axis=1)
+
+    if "geopoint" not in df.columns:
+        df["geopoint"] = ""
+
+    existing_geopoint_empty = ~df["geopoint"].apply(_has_meaningful_value)
+    should_set_geopoint = (
+        derived_geopoint.apply(_has_meaningful_value) & existing_geopoint_empty
+    )
+    df.loc[should_set_geopoint, "geopoint"] = derived_geopoint[should_set_geopoint]
+    df.loc[~df["geopoint"].apply(_has_meaningful_value), "geopoint"] = ""
+
+    return df.drop(columns=list(geopoint_columns.values()))
 
 
 def normalize_community_va_value(
@@ -85,10 +118,7 @@ def normalize_community_va_value(
             if normalized in {"no", "n", "false", "0"}:
                 return "no"
 
-    if any(
-        _has_meaningful_value(v)
-        for v in (district, constituency, ward, ea)
-    ):
+    if any(_has_meaningful_value(v) for v in (district, constituency, ward, ea)):
         return "yes"
 
     if _has_meaningful_value(area) and _has_meaningful_value(hospital):
@@ -117,7 +147,9 @@ def build_srs_location_maps():
         "all_by_id": {},
         "lineage_cache": {},
     }
-    for loc in SRSClusterLocation.objects.only("id", "name", "code", "location_type").iterator():
+    for loc in SRSClusterLocation.objects.only(
+        "id", "name", "code", "location_type"
+    ).iterator():
         level = _normalized_geo_token(loc.location_type)
         if level not in maps:
             continue
@@ -262,6 +294,7 @@ def resolve_srs_cluster_from_row(row, srs_maps):
             return match
     return None
 
+
 def normalize_dataframe_columns(df, model):
     """
     Rename and filter DataFrame columns to align with model fields.
@@ -279,12 +312,9 @@ def normalize_dataframe_columns(df, model):
 
     return df
 
+
 def load_odk_csv_to_model(
-    df,
-    model,
-    odk_choices_queryset,
-    odk_map_columns,
-    verbose=False
+    df, model, odk_choices_queryset, odk_map_columns, verbose=False
 ):
     """
     Generic loader for ODK CSV to Django model, using ODKFormChoice for value-to-label mapping.
@@ -311,7 +341,7 @@ def load_odk_csv_to_model(
         elif col not in df.columns and verbose:
             print(f"Column '{col}' not in DataFrame")
         elif col not in odk_map and verbose:
-            print(f"Column '{col}' not in odk_map") 
+            print(f"Column '{col}' not in odk_map")
 
     # Remove duplicate columns after renaming
     df = df.loc[:, ~df.columns.duplicated()]
@@ -322,8 +352,10 @@ def load_odk_csv_to_model(
 
     # Identify integer fields in the model
     int_fields = [
-        f.name for f in model._meta.get_fields()
-        if getattr(f, "get_internal_type", lambda: None)() in [
+        f.name
+        for f in model._meta.get_fields()
+        if getattr(f, "get_internal_type", lambda: None)()
+        in [
             "IntegerField",
             "BigIntegerField",
             "SmallIntegerField",
@@ -335,7 +367,8 @@ def load_odk_csv_to_model(
     # Handle ForeignKey: cluster → SRSClusterLocation
     if "cluster" in df.columns:
         cluster_map = {
-            str(loc.code): loc for loc in SRSClusterLocation.objects.exclude(code__isnull=True)
+            str(loc.code): loc
+            for loc in SRSClusterLocation.objects.exclude(code__isnull=True)
         }
 
         def get_cluster_instance(code):
@@ -356,13 +389,14 @@ def load_odk_csv_to_model(
     return objects
 
 
-
 # load VA records into django database
 def load_records_from_dataframe(record_df, random_locations=False, debug=False):
     logger = None if not debug else logging.getLogger("debug")
     if logger:
         header = "=" * 10 + "DATA INGEST" + "=" * 10
         logger.info(header)
+
+    record_df = merge_geopoint_columns(record_df)
 
     # CSV can prefix column names with a strings and a dash or more. Examples:
     #     presets-Id10004
@@ -483,6 +517,7 @@ def load_records_from_dataframe(record_df, random_locations=False, debug=False):
     ignored_vas = []
     outdated_vas = []
     created_vas = []
+    enriched_vas = []
     location_map = {}
 
     # build location mapper to map csv locations to known db locations
@@ -498,14 +533,14 @@ def load_records_from_dataframe(record_df, random_locations=False, debug=False):
 
     # if random locations, assign random locations via a random field worker.
     if random_locations:
-        field_workers = [u for u in User.objects.all() if u.is_fieldworker()]
+        field_workers = list(User.objects.filter(groups__name="Field Workers"))
         if len(field_workers) <= 1:
             print(
                 "WARNING: no field workers in system. \
                 Generating random ones now..."
             )
             make_field_workers_for_facilities()
-            field_workers = [u for u in User.objects.all() if u.is_fieldworker()]
+            field_workers = list(User.objects.filter(groups__name="Field Workers"))
 
     # pull in all existing VA instanceIDs from db for de-duping purposes
     print("pulling in instance ids...")
@@ -513,6 +548,16 @@ def load_records_from_dataframe(record_df, random_locations=False, debug=False):
     va_instance_names = set(
         VerbalAutopsy.objects.values_list("instancename", flat=True)
     )
+    incoming_instance_ids = [
+        instanceid
+        for instanceid in record_df["instanceid"].dropna().unique().tolist()
+        if _has_meaningful_value(instanceid)
+    ]
+    existing_empty_geopoint_by_instanceid = {
+        va.instanceid: va
+        for va in VerbalAutopsy.objects.filter(instanceid__in=incoming_instance_ids)
+        if not _has_meaningful_value(va.geopoint)
+    }
 
     if debug:
         print(
@@ -533,6 +578,17 @@ def load_records_from_dataframe(record_df, random_locations=False, debug=False):
         if row["instanceid"]:
             va_exists = row["instanceid"] in va_instance_ids
             if va_exists:
+                if (
+                    _has_meaningful_value(row.get("geopoint"))
+                    and row["instanceid"] in existing_empty_geopoint_by_instanceid
+                ):
+                    existing_va = existing_empty_geopoint_by_instanceid.pop(
+                        row["instanceid"]
+                    )
+                    existing_va.geopoint = row["geopoint"]
+                    enriched_vas.append(existing_va)
+                    continue
+
                 ignored_vas.append(va)
                 continue
             else:
@@ -544,6 +600,19 @@ def load_records_from_dataframe(record_df, random_locations=False, debug=False):
                     outdated_va = VerbalAutopsy.objects.filter(
                         instancename=row["instancename"]
                     )
+                    if not _has_meaningful_value(va.geopoint):
+                        existing_geopoint = next(
+                            (
+                                geopoint
+                                for geopoint in outdated_va.values_list(
+                                    "geopoint", flat=True
+                                )
+                                if _has_meaningful_value(geopoint)
+                            ),
+                            None,
+                        )
+                        if existing_geopoint:
+                            va.geopoint = existing_geopoint
                     outdated_vas.append(outdated_va)
                     outdated_va.delete()
 
@@ -604,6 +673,13 @@ def load_records_from_dataframe(record_df, random_locations=False, debug=False):
 
     print("populating DB...")
     new_vas = bulk_create_with_history(created_vas, VerbalAutopsy)
+    if enriched_vas:
+        bulk_update_with_history(
+            enriched_vas,
+            VerbalAutopsy,
+            fields=["geopoint"],
+            batch_size=500,
+        )
 
     print("Validating VAs...")
     # Add any errors to the db
@@ -618,6 +694,7 @@ def load_records_from_dataframe(record_df, random_locations=False, debug=False):
         "ignored": ignored_vas,
         "outdated": outdated_vas,
         "created": created_vas,
+        "enriched": enriched_vas,
         "corrected": corrected_vas,
         "removed": invalid_vas,
     }
@@ -716,14 +793,8 @@ def get_va_summary_stats(vas, filter_fields=False, cache_key="va_summary_stats")
         ineligible_count = vas.filter(
             Q(Id10023__in=["DK", "dk"])
             | Q(Id10023__isnull=True)
-            | (
-                Q(community_va__iexact="yes")
-                & Q(cluster__isnull=True)
-            )
-            | (
-                ~Q(community_va__iexact="yes")
-                & Q(location__isnull=True)
-            )
+            | (Q(community_va__iexact="yes") & Q(cluster__isnull=True))
+            | (~Q(community_va__iexact="yes") & Q(location__isnull=True))
         ).count()
 
         stats = {

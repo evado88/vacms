@@ -1,7 +1,7 @@
 volumes:
   production_postgres_data: {}
   production_postgres_data_backups: {}
-  
+
 services:
   pycrossva:
     image: va_explorer/pycrossva
@@ -18,7 +18,7 @@ services:
       - "5002:5002"
     env_file:
       - .env
-      
+
   redis:
     image: redis:5.0
 
@@ -44,7 +44,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-Pimin73y!we}
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-dcc02e52ccbb649b9febe9182abfa5e03c49be6c}
       DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost}
-      DJANGO_DEFAULT_FROM_EMAIL: ${DJANGO_DEFAULT_FROM_EMAIL:-VACMS <vacms@znphi.co.zm>} 
+      DJANGO_DEFAULT_FROM_EMAIL: ${DJANGO_DEFAULT_FROM_EMAIL:-VACMS <vacms@znphi.co.zm>}
       PYCROSS_HOST: ${PYCROSS_HOST:-http://pycrossva:80}
       INTERVA_HOST: ${INTERVA_HOST:-http://interva5:5002}
     command: /start

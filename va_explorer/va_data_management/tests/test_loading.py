@@ -401,7 +401,9 @@ def test_loading_from_dataframe_missing_markers_leaves_community_va_unresolved()
     assert len(result["created"]) == 1
     assert created.community_va is None
     assert (
-        VerbalAutopsy.objects.get(instanceid="instance-community-default-1").community_va
+        VerbalAutopsy.objects.get(
+            instanceid="instance-community-default-1"
+        ).community_va
         is None
     )
 
@@ -564,7 +566,7 @@ def test_load_va_csv_command():
     output_text = output.getvalue().strip()
     assert (
         "Loaded 3 verbal autopsies from CSV "
-        "(0 ignored, 0 removed as outdated)" in output_text
+        "(0 ignored, 0 enriched, 0 removed as outdated)" in output_text
     )
     assert "Created mix:" in output_text
     assert VerbalAutopsy.objects.get(instanceid="instance1").Id10007 == "name1"

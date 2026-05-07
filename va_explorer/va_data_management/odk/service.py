@@ -17,13 +17,18 @@ from va_explorer.va_data_management.models import (
     ODKPullLock,
     ODKPullState,
 )
+from va_explorer.va_data_management.utils.geopoint import (
+    _has_meaningful_value as _gp_meaningful,
+)
+from va_explorer.va_data_management.utils.geopoint import (
+    merge_geopoint_into,
+)
 from va_explorer.va_data_management.utils.loading import (
     load_records_from_dataframe,
     normalize_dataframe_columns,
     normalize_value,
 )
 from va_explorer.va_data_management.utils.odk import make_pyodk_client
-
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +39,15 @@ FORM_UNIQUE_FIELD_MAP = {
     "pregnancy_outcome": "key",
     "death": "key",
     "csa_daily_tracker": "key",
+}
+
+# Maps form_name → (ODK split-column prefix, single target model field).
+# The four ODK component columns (e.g. PE-25-Latitude/Longitude/Altitude/Accuracy)
+# are composed into the existing single GPS TextField before column normalisation.
+FORM_GEOPOINT_MAP = {
+    "pregnancy": ("PE-25", "PE_25"),
+    "pregnancy_outcome": ("gps", "gps"),
+    "death": ("DE-34", "DE_34"),
 }
 
 
@@ -86,12 +100,21 @@ def import_dataframe_records(form_name: str, df: pd.DataFrame) -> Dict[str, int]
     """Map values using ODKFormChoice and save model records."""
     lookup: Dict[str, Dict[str, str]] = {}
     for choice in ODKFormChoice.objects.filter(form_name=form_name):
-        lookup.setdefault(choice.field_name, {})[normalize_value(choice.value)] = choice.label
+        lookup.setdefault(choice.field_name, {})[
+            normalize_value(choice.value)
+        ] = choice.label
     for field, mapping in lookup.items():
         if field in df.columns:
             df[field] = df[field].map(
                 lambda value, _map=mapping: _map.get(normalize_value(value), value)
             )
+
+    geopoint_cfg = FORM_GEOPOINT_MAP.get(form_name)
+    if geopoint_cfg:
+        source_prefix, gps_field = geopoint_cfg
+        df = merge_geopoint_into(
+            df, source_prefix=source_prefix, target_field=gps_field
+        )
 
     model = FORM_MODEL_MAP[form_name]
     df = normalize_dataframe_columns(df, model)
@@ -104,7 +127,12 @@ def import_dataframe_records(form_name: str, df: pd.DataFrame) -> Dict[str, int]
             for row in df.to_dict(orient="records")
         ]
         model.objects.bulk_create(objects)
-        return {"created": len(objects), "updated": 0, "ignored": 0, "duplicate_rows": 0}
+        return {
+            "created": len(objects),
+            "updated": 0,
+            "ignored": 0,
+            "duplicate_rows": 0,
+        }
 
     df[unique_field] = df[unique_field].map(
         lambda value: value.strip() if isinstance(value, str) else value
@@ -131,7 +159,11 @@ def import_dataframe_records(form_name: str, df: pd.DataFrame) -> Dict[str, int]
     ]
     update_fields = [field for field in concrete_fields if field != unique_field]
     records = [
-        {key: _clean_import_value(value) for key, value in row.items() if key in concrete_fields}
+        {
+            key: _clean_import_value(value)
+            for key, value in row.items()
+            if key in concrete_fields
+        }
         for row in df.to_dict(orient="records")
     ]
     keys = [record[unique_field] for record in records]
@@ -139,6 +171,8 @@ def import_dataframe_records(form_name: str, df: pd.DataFrame) -> Dict[str, int]
         getattr(obj, unique_field): obj
         for obj in model.objects.filter(**{f"{unique_field}__in": keys})
     }
+
+    gps_target = FORM_GEOPOINT_MAP.get(form_name, (None, None))[1]
 
     to_create = []
     to_update = []
@@ -150,7 +184,14 @@ def import_dataframe_records(form_name: str, df: pd.DataFrame) -> Dict[str, int]
             continue
 
         for field in update_fields:
-            setattr(existing, field, record.get(field))
+            new_val = record.get(field)
+            if (
+                field == gps_target
+                and not _gp_meaningful(new_val)
+                and _gp_meaningful(getattr(existing, field, None))
+            ):
+                continue
+            setattr(existing, field, new_val)
         to_update.append(existing)
 
     with transaction.atomic():
@@ -283,7 +324,11 @@ class ODKPullService:
                 },
             )
             try:
-                since_dt = None if full_refresh else self._resolve_since_timestamp(state, since)
+                since_dt = (
+                    None
+                    if full_refresh
+                    else self._resolve_since_timestamp(state, since)
+                )
                 df, watermarks = self.list_submissions(
                     form_id=form_id,
                     project_id=project_id,
@@ -311,7 +356,11 @@ class ODKPullService:
                         last_submission_at=watermarks["submission_at"],
                         last_server_submission_at=watermarks["server_submission_at"],
                     )
-                    return {**counts, "status": ODKPullState.STATUS_SUCCESS, "dry_run": dry_run}
+                    return {
+                        **counts,
+                        "status": ODKPullState.STATUS_SUCCESS,
+                        "dry_run": dry_run,
+                    }
 
                 loaded_counts = self.upsert_into_models(df, form_name=form_name)
                 counts.update(loaded_counts)
@@ -374,7 +423,10 @@ class ODKPullService:
 
             if include_attachments:
                 self.download_attachments_if_needed(
-                    client=client, project_id=project_id, form_id=form_id, records=records
+                    client=client,
+                    project_id=project_id,
+                    form_id=form_id,
+                    records=records,
                 )
 
             return df, self._extract_watermarks(df)
@@ -388,13 +440,20 @@ class ODKPullService:
     ) -> None:
         """Fetch attachments for submissions that report missing attachments."""
         # Placeholder: VACMS currently stores tabular data; attachments can be added later.
-        missing = [r for r in records if r.get("attachmentsPresent") and not r.get("attachments")]
+        missing = [
+            r
+            for r in records
+            if r.get("attachmentsPresent") and not r.get("attachments")
+        ]
         if missing:
             self._logger.info(
-                "Skipping attachment download for %s submissions (not implemented)", len(missing)
+                "Skipping attachment download for %s submissions (not implemented)",
+                len(missing),
             )
 
-    def upsert_into_models(self, df: pd.DataFrame, form_name: Optional[str]) -> Dict[str, Any]:
+    def upsert_into_models(
+        self, df: pd.DataFrame, form_name: Optional[str]
+    ) -> Dict[str, Any]:
         """Route data to appropriate loader."""
         if form_name and form_name in FORM_MODEL_MAP:
             return import_dataframe_records(form_name, df)
@@ -404,6 +463,7 @@ class ODKPullService:
             "created": len(results["created"]),
             "ignored": len(results["ignored"]),
             "outdated": len(results["outdated"]),
+            "enriched": len(results.get("enriched", [])),
             "corrected": len(results.get("corrected", [])),
         }
 
@@ -455,6 +515,9 @@ class ODKPullService:
     def _as_utc(self, dt: datetime) -> str:
         if timezone.is_naive(dt):
             dt = timezone.make_aware(dt, timezone=timezone.utc)
-        return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace(
-            "+00:00", "Z"
+        return (
+            dt.astimezone(timezone.utc)
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z")
         )

@@ -1,15 +1,16 @@
 # va_explorer/va_data_management/management/commands/load_household_csv.py
 
 import argparse
-import pandas as pd
-from django.core.management.base import BaseCommand, CommandError
-from django.core.management import call_command
 
-from va_explorer.va_data_management.models import ODKFormChoice, Household
+import pandas as pd
+from django.core.management import call_command
+from django.core.management.base import BaseCommand, CommandError
+
+from va_explorer.va_data_management.models import Household, ODKFormChoice
 from va_explorer.va_data_management.utils.loading import (
+    load_odk_csv_to_model,
     normalize_dataframe_columns,
     normalize_string,
-    load_odk_csv_to_model,
 )
 
 
@@ -132,14 +133,20 @@ class Command(BaseCommand):
         )
 
         Household.objects.bulk_create(objects, ignore_conflicts=True)
-        self.stdout.write(self.style.SUCCESS(f"Imported {len(objects)} records for household"))
+        self.stdout.write(
+            self.style.SUCCESS(f"Imported {len(objects)} records for household")
+        )
 
         # --- Run data quality checks immediately after import ---
         try:
             call_command("dq_households")  # uses built-in constants; no args needed
-            self.stdout.write(self.style.SUCCESS("Ran dq_households successfully after import."))
+            self.stdout.write(
+                self.style.SUCCESS("Ran dq_households successfully after import.")
+            )
         except Exception as e:
             # Don't fail the import if DQ fails; surface a clear message
             self.stdout.write(
-                self.style.WARNING(f"dq_households encountered an error after import: {e}")
+                self.style.WARNING(
+                    f"dq_households encountered an error after import: {e}"
+                )
             )

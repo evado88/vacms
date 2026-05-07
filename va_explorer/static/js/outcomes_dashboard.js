@@ -138,6 +138,7 @@
     return response.json();
   };
 
+  const userCanViewPII = (app.dataset.userPii || "").toLowerCase() === "true";
   const mapController =
     typeof window.createHierarchicalDashboardMap === "function"
       ? window.createHierarchicalDashboardMap({
@@ -157,6 +158,7 @@
           includeSelectionInRequest: false,
           styleVariant: "va",
           noDataMessage: "No mapped outcomes in current filter range.",
+          userCanViewPII,
         })
       : null;
 
@@ -169,15 +171,6 @@
     const el = getEl(id);
     if (el) el.hidden = !isEmpty;
   };
-
-  const MIN_TREND_YEAR = 2024, MIN_TREND_MONTH = 12;
-  const parseLabelDate = (label) => {
-    const ym = String(label).match(/^(\d{4})-(\d{2})/);
-    if (ym) return new Date(parseInt(ym[1]), parseInt(ym[2]) - 1, 1);
-    const d = new Date(label);
-    return isNaN(d) ? null : d;
-  };
-  const minTrendDate = new Date(MIN_TREND_YEAR, MIN_TREND_MONTH - 1, 1);
 
   const isValidDateValue = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value || "");
   const shouldApplyDateRangeChange = () => {
@@ -270,22 +263,12 @@
     const started = perfNow();
     const chart = ensureLineChart();
     if (!chart) return;
-    const rawLabels = data.labels || [];
-    const rawData = data.data || [];
-    const filtered = rawLabels.reduce(
-      (acc, label, i) => {
-        const d = parseLabelDate(label);
-        if (d && d >= minTrendDate) { acc.labels.push(label); acc.data.push(rawData[i]); }
-        return acc;
-      },
-      { labels: [], data: [] }
-    );
-    chart.data.labels = filtered.labels;
-    chart.data.datasets[0].data = filtered.data;
+    chart.data.labels = data.labels || [];
+    chart.data.datasets[0].data = data.data || [];
     chart.update();
-    const sum = filtered.data.reduce((acc, value) => acc + Number(value || 0), 0);
+    const sum = (data.data || []).reduce((acc, value) => acc + Number(value || 0), 0);
     setEmptyState("poTrendEmpty", sum === 0);
-    perfLog("render.trend_chart", started, { points: filtered.data.length });
+    perfLog("render.trend_chart", started, { points: (data.labels || []).length });
   };
 
   const currentBirthMode = () => (filterElements.birthPct?.checked ? "percentage" : "count");

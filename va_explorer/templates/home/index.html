@@ -1,22 +1,24 @@
 {% extends "base.html" %}
 {% load static i18n %}
 
+{% block heading %}Operational Dashboard{% endblock heading %}
+
 {% block container-type %}container-fluid{% endblock %}
 
 {% block css %}
   {{ block.super }}
-  <link href="{% static 'css/home_dashboard.css' %}?v=20260219b" rel="stylesheet">
+  <link href="{% static 'css/home_dashboard.css' %}?v=20260219d" rel="stylesheet">
   <link href="{% static 'css/regional_operations.css' %}" rel="stylesheet">
+  <link href="{% static 'css/rumor_details_dashboard.css' %}?v=20260505a" rel="stylesheet">
   <link href="{% static 'vendor/leaflet-1.9.2/leaflet.css' %}" rel="stylesheet">
 {% endblock %}
 
 {% block content %}
 <div class="row dashboard-shell" data-shell="home" data-trends-endpoint="{% url 'home:charts' %}">
 
- 
+
   <div class="col">
     {% with home_active_tab=request.GET.tab|default:'overview' %}
-    <h4 class="mb-4">Operational Dashboards</h4>
     <!-- Nav tabs -->
     <ul class="nav nav-tabs" id="homeTabs" role="tablist">
       <li class="nav-item" role="presentation">
@@ -44,10 +46,20 @@
           MSO Supervision
         </a>
       </li>
+      <li class="nav-item" role="presentation">
+        <a class="nav-link {% if home_active_tab == 'rumor_overview' %}active{% endif %}" id="tab-7-tab" data-tab="rumor_overview" href="?tab=rumor_overview" role="tab" aria-controls="tab-7" aria-selected="{% if home_active_tab == 'rumor_overview' %}true{% else %}false{% endif %}">
+          Rumor Overview
+        </a>
+      </li>
+      <li class="nav-item" role="presentation">
+        <a class="nav-link {% if home_active_tab == 'rumor_details' %}active{% endif %}" id="tab-6-tab" data-tab="rumor_details" href="?tab=rumor_details" role="tab" aria-controls="tab-6" aria-selected="{% if home_active_tab == 'rumor_details' %}true{% else %}false{% endif %}">
+          Rumor Details
+        </a>
+      </li>
     </ul>
 
     <!-- Tab panes -->
-    <div class="tab-content mt-4" id="homeTabsContent">
+    <div class="tab-content" id="homeTabsContent">
     <div class="tab-pane dashboard-tab-panel fade {% if home_active_tab == 'overview' %}show active{% endif %}" id="tab-1" data-tab-panel="overview" role="tabpanel" aria-labelledby="tab-1-tab">
         <div id="national-operational-view" data-component="overview-dashboard" data-filter-url="{% url 'home:national_operational_filter_data' %}">
           <div class="national-operational-view-shell">
@@ -103,6 +115,7 @@
                         <div class="nov-kpi-metrics">
                           <div><span>Today</span><strong id="nov-kpi-today-eas">0</strong></div>
                           <div><span>This week</span><strong id="nov-kpi-week-eas">0</strong></div>
+                          <div><span>Last 30 days</span><strong id="nov-kpi-30d-eas">0</strong></div>
                           <div><span>Cummulative Total</span><strong id="nov-kpi-total-eas">0</strong></div>
                         </div>
                       </article>
@@ -111,6 +124,7 @@
                         <div class="nov-kpi-metrics">
                           <div><span>Today</span><strong id="nov-kpi-today-households">0</strong></div>
                           <div><span>This week</span><strong id="nov-kpi-week-households">0</strong></div>
+                          <div><span>Last 30 days</span><strong id="nov-kpi-30d-households">0</strong></div>
                           <div><span>Cummulative Total</span><strong id="nov-kpi-total-households">0</strong></div>
                         </div>
                       </article>
@@ -119,6 +133,7 @@
                         <div class="nov-kpi-metrics">
                           <div><span>Today</span><strong id="nov-kpi-today-people">0</strong></div>
                           <div><span>This week</span><strong id="nov-kpi-week-people">0</strong></div>
+                          <div><span>Last 30 days</span><strong id="nov-kpi-30d-people">0</strong></div>
                           <div><span>Cummulative Total</span><strong id="nov-kpi-total-people">0</strong></div>
                         </div>
                       </article>
@@ -130,6 +145,7 @@
                       class="home-panel home-overview-map-panel"
                       data-component="overview-map"
                       data-map-endpoint="{% url 'home:home_overview_map_data' %}"
+                      data-user-pii="{% if perms.va_analytics.view_pii %}true{% else %}false{% endif %}"
                     >
                       <h5 class="mb-2">Geographic Distribution</h5>
                       <div id="homeOverviewMapBreadcrumb" class="home-map-breadcrumbs"></div>
@@ -213,11 +229,17 @@
           </div>
         </section>
       </div>
+      <div class="tab-pane dashboard-tab-panel fade {% if home_active_tab == 'rumor_overview' %}show active{% endif %}" id="tab-7" data-tab-panel="rumor_overview" role="tabpanel" aria-labelledby="tab-7-tab">
+        {% include "home/components/_rumor_overview_dashboard.html" %}
+      </div>
+      <div class="tab-pane dashboard-tab-panel fade {% if home_active_tab == 'rumor_details' %}show active{% endif %}" id="tab-6" data-tab-panel="rumor_details" role="tabpanel" aria-labelledby="tab-6-tab">
+        {% include "home/components/_rumor_details_dashboard.html" %}
+      </div>
       <div class="tab-pane dashboard-tab-panel fade home-va-tab {% if home_active_tab == 'va_statistics' %}show active{% endif %}" id="tab-3" data-tab-panel="va_statistics" role="tabpanel" aria-labelledby="tab-3-tab">
         <div id="homeVAStatisticsComponentSlot" data-component-slot data-component="va-statistics" data-scope="va_statistics,trends-data" data-endpoint="{% url 'home:home_va_statistics_component' %}" data-cache-key="home:va_statistics">
           <div class="home-panel home-panel-placeholder">Loading VA statistics...</div>
         </div>
-      </div>      
+      </div>
       <div class="tab-pane dashboard-tab-panel fade home-trends-tab {% if home_active_tab == 'trends' %}show active{% endif %}" id="tab-4" data-tab-panel="trends" role="tabpanel" aria-labelledby="tab-4-tab">
         <div id="homeTrendsComponentSlot" data-component-slot data-component="trends" data-scope="trends,trends-data" data-endpoint="{% url 'home:home_trends_component' %}" data-cache-key="home:trends">
           <div class="home-panel home-panel-placeholder">Loading trends...</div>
@@ -233,11 +255,16 @@
   <script src="{% static 'js/dashboard_loader.js' %}"></script>
   <script src="{% static 'js/dashboard_tabs.js' %}"></script>
   <script src="{% static 'vendor/leaflet-1.9.2/leaflet.js' %}"></script>
-  <script src="{% static 'js/hierarchical_dashboard_map.js' %}?v=20260220c"></script>
-  <script src="{% static 'js/home_hierarchical_dashboard_map.js' %}?v=20260220k"></script>
-  <script src="{% static 'js/regional_operations.js' %}"></script>
+  <script src="{% static 'js/dashboard_gps_layer.js' %}?v=20260506a"></script>
+  <script src="{% static 'js/hierarchical_dashboard_map.js' %}?v=20260506a"></script>
+  <script src="{% static 'js/home_hierarchical_dashboard_map.js' %}?v=20260506a"></script>
+  <script src="{% static 'js/regional_operations.js' %}?v=20260427b"></script>
   <script src="{% static 'vendor/chartjs-3.7.1/chart.min.js' %}"></script>
-  <script src="{% static 'js/home.js' %}?v=20260305a"></script>
+  <script src="{% static 'vendor/d3-7.9.0/d3.min.js' %}"></script>
+  <script src="{% static 'js/rumor_word_cloud.js' %}?v=20260505b"></script>
+  <script src="{% static 'js/rumor_details_dashboard.js' %}?v=20260504c"></script>
+  <script src="{% static 'js/rumor_overview_dashboard.js' %}?v=20260430c"></script>
+  <script src="{% static 'js/home.js' %}?v=20260430a"></script>
 
   <script>
     // Count up animation for dashboard numbers

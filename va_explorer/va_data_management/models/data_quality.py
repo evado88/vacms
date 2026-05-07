@@ -1,8 +1,8 @@
 from django.conf import settings
-from django.db import models
-from django.utils import timezone
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
+from django.db import models
+from django.utils import timezone
 
 
 class DataQualityIssue(models.Model):
@@ -44,16 +44,26 @@ class DataQualityIssue(models.Model):
     title = models.CharField(max_length=255, blank=True)
 
     # Machine-usable metadata
-    keys = models.JSONField(default=dict, blank=True)     # e.g., {"ea":"EA-123", "hun":"...", ...}
-    details = models.JSONField(default=dict, blank=True)  # e.g., {"subtype":"exact_fields","count":3,...}
+    keys = models.JSONField(
+        default=dict, blank=True
+    )  # e.g., {"ea":"EA-123", "hun":"...", ...}
+    details = models.JSONField(
+        default=dict, blank=True
+    )  # e.g., {"subtype":"exact_fields","count":3,...}
 
     # Lifecycle
-    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=OPEN, db_index=True)
+    status = models.CharField(
+        max_length=16, choices=STATUS_CHOICES, default=OPEN, db_index=True
+    )
     detected_at = models.DateTimeField(auto_now_add=True)
     updated = models.DateTimeField(auto_now=True)
     resolved_at = models.DateTimeField(null=True, blank=True)
     resolved_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="dq_issues_resolved"
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="dq_issues_resolved",
     )
 
     class Meta:
@@ -73,7 +83,10 @@ class DataQualityIssueMember(models.Model):
     Members participating in an issue (e.g., the set of rows that form a duplicate group).
     Always the same model class as issue.target_model.
     """
-    issue = models.ForeignKey(DataQualityIssue, on_delete=models.CASCADE, related_name="members")
+
+    issue = models.ForeignKey(
+        DataQualityIssue, on_delete=models.CASCADE, related_name="members"
+    )
     content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
     object_id = models.PositiveIntegerField()
     content_object = GenericForeignKey("content_type", "object_id")

@@ -1,10 +1,16 @@
 import argparse
+
 import pandas as pd
 from django.core.management.base import BaseCommand, CommandError
-from va_explorer.va_data_management.models import ODKFormChoice, Death
+
+from va_explorer.va_data_management.models import Death, ODKFormChoice
+from va_explorer.va_data_management.utils.geopoint import merge_geopoint_into
 from va_explorer.va_data_management.utils.loading import (
-    normalize_dataframe_columns, normalize_string, load_odk_csv_to_model
+    load_odk_csv_to_model,
+    normalize_dataframe_columns,
+    normalize_string,
 )
+
 
 class Command(BaseCommand):
     """Load a death CSV using the previously loaded ODK definition."""
@@ -24,11 +30,16 @@ class Command(BaseCommand):
             raise CommandError("Definition for form 'death' has not been loaded")
 
         df = pd.read_csv(csv_file)
+
+        df = merge_geopoint_into(df, source_prefix="DE-34", target_field="DE_34")
+
         df = normalize_dataframe_columns(df, Death)
 
         # Ensure `key` exists
         if "key" not in df.columns:
-            raise CommandError("The CSV must include a 'key' column to enforce uniqueness.")
+            raise CommandError(
+                "The CSV must include a 'key' column to enforce uniqueness."
+            )
 
         # Drop rows with missing/blank keys (cannot dedupe reliably)
         before_nonnull = len(df)
@@ -49,9 +60,26 @@ class Command(BaseCommand):
         skipped_existing = before_existing_filter - len(df)
 
         odk_map_columns = [
-            'province','district','constituency','ward','ea','supervisor','enumerator','consent',
-            'DE_05','DE_07','DE_09','DE_11','DE_13','DE_16','DE_17',
-            'DE_18','DE_21','DE_24','DE_30','DE_31'
+            "province",
+            "district",
+            "constituency",
+            "ward",
+            "ea",
+            "supervisor",
+            "enumerator",
+            "consent",
+            "DE_05",
+            "DE_07",
+            "DE_09",
+            "DE_11",
+            "DE_13",
+            "DE_16",
+            "DE_17",
+            "DE_18",
+            "DE_21",
+            "DE_24",
+            "DE_30",
+            "DE_31",
         ]
         odk_map_columns = [c.strip() for c in odk_map_columns]
 
@@ -60,7 +88,7 @@ class Command(BaseCommand):
             model=Death,
             odk_choices_queryset=ODKFormChoice.objects.filter(form_name=norm_form_name),
             odk_map_columns=odk_map_columns,
-            verbose=True  # Set to False to reduce output
+            verbose=True,  # Set to False to reduce output
         )
         # Bulk create (DB has unique index on key for safety)
         created = 0
@@ -70,12 +98,7 @@ class Command(BaseCommand):
             created = len(objects)
 
         self.stdout.write(
-            "Imported {created} death records "
-            "(skipped {skipped_existing} existing, {intrafile_dupes} intra-file duplicates, "
-            "dropped {dropped_blank} blank-key rows).".format(
-                created=created,
-                skipped_existing=skipped_existing,
-                intrafile_dupes=intrafile_dupes,
-                dropped_blank=dropped_blank,
-            )
+            f"Imported {created} death records "
+            f"(skipped {skipped_existing} existing, {intrafile_dupes} intra-file duplicates, "
+            f"dropped {dropped_blank} blank-key rows)."
         )

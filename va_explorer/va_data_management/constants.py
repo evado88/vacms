@@ -906,45 +906,45 @@ VA_PII_FIELDS = [
 
 # PII fields for Household / HouseholdMember
 HOUSEHOLD_PII_FIELDS = [
-    "respondent",     # Respondent's Name
-    "HH_01",          # Name of Head of Household
+    "respondent",  # Respondent's Name
+    "HH_01",  # Name of Head of Household
     "name_of_chief",  # Name of the chief/chieftainess
-    "address",        # Residential address/village
+    "address",  # Residential address/village
     # HouseholdMember fields (used in detail template members table)
     "first_name",
     "last_name",
-    "HH_07",          # Date of Birth
+    "HH_07",  # Date of Birth
 ]
 
 # PII fields for Pregnancy
 PREGNANCY_PII_FIELDS = [
-    "PE_02",   # Name of the respondent
-    "PE_05",   # Name of the head of household
-    "PE_06",   # Name of Pregnant woman
-    "PE_07",   # Date of Birth
+    "PE_02",  # Name of the respondent
+    "PE_05",  # Name of the head of household
+    "PE_06",  # Name of Pregnant woman
+    "PE_07",  # Date of Birth
     "PE_09A",  # Last menstrual period date
     "PE_10A",  # Expected date of delivery
 ]
 
 # PII fields for PregnancyOutcome / PregnancyOutcomeBaby
 PREGNANCY_OUTCOME_PII_FIELDS = [
-    "PO_01",   # Name of the respondent
-    "PO_03",   # Name of the head of the household
-    "PO_04",   # Name of the mother
-    "PO_05",   # Mother's Date of Birth
-    "PO_06",   # Mother's NRC NUMBER
-    "PO_08",   # Mother's Social Security Number
-    "PO_14",   # Mother's Phone Number
-    "PO_23",   # Name of the Father
-    "PO_24",   # Father's Date of Birth
-    "PO_25",   # Father's NRC NUMBER
-    "PO_27",   # Father's Social Security Number
+    "PO_01",  # Name of the respondent
+    "PO_03",  # Name of the head of the household
+    "PO_04",  # Name of the mother
+    "PO_05",  # Mother's Date of Birth
+    "PO_06",  # Mother's NRC NUMBER
+    "PO_08",  # Mother's Social Security Number
+    "PO_14",  # Mother's Phone Number
+    "PO_23",  # Name of the Father
+    "PO_24",  # Father's Date of Birth
+    "PO_25",  # Father's NRC NUMBER
+    "PO_27",  # Father's Social Security Number
     "PO_31A",  # Father's Phone Number
-    "PO_32",   # Informant name
-    "PO_33",   # Informant Date of Birth
-    "PO_36",   # Informant NRC Number
-    "PO_38",   # Name of the Chief/Chieftainess
-    "PO_39",   # Residential address/village name
+    "PO_32",  # Informant name
+    "PO_33",  # Informant Date of Birth
+    "PO_36",  # Informant NRC Number
+    "PO_38",  # Name of the Chief/Chieftainess
+    "PO_39",  # Residential address/village name
     "PO_49B",  # Baby's full name (PregnancyOutcomeBaby)
 ]
 
@@ -967,10 +967,12 @@ DEATH_PII_FIELDS = [
 
 # Flat union used by the pii_filter template tag and any code that checks field
 # membership without needing to know which model it belongs to.
-PII_FIELDS = list({
-    *VA_PII_FIELDS,
-    *HOUSEHOLD_PII_FIELDS,
-    *PREGNANCY_PII_FIELDS,
-    *PREGNANCY_OUTCOME_PII_FIELDS,
-    *DEATH_PII_FIELDS,
-})
+PII_FIELDS = list(
+    {
+        *VA_PII_FIELDS,
+        *HOUSEHOLD_PII_FIELDS,
+        *PREGNANCY_PII_FIELDS,
+        *PREGNANCY_OUTCOME_PII_FIELDS,
+        *DEATH_PII_FIELDS,
+    }
+)

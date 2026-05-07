@@ -12,15 +12,18 @@ from django.views.generic import (
 )
 from django.views.generic.detail import SingleObjectMixin
 
-from va_explorer.utils.mixins import CustomAuthMixin
+from va_explorer.utils.mixins import CustomAuthMixin, LocationRestrictedQuerySetMixin
+from va_explorer.va_data_management.filters import PregnancyOutcomeFilter
 from va_explorer.va_data_management.forms import PregnancyOutcomeForm
 from va_explorer.va_data_management.models import PregnancyOutcome
 from va_explorer.va_data_management.utils.location_access import (
     restrict_queryset_to_user_locations,
 )
-from va_explorer.va_data_management.filters import PregnancyOutcomeFilter
 
-class PregnancyOutcomes(CustomAuthMixin, PermissionRequiredMixin, ListView):
+
+class PregnancyOutcomes(
+    CustomAuthMixin, PermissionRequiredMixin, LocationRestrictedQuerySetMixin, ListView
+):
     permission_required = "va_data_management.view_pregnancyoutcome"
     template_name = "va_data_management/pregnancy_outcomes.html"
     paginate_by = 15
@@ -37,10 +40,7 @@ class PregnancyOutcomes(CustomAuthMixin, PermissionRequiredMixin, ListView):
     }
 
     def get_queryset(self):
-        queryset = restrict_queryset_to_user_locations(
-            PregnancyOutcome.objects.all(),
-            self.request.user,
-        )
+        queryset = super().get_queryset()
         self.filterset = PregnancyOutcomeFilter(self.request.GET, queryset=queryset)
         order_by_raw = self.request.GET.get("order_by", "-id")
         direction = "-" if order_by_raw.startswith("-") else ""
@@ -52,12 +52,11 @@ class PregnancyOutcomes(CustomAuthMixin, PermissionRequiredMixin, ListView):
         context["filter"] = self.filterset
         return context
 
-class PregnancyOutcomeAccessMixin(SingleObjectMixin):
+
+class PregnancyOutcomeAccessMixin(LocationRestrictedQuerySetMixin, SingleObjectMixin):
     def get_queryset(self):
-        return restrict_queryset_to_user_locations(
-            PregnancyOutcome.objects.all(),
-            self.request.user,
-        ).prefetch_related("babies")
+        return super().get_queryset().prefetch_related("babies")
+
 
 class PregnancyOutcomeDetail(
     CustomAuthMixin, PregnancyOutcomeAccessMixin, PermissionRequiredMixin, DetailView
@@ -73,6 +72,7 @@ class PregnancyOutcomeDetail(
         context["form"] = PregnancyOutcomeForm(None, instance=self.object)
         context["history"] = self.object.history.all().reverse()
         return context
+
 
 class PregnancyOutcomeEdit(
     CustomAuthMixin,
@@ -94,27 +94,27 @@ class PregnancyOutcomeEdit(
         return kwargs
 
     def get_success_url(self):
-        return reverse("va_data_management:pregnancy_outcome_detail", kwargs={"id": self.object.id})
+        return reverse(
+            "va_data_management:pregnancy_outcome_detail", kwargs={"id": self.object.id}
+        )
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context["id"] = self.object.id
         return context
 
-class PregnancyOutcomeDelete(CustomAuthMixin, PermissionRequiredMixin, DeleteView):
+
+class PregnancyOutcomeDelete(
+    CustomAuthMixin,
+    PermissionRequiredMixin,
+    LocationRestrictedQuerySetMixin,
+    DeleteView,
+):
     permission_required = "va_data_management.delete_pregnancyoutcome"
     model = PregnancyOutcome
     success_url = reverse_lazy("va_data_management:pregnancy_outcomes")
     success_message = "Pregnancy outcome %(id)s was deleted successfully"
-    error_message = (
-        "Pregnancy outcome %(id)s could not be deleted. This record doesn't exist or you don't have access."
-    )
-
-    def get_queryset(self):
-        return restrict_queryset_to_user_locations(
-            PregnancyOutcome.objects.all(),
-            self.request.user,
-        )
+    error_message = "Pregnancy outcome %(id)s could not be deleted. This record doesn't exist or you don't have access."
 
     def form_valid(self, form):
         obj = self.get_object()
@@ -126,7 +126,9 @@ class PregnancyOutcomeDelete(CustomAuthMixin, PermissionRequiredMixin, DeleteVie
         messages.error(self.request, self.error_message % obj.__dict__)
         return redirect(self.success_url)
 
+
 pregnancyoutcome_delete = PregnancyOutcomeDelete.as_view()
+
 
 class PregnancyOutcomeDeleteAll(CustomAuthMixin, PermissionRequiredMixin, TemplateView):
     permission_required = "va_data_management.bulk_delete"
@@ -136,8 +138,12 @@ class PregnancyOutcomeDeleteAll(CustomAuthMixin, PermissionRequiredMixin, Templa
     template_name = "va_data_management/pregnancy_outcome_confirm_delete_all.html"
 
     def post(self, request, *args, **kwargs):
-        PregnancyOutcome.objects.all().delete()
+        qs = restrict_queryset_to_user_locations(
+            PregnancyOutcome.objects.all(), request.user
+        )
+        qs.delete()
         messages.success(self.request, self.success_message)
         return redirect(self.success_url)
+
 
 pregnancyoutcome_delete_all = PregnancyOutcomeDeleteAll.as_view()

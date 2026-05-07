@@ -399,11 +399,33 @@ input {
   position: absolute;
   bottom: 10px;
   left: 10px;
-  background: #fff;
+  background: rgba(255, 255, 255, 0.78);
   padding: 5px;
   border-radius: 4px;
-  border: 2px solid #ccc;
+  border: 1px solid rgba(148, 163, 184, 0.55);
   text-align: left;
+  backdrop-filter: blur(1px);
+  -webkit-backdrop-filter: blur(1px);
+}
+
+.legend-gps-row {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(0, 0, 0, 0.1);
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+}
+
+.legend-gps-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #14a384;
+  opacity: 0.7;
+  margin-right: 6px;
+  vertical-align: middle;
 }
 
 .container {
@@ -413,5 +435,5 @@ input {
 
 body {
   padding-bottom: 0;
-  
+
 }

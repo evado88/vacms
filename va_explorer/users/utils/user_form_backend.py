@@ -8,7 +8,6 @@ from django.forms import BooleanField
 from django.forms.models import ModelMultipleChoiceField as MMCField
 from django.utils.crypto import get_random_string
 from pandas.core.frame import DataFrame
-from django.contrib.auth.models import Group
 
 from va_explorer.users.forms import ExtendedUserCreationForm
 from va_explorer.users.management.commands.initialize_groups import GROUPS_PERMISSIONS
@@ -92,7 +91,14 @@ def parse_users_from_file(user_list_file, default_group=None, debug=False):
     try:
         user_df = pd.read_csv(user_list_file).fillna("")
     except Exception as e:
-        return [], [{"row": 0, "email": "N/A", "name": "N/A", "errors": {"file": [f"Failed to read CSV: {str(e)}"]}}]
+        return [], [
+            {
+                "row": 0,
+                "email": "N/A",
+                "name": "N/A",
+                "errors": {"file": [f"Failed to read CSV: {str(e)}"]},
+            }
+        ]
 
     valid_users_raw = []
     valid_users_display = []
@@ -103,7 +109,7 @@ def parse_users_from_file(user_list_file, default_group=None, debug=False):
 
         # Apply default group override if provided
         if default_group:
-            if hasattr(default_group, 'name'):
+            if hasattr(default_group, "name"):
                 user_data["group"] = default_group.name
             else:
                 user_data["group"] = str(default_group)
@@ -134,7 +140,9 @@ def parse_users_from_file(user_list_file, default_group=None, debug=False):
                     if field == "group" and val:
                         display_data[label] = val.name
                     elif field in ["location_restrictions", "facility_restrictions"]:
-                        display_data[label] = "; ".join([str(l) for l in val]) if val else ""
+                        display_data[label] = (
+                            "; ".join(str(location) for location in val) if val else ""
+                        )
                     elif isinstance(val, bool):
                         display_data[label] = "Yes" if val else "No"
                     elif val is None:
@@ -145,19 +153,23 @@ def parse_users_from_file(user_list_file, default_group=None, debug=False):
                 valid_users_display.append(display_data)
 
             else:
-                invalid_users.append({
-                    "row": i + 2,  # +2 because 0-indexed and header row
+                invalid_users.append(
+                    {
+                        "row": i + 2,  # +2 because 0-indexed and header row
+                        "email": user_data.get("email", "Unknown"),
+                        "name": user_data.get("name", "Unknown"),
+                        "errors": user_form.errors,
+                    }
+                )
+        except Exception as e:
+            invalid_users.append(
+                {
+                    "row": i + 2,
                     "email": user_data.get("email", "Unknown"),
                     "name": user_data.get("name", "Unknown"),
-                    "errors": user_form.errors
-                })
-        except Exception as e:
-            invalid_users.append({
-                "row": i + 2,
-                "email": user_data.get("email", "Unknown"),
-                "name": user_data.get("name", "Unknown"),
-                "errors": {"exception": [str(e)]}
-            })
+                    "errors": {"exception": [str(e)]},
+                }
+            )
 
     return valid_users_raw, valid_users_display, invalid_users
 
@@ -172,7 +184,7 @@ def save_users_from_data(valid_users_data, email_confirmation=False):
         # Remove 'group_name' key before creating the form if it exists
         # as it's not a field on the ExtendedUserCreationForm.
         data_copy = data.copy()
-        data_copy.pop('group_name', None)
+        data_copy.pop("group_name", None)
         form = ExtendedUserCreationForm(data_copy)
         if form.is_valid():
             user = form.save(email_confirmation=email_confirmation)
@@ -344,7 +356,7 @@ def prep_form_data(user_data, debug=False, default_group="data viewer"):
     # just ensure that the Field Worker role is treated the same as
     # other roles when considering location restrictions by disabling
     # the Field Workers conditional block
-    if False and group_name.lower().startswith("field worker"):
+    if False:
         geo_access = "location-specific"
         # if no facility restriction, check for group restriction. Otherwise,
         # drop location restriction

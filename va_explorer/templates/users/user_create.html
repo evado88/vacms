@@ -89,6 +89,14 @@
             </div>
 
             <div class="perm-group">
+              <span class="perm-group-legend">Schedule Management</span>
+              <div class="row">
+                <div class="col-6">{{ form.perm_view_event|as_crispy_field }}</div>
+                <div class="col-6">{{ form.perm_change_event|as_crispy_field }}</div>
+              </div>
+            </div>
+
+            <div class="perm-group">
               <span class="perm-group-legend">Data Cleanup</span>
               <div class="row">
                 <div class="col-6">
@@ -154,6 +162,8 @@
       "change_pregnancyoutcome": "id_perm_change_pregnancyoutcome",
       "view_death":              "id_perm_view_death",
       "change_death":            "id_perm_change_death",
+      "view_event":              "id_perm_view_event",
+      "change_event":            "id_perm_change_event",
       "view_datacleanup":        "id_perm_view_datacleanup",
       "download":                "id_perm_download_datacleanup",
       "bulk_download":           "id_perm_bulk_download",

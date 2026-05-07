@@ -73,7 +73,9 @@ def test_load_va_data_counts_coded_community_without_facility_location():
     assert data["update_stats"]["total_vas"] == 2
     # Coded geo totals should include both facility- and cluster-sourced records.
     assert {"province_name": "Southern", "count": 2} in data["geographic_province_sums"]
-    assert {"district_name": "District 1", "count": 2} in data["geographic_district_sums"]
+    assert {"district_name": "District 1", "count": 2} in data[
+        "geographic_district_sums"
+    ]
     # Map-level geographic totals should also include both paths.
     assert {"province_name": "Southern", "count": 2} in data["map_province_sums"]
     assert {"district_name": "District 1", "count": 2} in data["map_district_sums"]
@@ -155,3 +157,75 @@ def test_load_va_data_source_filter_all_community_facility():
     )
     assert facility_data["update_stats"]["total_vas"] == 1
     assert facility_data["map_total_vas"] == 1
+
+
+def test_load_va_data_cause_trends_use_date_of_death():
+    va_delayed_submission = VerbalAutopsyFactory.create(
+        instanceid="analytics-cod-trend-delayed",
+        Id10023="2026-03-05",
+        submissiondate="2026-02-01",
+    )
+    CauseOfDeathFactory.create(
+        verbalautopsy=va_delayed_submission,
+        cause="Cause A",
+    )
+    va_later_submission = VerbalAutopsyFactory.create(
+        instanceid="analytics-cod-trend-later-submission",
+        Id10023="2026-01-20",
+        submissiondate="2026-03-10",
+    )
+    CauseOfDeathFactory.create(
+        verbalautopsy=va_later_submission,
+        cause="Cause B",
+    )
+
+    data = load_va_data(
+        user=UserFactory.create(),
+        cause_of_death=None,
+        start_date="2026-01-01",
+        end_date="2026-12-31",
+        region_of_interest=None,
+        age=None,
+        sex=None,
+    )
+
+    assert list(data["COD_trend"]) == [
+        {"month_key": "2026-01", "count": 1},
+        {"month_key": "2026-03", "count": 1},
+    ]
+
+    cause_a_series = next(
+        series
+        for series in data["va_cause_trend"]["series"]
+        if series["name"] == "Cause A"
+    )
+    periods = data["va_cause_trend"]["periods"]
+    assert cause_a_series["values"][periods.index("Mar 2026")] == 1
+    assert cause_a_series["values"][periods.index("Feb 2026")] == 0
+
+
+def test_load_va_data_omits_other_from_cause_graphs():
+    for index in range(11):
+        va = VerbalAutopsyFactory.create(
+            instanceid=f"analytics-cod-no-other-{index}",
+            Id10023=f"2026-03-{index + 1:02d}",
+            submissiondate=f"2026-03-{index + 1:02d}",
+        )
+        CauseOfDeathFactory.create(
+            verbalautopsy=va,
+            cause=f"Cause {index:02d}",
+        )
+
+    data = load_va_data(
+        user=UserFactory.create(),
+        cause_of_death=None,
+        start_date="2026-01-01",
+        end_date="2026-12-31",
+        region_of_interest=None,
+        age=None,
+        sex=None,
+    )
+
+    assert all(row["cause"] != "Other" for row in data["COD_grouping"])
+    assert all(series["name"] != "Other" for series in data["va_cause_trend"]["series"])
+    assert "Other" not in data["regional_cod_comparison"]["cod_categories"]

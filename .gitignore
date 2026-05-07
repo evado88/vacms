@@ -101,3 +101,9 @@ Icon
 
 # DB DUMP
 *.dump
+
+# AI
+.codex
+.claude
+CLAUDE.md
+claude.md

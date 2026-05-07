@@ -92,6 +92,7 @@
     return response.json();
   };
 
+  const userCanViewPII = (app.dataset.userPii || "").toLowerCase() === "true";
   const mapController =
     typeof window.createHierarchicalDashboardMap === "function"
       ? window.createHierarchicalDashboardMap({
@@ -111,6 +112,7 @@
           includeSelectionInRequest: false,
           styleVariant: "va",
           noDataMessage: "No mapped pregnancy events in current filter range.",
+          userCanViewPII,
         })
       : null;
 

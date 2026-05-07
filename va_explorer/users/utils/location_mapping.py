@@ -20,9 +20,7 @@ def map_srs_clusters_to_locations(clusters):
     query = Q()
     for node in cluster_nodes:
         if getattr(node, "name", None) and getattr(node, "location_type", None):
-            query |= Q(
-                name__iexact=node.name, location_type__iexact=node.location_type
-            )
+            query |= Q(name__iexact=node.name, location_type__iexact=node.location_type)
 
     if not query:
         return Location.objects.none()

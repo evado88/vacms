@@ -1,9 +1,10 @@
 # va_explorer/va_data_management/utils/dedup.py
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Iterable, List, Optional, Tuple
+from typing import Iterable
 
 from django.db.models import QuerySet
 
@@ -12,13 +13,15 @@ from va_explorer.va_data_management.utils.date_parsing import parse_date  # if a
 
 # ---- Helpers ----
 
-def _norm(s: Optional[str]) -> str:
+
+def _norm(s: str | None) -> str:
     """Normalize strings for matching: None -> '', strip, lowercase."""
     if s is None:
         return ""
     return str(s).strip().lower()
 
-def _pick_ts(hh: Household) -> Optional[datetime]:
+
+def _pick_ts(hh: Household) -> datetime | None:
     """
     Pick the best timestamp for matching.
     Try: start -> end -> submission_date (all are TextFields).
@@ -47,23 +50,26 @@ def _pick_ts(hh: Household) -> Optional[datetime]:
                 continue
     return None
 
+
 @dataclass(frozen=True)
 class DedupHit:
     household_id: int
     household_key: str
     matched_id: int
     matched_key: str
-    reason: str              # "EA+HUN+HHN within Xh" or "ADMIN+HUN/HHN within Xh"
-    time_diff_hours: Optional[float]
+    reason: str  # "EA+HUN+HHN within Xh" or "ADMIN+HUN/HHN within Xh"
+    time_diff_hours: float | None
     enumerator: str
     respondent: str
 
+
 # ---- Core logic ----
 
+
 def find_secondary_duplicates(
-    qs: Optional[QuerySet] = None,
+    qs: QuerySet | None = None,
     time_window_hours: int = 48,
-) -> List[DedupHit]:
+) -> list[DedupHit]:
     """
     Return suspected duplicate pairs according to the rule:
       (EA + HUN + HHN) within time window OR
@@ -73,7 +79,9 @@ def find_secondary_duplicates(
         qs = Household.objects.all()
 
     # Pull minimal fields to memory (text parsing is simpler in Python here)
-    records: List[Tuple[Household, str, str, str, str, str, str, Optional[datetime]]] = []
+    records: list[
+        tuple[Household, str, str, str, str, str, str, str, datetime | None]
+    ] = []
     for hh in qs.iterator():
         ea = _norm(hh.ea)
         hun = _norm(hh.hun)
@@ -91,10 +99,10 @@ def find_secondary_duplicates(
         records.append((hh, ea, hun, hhn, province, district, constituency, ward, ts))
 
     # Grouping: (EA,HUN,HHN) and (ADMIN,HUN,HHN)
-    from collections import defaultdict
-
-    by_ea_hun_hhn = defaultdict(list)          # key: (ea, hun, hhn)
-    by_admin_hun_hhn = defaultdict(list)       # key: (province, district, constituency, ward, hun, hhn)
+    by_ea_hun_hhn = defaultdict(list)  # key: (ea, hun, hhn)
+    by_admin_hun_hhn = defaultdict(
+        list
+    )  # key: (province, district, constituency, ward, hun, hhn)
 
     for hh, ea, hun, hhn, prov, dist, cons, ward, ts in records:
         key1 = (ea, hun, hhn)
@@ -103,11 +111,15 @@ def find_secondary_duplicates(
         by_admin_hun_hhn[key2].append((hh, ts))
 
     window = timedelta(hours=time_window_hours)
-    hits: List[DedupHit] = []
+    hits: list[DedupHit] = []
 
-    def _scan_bucket(bucket: Iterable[Tuple[Household, Optional[datetime]]], reason_label: str):
+    def _scan_bucket(
+        bucket: Iterable[tuple[Household, datetime | None]], reason_label: str
+    ):
         # Sort by timestamp (None last) for meaningful neighbor comparisons
-        bucket_sorted = sorted(bucket, key=lambda x: (x[1] is None, x[1] or datetime.min))
+        bucket_sorted = sorted(
+            bucket, key=lambda x: (x[1] is None, x[1] or datetime.min)
+        )
         n = len(bucket_sorted)
         if n < 2:
             return

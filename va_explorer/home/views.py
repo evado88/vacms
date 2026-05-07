@@ -1,979 +1,85 @@
-from collections import Counter, defaultdict
-from datetime import date, datetime, time, timedelta
 import difflib
-import hashlib
-import json
 import logging
+import math
 import re
-from zoneinfo import ZoneInfo
+from collections import Counter, defaultdict
+from contextlib import suppress
+from datetime import date, datetime, time, timedelta
 
 import pandas as pd
 from django.contrib.auth.mixins import PermissionRequiredMixin
 from django.core.cache import cache
-from django.db.models import Count, OuterRef, Q, Subquery
+from django.db import transaction
+from django.db.models import (
+    Count,
+    Max,
+    OuterRef,
+    Q,
+    Subquery,
+)
 from django.db.models.functions import Substr
 from django.http import JsonResponse
 from django.utils import timezone
 from django.utils.dateparse import parse_date as django_parse_date
 from django.utils.dateparse import parse_datetime as django_parse_datetime
 from django.views.generic import TemplateView, View
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+from zoneinfo import ZoneInfo
 
-from va_explorer.home.cache_utils import get_home_dashboard_fastpath_version
-from va_explorer.home.model_trends import get_model_trends_data
-from va_explorer.home.va_trends import get_trends_data
-from va_explorer.utils.profiling import timed_block
+from va_explorer.home.services.cache import (
+    HOME_FASTPATH_CACHE_TTL_SECONDS,
+    HOME_FASTPATH_TABLE_CACHE_TTL_SECONDS,
+)
+from va_explorer.home.services.cache import (
+    get_cached_home_chart_bundle as _get_cached_home_chart_bundle,
+)
+from va_explorer.home.services.cache import (
+    get_cached_home_kpis as _get_cached_home_kpis,
+)
+from va_explorer.home.services.cache import (
+    get_cached_nov_payload as _get_cached_nov_payload,
+)
+from va_explorer.home.services.cache import (
+    get_cached_trends_bundle as _get_cached_trends_bundle,
+)
+from va_explorer.home.services.common import (
+    fastpath_cache_key as _fastpath_cache_key,
+)
+from va_explorer.home.services.common import (
+    paginate_list as _paginate_list,
+)
+from va_explorer.home.services.common import (
+    shallow_downsample as _shallow_downsample,
+)
+from va_explorer.home.services.map import (
+    build_home_combined_map_payload as _build_home_combined_map_payload,
+)
 from va_explorer.utils.mixins import CustomAuthMixin
+from va_explorer.utils.profiling import timed_block
 from va_explorer.va_data_management.models import (
-    CSADailyTracker,
     CauseCodingIssue,
     CauseOfDeath,
+    CSADailyTracker,
     CSASupervisorTargetMap,
-    Death,
-    Household,
-    HouseholdMember,
     Location,
     ODKFormChoice,
     Pregnancy,
     PregnancyOutcome,
-    VerbalAutopsy,
 )
-from va_explorer.va_data_management.utils.date_parsing import parse_date
 from va_explorer.va_data_management.utils.csa_names import (
     format_csa_display_name,
     normalize_csa_name_for_join,
 )
+from va_explorer.va_data_management.utils.date_parsing import parse_date
+from va_explorer.va_data_management.utils.loading import (
+    get_va_summary_stats,
+)
 from va_explorer.va_data_management.utils.location_access import (
     restrict_queryset_to_user_locations,
 )
-from va_explorer.va_data_management.utils.loading import get_va_summary_stats
 from va_explorer.vacms.cmsmodels.events import Event
 
 logger = logging.getLogger(__name__)
-
-
-def _fix_tz_offset(text):
-    if len(text) >= 5 and (text[-5] in "+-") and text[-4:].isdigit():
-        return text[:-5] + text[-5:-2] + ":" + text[-2:]
-    return text
-
-
-def _parse_submission_timestamp(value):
-    if isinstance(value, datetime):
-        dt = value
-    elif isinstance(value, date):
-        dt = datetime.combine(value, time.min)
-    else:
-        raw = str(value or "").strip()
-        if not raw:
-            return None
-        normalized = _fix_tz_offset(raw.replace("Z", "+00:00"))
-        candidates = [normalized]
-        if "T" in normalized:
-            candidates.append(_fix_tz_offset(normalized.replace("T", " ")))
-
-        dt = None
-        for candidate in candidates:
-            dt = django_parse_datetime(candidate)
-            if dt:
-                break
-        if dt is None:
-            return None
-
-    if timezone.is_naive(dt):
-        dt = timezone.make_aware(dt, timezone.get_current_timezone())
-    return timezone.localtime(dt)
-
-
-def _first_valid_timestamp(record, date_fields):
-    for field in date_fields:
-        timestamp = _parse_submission_timestamp(getattr(record, field, None))
-        if timestamp is not None:
-            return timestamp
-    return None
-
-
-def _latest_timestamps_by_identifier(queryset, key_field, date_fields):
-    filtered = queryset.exclude(**{f"{key_field}__isnull": True}).exclude(**{key_field: ""})
-    latest_by_key = {}
-    value_fields = list(date_fields) + [key_field]
-    # Use .values().iterator() to avoid model-instance construction overhead and
-    # to stream rows without caching the entire result set in the QuerySet.
-    for row in filtered.values(*value_fields).iterator(chunk_size=2000):
-        identifier = row.get(key_field)
-        if not identifier:
-            continue
-        for field in date_fields:
-            val = row.get(field)
-            if not val:
-                continue
-            timestamp = _parse_submission_timestamp(val)
-            if timestamp is not None:
-                existing = latest_by_key.get(identifier)
-                if existing is None or timestamp > existing:
-                    latest_by_key[identifier] = timestamp
-                break
-    return latest_by_key
-
-
-def _iter_month_starts(start_dt, end_dt):
-    current = start_dt.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    end_month = end_dt.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    while current <= end_month:
-        yield current
-        if current.month == 12:
-            current = current.replace(year=current.year + 1, month=1)
-        else:
-            current = current.replace(month=current.month + 1)
-
-
-def _filter_timestamps(timestamps, start_dt, end_dt):
-    return [
-        ts
-        for ts in timestamps
-        if (start_dt is None or ts >= start_dt) and (end_dt is None or ts <= end_dt)
-    ]
-
-
-def _windowed_counts(timestamps, start_dt, end_dt):
-    filtered = _filter_timestamps(timestamps, start_dt, end_dt)
-    if not filtered:
-        return {"today": 0, "week": 0, "total": 0}
-
-    effective_end = end_dt or timezone.localtime(timezone.now())
-    today_start = effective_end - timedelta(days=1)
-    week_start = effective_end - timedelta(days=7)
-    if start_dt is not None:
-        today_start = max(today_start, start_dt)
-        week_start = max(week_start, start_dt)
-
-    return {
-        "today": sum(1 for ts in filtered if today_start <= ts <= effective_end),
-        "week": sum(1 for ts in filtered if week_start <= ts <= effective_end),
-        "total": len(filtered),
-    }
-
-
-def _build_chart_series(pregnancy_ts, outcome_ts, death_ts, va_ts, start_dt, end_dt):
-    series = {
-        "pregnancy": _filter_timestamps(pregnancy_ts, start_dt, end_dt),
-        "pregnancy_outcome": _filter_timestamps(outcome_ts, start_dt, end_dt),
-        "death": _filter_timestamps(death_ts, start_dt, end_dt),
-        "va": _filter_timestamps(va_ts, start_dt, end_dt),
-    }
-
-    all_values = (
-        series["pregnancy"] + series["pregnancy_outcome"] + series["death"] + series["va"]
-    )
-    if not all_values:
-        return {"labels": [], "pregnancy": [], "pregnancy_outcome": [], "death": [], "va": []}
-
-    chart_start = start_dt or min(all_values)
-    chart_end = end_dt or max(all_values)
-    day_span = (chart_end.date() - chart_start.date()).days
-    use_daily = day_span <= 62
-
-    if use_daily:
-        labels = []
-        label = chart_start.date()
-        end_label = chart_end.date()
-        while label <= end_label:
-            labels.append(label.isoformat())
-            label += timedelta(days=1)
-        keyed = {name: Counter(ts.date().isoformat() for ts in values) for name, values in series.items()}
-    else:
-        labels = [month.strftime("%Y-%m") for month in _iter_month_starts(chart_start, chart_end)]
-        keyed = {name: Counter(ts.strftime("%Y-%m") for ts in values) for name, values in series.items()}
-
-    return {
-        "labels": labels,
-        "pregnancy": [keyed["pregnancy"].get(label, 0) for label in labels],
-        "pregnancy_outcome": [keyed["pregnancy_outcome"].get(label, 0) for label in labels],
-        "death": [keyed["death"].get(label, 0) for label in labels],
-        "va": [keyed["va"].get(label, 0) for label in labels],
-    }
-
-
-def _parse_filter_range(request):
-    now_local = timezone.localtime(timezone.now())
-    preset = (request.GET.get("preset") or "all").strip().lower()
-    start_dt = None
-    end_dt = now_local
-
-    if preset == "30":
-        start_dt = now_local - timedelta(days=30)
-    elif preset == "7":
-        start_dt = now_local - timedelta(days=7)
-    elif preset == "24":
-        start_dt = now_local - timedelta(days=1)
-
-    start_raw = (request.GET.get("start") or "").strip()
-    end_raw = (request.GET.get("end") or "").strip()
-
-    parsed_start = django_parse_datetime(start_raw) if start_raw else None
-    parsed_end = django_parse_datetime(end_raw) if end_raw else None
-    if parsed_start is None and start_raw:
-        parsed_start_date = django_parse_date(start_raw)
-        if parsed_start_date is not None:
-            parsed_start = datetime.combine(parsed_start_date, time.min)
-    if parsed_end is None and end_raw:
-        parsed_end_date = django_parse_date(end_raw)
-        if parsed_end_date is not None:
-            parsed_end = datetime.combine(parsed_end_date, time.max)
-    if parsed_start is not None:
-        if timezone.is_naive(parsed_start):
-            parsed_start = timezone.make_aware(parsed_start, timezone.get_current_timezone())
-        start_dt = timezone.localtime(parsed_start)
-    if parsed_end is not None:
-        if timezone.is_naive(parsed_end):
-            parsed_end = timezone.make_aware(parsed_end, timezone.get_current_timezone())
-        end_dt = timezone.localtime(parsed_end)
-
-    if start_dt is not None and end_dt is not None and start_dt > end_dt:
-        start_dt, end_dt = end_dt, start_dt
-
-    has_custom_range = bool(start_raw or end_raw)
-    return preset, start_dt, end_dt, has_custom_range
-
-
-def _parse_location_filter(request):
-    level = (request.GET.get("location_level") or "national").strip().lower()
-    value = (request.GET.get("location_value") or "").strip()
-    allowed_levels = {"national", "province", "district", "constituency", "ward", "ea"}
-    if level not in allowed_levels:
-        level = "national"
-    if level == "national":
-        return level, ""
-    return level, value
-
-
-def _model_has_field(model, field_name):
-    try:
-        model._meta.get_field(field_name)
-        return True
-    except Exception:
-        return False
-
-
-def _apply_text_geography_filter(queryset, model, level, value):
-    if not value or level == "national":
-        return queryset
-    if not _model_has_field(model, level):
-        return queryset
-    return queryset.filter(**{f"{level}__iexact": value})
-
-
-def _normalize_geo_value(value):
-    normalized = " ".join(str(value or "").split()).strip()
-    if not normalized:
-        return ""
-    if normalized.lower() in {"nan", "none", "null", "na", "n/a"}:
-        return ""
-    return normalized
-
-
-def _serialize_geo_counter(counter, output_key):
-    return [
-        {output_key: name, "count": count}
-        for name, count in sorted(counter.items(), key=lambda item: item[0].lower())
-    ]
-
-
-def _serialize_geo_counter_with_breakdown(counter, output_key, breakdown_counters):
-    rows = []
-    for name, count in sorted(counter.items(), key=lambda item: item[0].lower()):
-        row = {output_key: name, "count": count}
-        for field_name, field_counter in breakdown_counters.items():
-            row[field_name] = int(field_counter.get(name, 0))
-        rows.append(row)
-    return rows
-
-
-def _parse_home_map_filters(request):
-    time_preset = (request.GET.get("time_preset") or "all_time").strip().lower()
-    start_raw = (request.GET.get("start_datetime") or "").strip()
-    end_raw = (request.GET.get("end_datetime") or "").strip()
-    map_view = (request.GET.get("map_view") or "Province").strip() or "Province"
-    geography_level = (request.GET.get("geography_level") or "").strip().lower()
-    geography_value = (request.GET.get("geography_value") or "").strip()
-
-    now = timezone.localtime(timezone.now())
-    start_dt = None
-    end_dt = now
-
-    if time_preset == "last_30_days":
-        start_dt = now - timedelta(days=30)
-    elif time_preset == "last_7_days":
-        start_dt = now - timedelta(days=7)
-    elif time_preset == "last_24_hours":
-        start_dt = now - timedelta(hours=24)
-
-    parsed_start = django_parse_datetime(start_raw) if start_raw else None
-    parsed_end = django_parse_datetime(end_raw) if end_raw else None
-    if parsed_start is None and start_raw:
-        parsed_date = django_parse_date(start_raw)
-        if parsed_date:
-            parsed_start = datetime.combine(parsed_date, time.min)
-    if parsed_end is None and end_raw:
-        parsed_date = django_parse_date(end_raw)
-        if parsed_date:
-            parsed_end = datetime.combine(parsed_date, time.max)
-
-    if parsed_start is not None:
-        if timezone.is_naive(parsed_start):
-            parsed_start = timezone.make_aware(parsed_start, timezone.get_current_timezone())
-        start_dt = timezone.localtime(parsed_start)
-    if parsed_end is not None:
-        if timezone.is_naive(parsed_end):
-            parsed_end = timezone.make_aware(parsed_end, timezone.get_current_timezone())
-        end_dt = timezone.localtime(parsed_end)
-
-    if start_dt and end_dt and start_dt > end_dt:
-        start_dt, end_dt = end_dt, start_dt
-
-    allowed_levels = {"province", "district", "constituency", "ward", "ea"}
-    if geography_level not in allowed_levels:
-        geography_level = ""
-        geography_value = ""
-
-    return {
-        "time_preset": time_preset,
-        "start_dt": start_dt,
-        "end_dt": end_dt,
-        "map_view": map_view,
-        "geography_level": geography_level,
-        "geography_value": geography_value,
-    }
-
-
-def _latest_geo_by_identifier(queryset, key_field, date_fields, start_dt, end_dt):
-    geo_fields = ("province", "district", "constituency", "ward", "ea")
-    latest = {}
-    rows = (
-        queryset.exclude(**{f"{key_field}__isnull": True})
-        .exclude(**{key_field: ""})
-        .values(key_field, *date_fields, *geo_fields)
-    )
-    for row in rows.iterator():
-        identifier = row.get(key_field)
-        if not identifier:
-            continue
-
-        timestamp = None
-        for field_name in date_fields:
-            timestamp = _parse_submission_timestamp(row.get(field_name))
-            if timestamp is not None:
-                break
-        if timestamp is None:
-            continue
-        if start_dt and timestamp < start_dt:
-            continue
-        if end_dt and timestamp > end_dt:
-            continue
-
-        existing = latest.get(identifier)
-        if existing is not None and timestamp <= existing[0]:
-            continue
-        latest[identifier] = (
-            timestamp,
-            {
-                "province": _normalize_geo_value(row.get("province")),
-                "district": _normalize_geo_value(row.get("district")),
-                "constituency": _normalize_geo_value(row.get("constituency")),
-                "ward": _normalize_geo_value(row.get("ward")),
-                "ea": _normalize_geo_value(row.get("ea")),
-            },
-        )
-    return latest
-
-
-def _build_home_combined_map_payload(request):
-    filters = _parse_home_map_filters(request)
-    geography_level = filters["geography_level"]
-    geography_value = filters["geography_value"]
-    start_dt = filters["start_dt"]
-    end_dt = filters["end_dt"]
-
-    with timed_block("home.map.qs.build", request=request):
-        pregnancies_qs = _apply_text_geography_filter(
-            restrict_queryset_to_user_locations(Pregnancy.objects.all(), getattr(request, "user", None)),
-            Pregnancy,
-            geography_level or "national",
-            geography_value,
-        )
-        outcomes_qs = _apply_text_geography_filter(
-            restrict_queryset_to_user_locations(PregnancyOutcome.objects.all(), getattr(request, "user", None)),
-            PregnancyOutcome,
-            geography_level or "national",
-            geography_value,
-        )
-        deaths_qs = _apply_text_geography_filter(
-            restrict_queryset_to_user_locations(Death.objects.all(), getattr(request, "user", None)),
-            Death,
-            geography_level or "national",
-            geography_value,
-        )
-        if request and getattr(request, "user", None):
-            vas_qs = request.user.verbal_autopsies().filter(deleted_at__isnull=True, duplicate=False)
-        else:
-            vas_qs = VerbalAutopsy.objects.filter(deleted_at__isnull=True, duplicate=False)
-        vas_qs = _apply_text_geography_filter(
-            vas_qs,
-            VerbalAutopsy,
-            geography_level or "national",
-            geography_value,
-        )
-
-    with timed_block("home.map.aggregate", request=request):
-        model_sets = (
-            (
-                "pregnancies_count",
-                _latest_geo_by_identifier(
-                    pregnancies_qs,
-                    "key",
-                    ("submissiondate", "start", "today"),
-                    start_dt,
-                    end_dt,
-                ),
-            ),
-            (
-                "pregnancy_outcomes_count",
-                _latest_geo_by_identifier(
-                    outcomes_qs,
-                    "key",
-                    ("submissiondate", "start", "today"),
-                    start_dt,
-                    end_dt,
-                ),
-            ),
-            (
-                "deaths_count",
-                _latest_geo_by_identifier(
-                    deaths_qs,
-                    "key",
-                    ("submissiondate", "start", "today"),
-                    start_dt,
-                    end_dt,
-                ),
-            ),
-            (
-                "verbal_autopsies_count",
-                _latest_geo_by_identifier(
-                    vas_qs,
-                    "instanceid",
-                    ("submissiondate", "Id10012", "created"),
-                    start_dt,
-                    end_dt,
-                ),
-            ),
-        )
-
-        province_counts = Counter()
-        district_counts = Counter()
-        constituency_counts = Counter()
-        ward_counts = Counter()
-        ea_counts = Counter()
-
-        province_type_counts = defaultdict(Counter)
-        district_type_counts = defaultdict(Counter)
-        constituency_type_counts = defaultdict(Counter)
-        ward_type_counts = defaultdict(Counter)
-        ea_type_counts = defaultdict(Counter)
-        total_events = 0
-
-        for type_key, latest_map in model_sets:
-            total_events += len(latest_map)
-            for _identifier, (_timestamp, geo) in latest_map.items():
-                if geo.get("province"):
-                    province_name = geo["province"]
-                    province_counts[province_name] += 1
-                    province_type_counts[type_key][province_name] += 1
-                if geo.get("district"):
-                    district_name = geo["district"]
-                    district_counts[district_name] += 1
-                    district_type_counts[type_key][district_name] += 1
-                if geo.get("constituency"):
-                    constituency_name = geo["constituency"]
-                    constituency_counts[constituency_name] += 1
-                    constituency_type_counts[type_key][constituency_name] += 1
-                if geo.get("ward"):
-                    ward_name = geo["ward"]
-                    ward_counts[ward_name] += 1
-                    ward_type_counts[type_key][ward_name] += 1
-                if geo.get("ea"):
-                    ea_name = geo["ea"]
-                    ea_counts[ea_name] += 1
-                    ea_type_counts[type_key][ea_name] += 1
-
-    province_sums = _serialize_geo_counter_with_breakdown(
-        province_counts,
-        "province_name",
-        province_type_counts,
-    )
-    district_sums = _serialize_geo_counter_with_breakdown(
-        district_counts,
-        "district_name",
-        district_type_counts,
-    )
-    constituency_sums = _serialize_geo_counter_with_breakdown(
-        constituency_counts,
-        "constituency_name",
-        constituency_type_counts,
-    )
-    ward_sums = _serialize_geo_counter_with_breakdown(
-        ward_counts,
-        "ward_name",
-        ward_type_counts,
-    )
-    ea_sums = _serialize_geo_counter_with_breakdown(
-        ea_counts,
-        "ea_name",
-        ea_type_counts,
-    )
-
-    counts_by_view = {
-        "Province": [{"name": row["province_name"], "count": row["count"]} for row in province_sums],
-        "District": [{"name": row["district_name"], "count": row["count"]} for row in district_sums],
-        "Constituency": [{"name": row["constituency_name"], "count": row["count"]} for row in constituency_sums],
-        "Ward": [{"name": row["ward_name"], "count": row["count"]} for row in ward_sums],
-        "EA": [{"name": row["ea_name"], "count": row["count"]} for row in ea_sums],
-    }
-
-    return {
-        "map_view": filters["map_view"],
-        "counts": counts_by_view.get(filters["map_view"], counts_by_view["Province"]),
-        "province_counts": counts_by_view["Province"],
-        "district_counts": counts_by_view["District"],
-        "constituency_counts": counts_by_view["Constituency"],
-        "ward_counts": counts_by_view["Ward"],
-        "ea_counts": counts_by_view["EA"],
-        "map_total_events": total_events,
-        "map_province_sums": province_sums,
-        "map_district_sums": district_sums,
-        "map_constituency_sums": constituency_sums,
-        "map_ward_sums": ward_sums,
-        "map_ea_sums": ea_sums,
-    }
-
-
-def _scope_fingerprint(user):
-    parts = [
-        f"user:{user.pk}",
-        f"super:{int(bool(user.is_superuser))}",
-        f"staff:{int(bool(user.is_staff))}",
-        f"fieldworker:{int(bool(user.is_fieldworker()))}",
-        f"pii:{int(bool(getattr(user, 'can_view_pii', False)))}",
-    ]
-    location_ids = list(
-        user.location_restrictions.order_by("pk").values_list("pk", flat=True)
-    )
-    parts.append("loc:" + ",".join(str(value) for value in location_ids))
-    group_ids = list(user.groups.order_by("pk").values_list("pk", flat=True))
-    parts.append("grp:" + ",".join(str(value) for value in group_ids))
-    return "|".join(parts)
-
-
-def _fastpath_cache_key(namespace, request, extra=None):
-    preset = (request.GET.get("preset") or "all").strip().lower()
-    raw_start = (request.GET.get("start") or "").strip()
-    raw_end = (request.GET.get("end") or "").strip()
-    if preset not in {"all", "30", "7", "24"}:
-        preset = "all"
-    start_token = raw_start
-    end_token = raw_end
-    if raw_start or raw_end:
-        _preset, start_dt, end_dt, _has_custom = _parse_filter_range(request)
-        start_token = start_dt.date().isoformat() if start_dt else ""
-        end_token = end_dt.date().isoformat() if end_dt else ""
-
-    location_level, location_value = _parse_location_filter(request)
-    payload = {
-        "version": get_home_dashboard_fastpath_version(),
-        "scope": _scope_fingerprint(request.user),
-        "preset": preset,
-        "start": start_token,
-        "end": end_token,
-        "location_level": location_level,
-        "location_value": location_value,
-        "extra": extra or {},
-    }
-    digest = hashlib.sha256(
-        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
-    return f"home_fastpath:{namespace}:{digest}"
-
-
-def _shallow_downsample(labels, series_map, max_points):
-    try:
-        max_points_int = int(max_points)
-    except (TypeError, ValueError):
-        max_points_int = 0
-
-    if max_points_int <= 0 or len(labels) <= max_points_int:
-        return labels, series_map
-
-    step = max(1, len(labels) // max_points_int)
-    sampled_idx = list(range(0, len(labels), step))
-    if sampled_idx[-1] != len(labels) - 1:
-        sampled_idx.append(len(labels) - 1)
-
-    sampled_labels = [labels[idx] for idx in sampled_idx]
-    sampled_series = {
-        key: [values[idx] for idx in sampled_idx if idx < len(values)]
-        for key, values in series_map.items()
-    }
-    return sampled_labels, sampled_series
-
-
-def _paginate_list(items, page, page_size):
-    total = len(items)
-    try:
-        page = int(page or 1)
-    except (TypeError, ValueError):
-        page = 1
-    try:
-        page_size = int(page_size or 10)
-    except (TypeError, ValueError):
-        page_size = 10
-    page = max(page, 1)
-    page_size = max(min(page_size, 100), 1)
-    start = (page - 1) * page_size
-    end = start + page_size
-    return {
-        "results": items[start:end],
-        "pagination": {
-            "page": page,
-            "page_size": page_size,
-            "total": total,
-            "total_pages": (total + page_size - 1) // page_size,
-        },
-    }
-
-
-def _latest_household_timestamps(queryset):
-    households_by_key = {}
-    eas_by_key = {}
-    rows = (
-        queryset.exclude(key__isnull=True)
-        .exclude(key="")
-        .values("key", "ea", "submissiondate", "start", "today")
-    )
-    for row in rows.iterator():
-        timestamp = (
-            _parse_submission_timestamp(row.get("submissiondate"))
-            or _parse_submission_timestamp(row.get("start"))
-            or _parse_submission_timestamp(row.get("today"))
-        )
-        if timestamp is None:
-            continue
-        key_value = row.get("key")
-        if key_value:
-            existing_key_ts = households_by_key.get(key_value)
-            if existing_key_ts is None or timestamp > existing_key_ts:
-                households_by_key[key_value] = timestamp
-        ea_value = row.get("ea")
-        if ea_value:
-            existing_ea_ts = eas_by_key.get(ea_value)
-            if existing_ea_ts is None or timestamp > existing_ea_ts:
-                eas_by_key[ea_value] = timestamp
-    return households_by_key, eas_by_key
-
-
-def _get_national_operational_view_data(
-    start_dt=None,
-    end_dt=None,
-    request=None,
-    location_level="national",
-    location_value="",
-    include_chart_series=True,
-):
-    if end_dt is None:
-        end_dt = timezone.localtime(timezone.now())
-
-    households_qs = _apply_text_geography_filter(
-        restrict_queryset_to_user_locations(Household.objects.all(), getattr(request, "user", None)),
-        Household,
-        location_level,
-        location_value,
-    )
-    pregnancies_qs = _apply_text_geography_filter(
-        restrict_queryset_to_user_locations(Pregnancy.objects.all(), getattr(request, "user", None)),
-        Pregnancy,
-        location_level,
-        location_value,
-    )
-    pregnancy_outcomes_qs = _apply_text_geography_filter(
-        restrict_queryset_to_user_locations(
-            PregnancyOutcome.objects.all(), getattr(request, "user", None)
-        ),
-        PregnancyOutcome,
-        location_level,
-        location_value,
-    )
-    deaths_qs = _apply_text_geography_filter(
-        restrict_queryset_to_user_locations(Death.objects.all(), getattr(request, "user", None)),
-        Death,
-        location_level,
-        location_value,
-    )
-    if request and getattr(request, "user", None):
-        va_qs = request.user.verbal_autopsies().filter(deleted_at__isnull=True, duplicate=False)
-    else:
-        va_qs = VerbalAutopsy.objects.filter(deleted_at__isnull=True, duplicate=False)
-    va_qs = _apply_text_geography_filter(
-        va_qs,
-        VerbalAutopsy,
-        location_level,
-        location_value,
-    )
-
-    # When a time window is active, pre-filter querysets at the DB level so that
-    # Python only iterates records that can fall within the window. ISO date
-    # text fields sort lexicographically, which equals chronological order for
-    # well-formed YYYY-MM-DD* strings. We include null/empty rows because they
-    # might carry a valid fallback date in another field.
-    if start_dt is not None:
-        _cutoff = (start_dt.date() - timedelta(days=1)).isoformat()
-        _date_prefilter = (
-            Q(submissiondate__gte=_cutoff)
-            | Q(submissiondate__isnull=True)
-            | Q(submissiondate="")
-        )
-        households_qs = households_qs.filter(_date_prefilter)
-        pregnancies_qs = pregnancies_qs.filter(_date_prefilter)
-        pregnancy_outcomes_qs = pregnancy_outcomes_qs.filter(_date_prefilter)
-        deaths_qs = deaths_qs.filter(_date_prefilter)
-        va_qs = va_qs.filter(_date_prefilter)
-
-    with timed_block("home.nov.latest_timestamps.households", request=request):
-        households_by_key, eas_by_key = _latest_household_timestamps(households_qs)
-    with timed_block("home.nov.latest_timestamps.pregnancies", request=request):
-        pregnancies_by_key = _latest_timestamps_by_identifier(
-            pregnancies_qs,
-            "key",
-            ("submissiondate", "start", "today"),
-        )
-    with timed_block("home.nov.latest_timestamps.pregnancy_outcomes", request=request):
-        pregnancy_outcomes_by_key = _latest_timestamps_by_identifier(
-            pregnancy_outcomes_qs,
-            "key",
-            ("submissiondate", "start", "today"),
-        )
-    with timed_block("home.nov.latest_timestamps.deaths", request=request):
-        deaths_by_key = _latest_timestamps_by_identifier(
-            deaths_qs,
-            "key",
-            ("submissiondate", "start", "today"),
-        )
-    with timed_block("home.nov.latest_timestamps.vas", request=request):
-        vas_by_key = _latest_timestamps_by_identifier(
-            va_qs,
-            "instanceid",
-            ("submissiondate", "Id10012", "created"),
-        )
-
-    with timed_block("home.nov.windowed_counts", request=request):
-        households_totals = _windowed_counts(list(households_by_key.values()), start_dt, end_dt)
-        eas_totals = _windowed_counts(list(eas_by_key.values()), start_dt, end_dt)
-        pregnancies_totals = _windowed_counts(list(pregnancies_by_key.values()), start_dt, end_dt)
-        pregnancy_outcomes_totals = _windowed_counts(
-            list(pregnancy_outcomes_by_key.values()), start_dt, end_dt
-        )
-        deaths_totals = _windowed_counts(list(deaths_by_key.values()), start_dt, end_dt)
-        vas_totals = _windowed_counts(list(vas_by_key.values()), start_dt, end_dt)
-
-    household_keys_total = {
-        key
-        for key, ts in households_by_key.items()
-        if (start_dt is None or ts >= start_dt) and ts <= end_dt
-    }
-    household_keys_today = {
-        key
-        for key, ts in households_by_key.items()
-        if ts <= end_dt
-        and ts >= max(
-            end_dt - timedelta(days=1),
-            start_dt or datetime.min.replace(tzinfo=end_dt.tzinfo),
-        )
-    }
-    household_keys_week = {
-        key
-        for key, ts in households_by_key.items()
-        if ts <= end_dt
-        and ts >= max(
-            end_dt - timedelta(days=7),
-            start_dt or datetime.min.replace(tzinfo=end_dt.tzinfo),
-        )
-    }
-
-    with timed_block("home.nov.people_aggregate", request=request):
-        people_total = (
-            HouseholdMember.objects.filter(household__key__in=list(household_keys_total)).count()
-            if household_keys_total
-            else 0
-        )
-        people_today = (
-            HouseholdMember.objects.filter(household__key__in=list(household_keys_today)).count()
-            if household_keys_today
-            else 0
-        )
-        people_week = (
-            HouseholdMember.objects.filter(household__key__in=list(household_keys_week)).count()
-            if household_keys_week
-            else 0
-        )
-
-    if include_chart_series:
-        with timed_block("home.nov.chart_series", request=request):
-            chart_data = _build_chart_series(
-                list(pregnancies_by_key.values()),
-                list(pregnancy_outcomes_by_key.values()),
-                list(deaths_by_key.values()),
-                list(vas_by_key.values()),
-                start_dt,
-                end_dt,
-            )
-    else:
-        chart_data = {"labels": [], "pregnancy": [], "pregnancy_outcome": [], "death": [], "va": []}
-
-    kpis = {
-        "eas": eas_totals,
-        "households": households_totals,
-        "people": {"today": people_today, "week": people_week, "total": people_total},
-        "pregnancies": pregnancies_totals,
-        "preg_outcomes": pregnancy_outcomes_totals,
-        "deaths": deaths_totals,
-        "vas": vas_totals,
-    }
-
-    return {
-        "chart_labels": chart_data["labels"],
-        "pregnancy_values": chart_data["pregnancy"],
-        "pregnancy_outcome_values": chart_data["pregnancy_outcome"],
-        "death_values": chart_data["death"],
-        "va_values": chart_data["va"],
-        "kpis": kpis,
-    }
-
-
-HOME_FASTPATH_CACHE_TTL_SECONDS = 10 * 60
-HOME_FASTPATH_TABLE_CACHE_TTL_SECONDS = 5 * 60
-
-
-def _get_cached_nov_payload(request):
-    preset, start_dt, end_dt, has_custom_range = _parse_filter_range(request)
-    location_level, location_value = _parse_location_filter(request)
-    extra = {
-        "component": "nov_bundle",
-        "location_level": location_level,
-        "location_value": location_value,
-    }
-    cache_key = _fastpath_cache_key("nov_bundle", request, extra=extra)
-    cached_payload = cache.get(cache_key)
-    if cached_payload is not None:
-        return cached_payload
-
-    payload = _get_national_operational_view_data(
-        start_dt=start_dt,
-        end_dt=end_dt,
-        request=request,
-        location_level=location_level,
-        location_value=location_value,
-        include_chart_series=True,
-    )
-    cache.set(cache_key, payload, timeout=HOME_FASTPATH_CACHE_TTL_SECONDS)
-    return payload
-
-
-def _get_cached_home_kpis(request):
-    extra = {"component": "kpis"}
-    cache_key = _fastpath_cache_key("home_dashboard_kpis", request, extra=extra)
-    cached_payload = cache.get(cache_key)
-    if cached_payload is not None:
-        return cached_payload
-
-    _preset, start_dt, end_dt, _has_custom_range = _parse_filter_range(request)
-    location_level, location_value = _parse_location_filter(request)
-    payload = _get_national_operational_view_data(
-        start_dt=start_dt,
-        end_dt=end_dt,
-        request=request,
-        location_level=location_level,
-        location_value=location_value,
-        include_chart_series=False,
-    ).get("kpis", {})
-    cache.set(cache_key, payload, timeout=HOME_FASTPATH_CACHE_TTL_SECONDS)
-    return payload
-
-
-def _get_cached_home_chart_bundle(request):
-    extra = {"component": "overview_chart"}
-    cache_key = _fastpath_cache_key("home_dashboard_chart_bundle", request, extra=extra)
-    cached_payload = cache.get(cache_key)
-    if cached_payload is not None:
-        return cached_payload
-
-    nov_payload = _get_cached_nov_payload(request)
-    chart_payload = {
-        "labels": nov_payload.get("chart_labels", []),
-        "pregnancy": nov_payload.get("pregnancy_values", []),
-        "pregnancy_outcome": nov_payload.get("pregnancy_outcome_values", []),
-        "death": nov_payload.get("death_values", []),
-        "va": nov_payload.get("va_values", []),
-    }
-    cache.set(cache_key, chart_payload, timeout=HOME_FASTPATH_CACHE_TTL_SECONDS)
-    return chart_payload
-
-
-def _get_cached_trends_bundle(request, *, include_va=True, include_model=True):
-    cache_key = _fastpath_cache_key(
-        "home_trends_bundle",
-        request,
-        extra={
-            "component": "trends",
-            "schema_version": 2,
-            "include_va": int(include_va),
-            "include_model": int(include_model),
-        },
-    )
-    cached_payload = cache.get(cache_key)
-    if cached_payload is not None:
-        return cached_payload
-
-    va_table = {}
-    graphs = {}
-    issue_list = []
-    indeterminate_cod_list = []
-    additional_issues = 0
-    additional_indeterminate_cods = 0
-    model_trends = {}
-
-    if include_va:
-        with timed_block("home.trends.va_trends_data", request=request):
-            (
-                va_table,
-                graphs,
-                issue_list,
-                indeterminate_cod_list,
-                additional_issues,
-                additional_indeterminate_cods,
-            ) = get_trends_data(request.user)
-
-    if include_model:
-        with timed_block("home.trends.model_trends_data", request=request):
-            model_trends = get_model_trends_data(request.user)
-
-    payload = {
-        "vaTable": va_table,
-        "graphs": graphs,
-        "issueList": issue_list,
-        "indeterminateCodList": indeterminate_cod_list,
-        "additionalIssues": additional_issues,
-        "additionalIndeterminateCods": additional_indeterminate_cods,
-        "isFieldWorker": request.user.is_fieldworker(),
-        "modelTrends": model_trends,
-    }
-    cache.set(cache_key, payload, timeout=HOME_FASTPATH_TABLE_CACHE_TTL_SECONDS)
-    return payload
 
 
 class Index(CustomAuthMixin, TemplateView):
@@ -1000,7 +106,7 @@ class Trends(CustomAuthMixin, View):
         )
 
 
-trends_endpoint_view = Trends.as_view()
+trends_endpoint_view = transaction.non_atomic_requests(Trends.as_view())
 
 
 class NationalOperationalFilterData(CustomAuthMixin, View):
@@ -1014,7 +120,9 @@ class NationalOperationalFilterData(CustomAuthMixin, View):
         return JsonResponse(payload)
 
 
-national_operational_filter_data_view = NationalOperationalFilterData.as_view()
+national_operational_filter_data_view = transaction.non_atomic_requests(
+    NationalOperationalFilterData.as_view()
+)
 
 
 class HomeOverviewMapData(CustomAuthMixin, View):
@@ -1022,7 +130,19 @@ class HomeOverviewMapData(CustomAuthMixin, View):
         cache_key = _fastpath_cache_key(
             "home_overview_map_data",
             request,
-            extra={"component": "overview_map", "schema_version": 2},
+            extra={
+                "component": "overview_map",
+                "schema_version": 3,
+                "time_preset": request.GET.get("time_preset", ""),
+                "start_datetime": request.GET.get("start_datetime", ""),
+                "end_datetime": request.GET.get("end_datetime", ""),
+                "map_view": request.GET.get("map_view", ""),
+                "geography_level": request.GET.get("geography_level", ""),
+                "geography_value": request.GET.get("geography_value", ""),
+                "include_gps_points": request.GET.get("include_gps_points", ""),
+                "gps_limit": request.GET.get("gps_limit", ""),
+                "gps_offset": request.GET.get("gps_offset", ""),
+            },
         )
         payload = cache.get(cache_key)
         if payload is None:
@@ -1031,7 +151,1257 @@ class HomeOverviewMapData(CustomAuthMixin, View):
         return JsonResponse(payload)
 
 
-home_overview_map_data_view = HomeOverviewMapData.as_view()
+home_overview_map_data_view = transaction.non_atomic_requests(
+    HomeOverviewMapData.as_view()
+)
+
+
+# ---------------------------------------------------------------------------
+# Rumor Details - real CSA Daily Tracker implementation
+# ---------------------------------------------------------------------------
+
+RUMOR_SOURCE_LABELS = {
+    "01": "Social Media",
+    "1": "Social Media",
+    "02": "Community Group",
+    "2": "Community Group",
+    "03": "Offline Media",
+    "3": "Offline Media",
+    "04": "Other",
+    "4": "Other",
+}
+
+_RUMOR_POSITIVE = {"01", "1", "yes", "true"}
+_RUMOR_NEGATIVE = {"02", "0", "2", "no", "false"}
+
+
+def _is_rumor_positive(value):
+    v = (value or "").strip().lower()
+    return v in _RUMOR_POSITIVE
+
+
+def _rumor_date_str(row):
+    """Return the best available date string for a CSADailyTracker row dict."""
+    for field in ("today", "submissiondate", "start"):
+        val = row.get(field)
+        if val and str(val).strip() not in {"", "nan", "none", "null"}:
+            return str(val).strip()
+    return None
+
+
+def _parse_rumor_date(value):
+    if not value:
+        return None
+    raw = str(value).strip()
+    if not raw or raw.lower() in {"nan", "none", "null", "nat"}:
+        return None
+    dt = django_parse_datetime(raw.replace("Z", "+00:00"))
+    if dt:
+        return timezone.localtime(dt).date() if timezone.is_aware(dt) else dt.date()
+    d = django_parse_date(raw[:10])
+    return d
+
+
+def _build_csa_rumor_filter_state(request):
+    time_preset = (request.GET.get("time_preset") or "all_time").strip()
+    if time_preset not in {
+        "all_time",
+        "last_30_days",
+        "last_7_days",
+        "last_24_hours",
+        "custom",
+    }:
+        time_preset = "all_time"
+    map_view = (request.GET.get("map_view") or "Province").strip().title()
+    if map_view not in {"Province", "District", "Constituency", "Ward", "Ea", "EA"}:
+        map_view = "Province"
+    if map_view == "Ea":
+        map_view = "EA"
+    return {
+        "time_preset": time_preset,
+        "start_datetime": (request.GET.get("start_datetime") or "").strip(),
+        "end_datetime": (request.GET.get("end_datetime") or "").strip(),
+        "map_view": map_view,
+        "geography_level": (request.GET.get("geography_level") or "").strip().lower(),
+        "geography_value": (
+            request.GET.get("geography_value")
+            or request.GET.get("geography")
+            or request.GET.get("location")
+            or ""
+        ).strip(),
+    }
+
+
+def _csa_rumor_filter_window(filter_state):
+    """Resolve a (start_dt, end_dt) window from the filter state.
+
+    Returns (None, None) for the all_time preset or unparseable custom dates.
+    """
+    now = timezone.localtime(timezone.now())
+    preset = filter_state.get("time_preset")
+    if preset == "last_30_days":
+        return now - timedelta(days=30), now
+    if preset == "last_7_days":
+        return now - timedelta(days=7), now
+    if preset == "last_24_hours":
+        return now - timedelta(hours=24), now
+    if preset == "custom":
+        start_dt = end_dt = None
+        raw_start = filter_state.get("start_datetime") or ""
+        raw_end = filter_state.get("end_datetime") or ""
+        if raw_start:
+            d = django_parse_date(raw_start)
+            if d:
+                start_dt = timezone.make_aware(datetime.combine(d, time.min))
+        if raw_end:
+            d = django_parse_date(raw_end)
+            if d:
+                end_dt = timezone.make_aware(datetime.combine(d, time.max))
+        return start_dt, end_dt
+    return None, None
+
+
+def _build_csa_rumor_queryset(request):
+    qs = CSADailyTracker.objects.all()
+    qs = restrict_queryset_to_user_locations(qs, getattr(request, "user", None))
+
+    # Filter to only positive rumor reports
+    qs = qs.filter(rum__iregex=r"^(01|1|yes|true)$")
+
+    filter_state = _build_csa_rumor_filter_state(request)
+
+    # Geography drill-down
+    geo_field_map = {
+        "province": "province",
+        "district": "district",
+        "constituency": "constituency",
+        "ward": "ward",
+        "ea": "ea",
+    }
+    geo_level = filter_state["geography_level"]
+    geo_value = filter_state["geography_value"]
+    if geo_field_map.get(geo_level) and geo_value:
+        qs = qs.filter(**{f"{geo_field_map[geo_level]}__iexact": geo_value})
+
+    # Date range filter using today → submissiondate → start
+    start_dt, end_dt = _csa_rumor_filter_window(filter_state)
+
+    if start_dt or end_dt:
+        date_fields = ("today", "submissiondate", "start")
+        if start_dt:
+            tok = start_dt.strftime("%Y-%m-%d")
+            sq = Q()
+            for f in date_fields:
+                sq |= Q(**{f"{f}__gte": tok})
+            qs = qs.filter(sq)
+        if end_dt:
+            tok = (end_dt + timedelta(days=1)).strftime("%Y-%m-%d")
+            sq = Q()
+            for f in date_fields:
+                sq |= Q(**{f"{f}__lt": tok})
+            qs = qs.filter(sq)
+
+    return qs
+
+
+def _build_rumor_summary_data(qs):
+    agg = qs.aggregate(
+        total=Count("pk"),
+        latest_today=Max("today"),
+        latest_sub=Max("submissiondate"),
+    )
+    total = agg.get("total") or 0
+    latest_date = agg.get("latest_today") or agg.get("latest_sub")
+    if latest_date:
+        d = _parse_rumor_date(latest_date)
+        latest_str = d.strftime("%Y-%m-%d") if d else "N/A"
+    else:
+        latest_str = "N/A"
+
+    provinces = (
+        qs.exclude(province__isnull=True)
+        .exclude(province="")
+        .values_list("province", flat=True)
+        .distinct()
+        .count()
+    )
+    districts = (
+        qs.exclude(district__isnull=True)
+        .exclude(district="")
+        .values_list("district", flat=True)
+        .distinct()
+        .count()
+    )
+    eas = (
+        qs.exclude(ea__isnull=True)
+        .exclude(ea="")
+        .values_list("ea", flat=True)
+        .distinct()
+        .count()
+    )
+    enumerators = (
+        qs.exclude(enumerator__isnull=True)
+        .exclude(enumerator="")
+        .values_list("enumerator", flat=True)
+        .distinct()
+        .count()
+    )
+    with_gps = (
+        qs.exclude(hh_gps_latitude__isnull=True).exclude(hh_gps_latitude="").count()
+    )
+    missing_gps = total - with_gps
+
+    source_row = (
+        qs.exclude(sorce_rum__isnull=True)
+        .exclude(sorce_rum="")
+        .values("sorce_rum")
+        .annotate(n=Count("pk"))
+        .order_by("-n")
+        .first()
+    )
+    top_source_code = (source_row or {}).get("sorce_rum") or ""
+    top_source = RUMOR_SOURCE_LABELS.get(top_source_code, top_source_code or "Unknown")
+
+    gps_coverage_pct = round(with_gps * 100 / total) if total else 0
+
+    total_affected = 0
+    for ru_num_val in (
+        qs.exclude(ru_num__isnull=True)
+        .exclude(ru_num="")
+        .values_list("ru_num", flat=True)
+        .iterator()
+    ):
+        with suppress(TypeError, ValueError):
+            total_affected += int(float(ru_num_val))
+
+    days_since_last = None
+    if latest_date:
+        d = _parse_rumor_date(latest_date)
+        if d:
+            days_since_last = (timezone.localdate() - d).days
+
+    return {
+        "card_last_data_update": latest_str,
+        "card_number_of_events": total,
+        "card_provinces_reporting": provinces,
+        "card_districts_reporting": districts,
+        "card_eas_reporting": eas,
+        "card_enumerators": enumerators,
+        "card_with_gps": with_gps,
+        "card_missing_gps": missing_gps,
+        "card_top_source": top_source,
+        "card_gps_coverage_pct": gps_coverage_pct,
+        "card_total_affected": total_affected,
+        "card_days_since_last": days_since_last,
+    }
+
+
+def _build_rumor_trend_data(qs):
+    month_rows = (
+        qs.exclude(today__isnull=True)
+        .exclude(today="")
+        .exclude(today__iexact="nan")
+        .exclude(today__iexact="none")
+        .filter(today__regex=r"^\d{4}-\d{2}-\d{2}")
+        .annotate(month_key=Substr("today", 1, 7))
+        .values("month_key")
+        .annotate(count=Count("pk"))
+        .order_by("month_key")
+    )
+    labels, counts = [], []
+    for row in month_rows:
+        mk = row.get("month_key") or ""
+        try:
+            labels.append(datetime.strptime(mk, "%Y-%m").strftime("%b %Y"))
+            counts.append(row["count"])
+        except ValueError:
+            continue
+    return labels, counts
+
+
+def _normalize_rumor_description(value):
+    raw = re.sub(r"\s+", " ", str(value or "")).strip()
+    if not raw or raw.lower() in {"nan", "none", "null", "nat"}:
+        return ""
+    return raw
+
+
+def _build_top_rumors_trend_data(qs, *, top_n=5):
+    totals = Counter()
+    trend_counts = defaultdict(Counter)
+    month_keys = set()
+
+    for row in qs.values("desci", "today", "submissiondate", "start").iterator():
+        rumor = _normalize_rumor_description(row.get("desci"))
+        if not rumor:
+            continue
+        event_date = _parse_rumor_date(_rumor_date_str(row))
+        if not event_date:
+            continue
+        month_key = event_date.strftime("%Y-%m")
+        totals[rumor] += 1
+        trend_counts[rumor][month_key] += 1
+        month_keys.add(month_key)
+
+    ordered_months = sorted(month_keys)
+    labels = [
+        datetime.strptime(month_key, "%Y-%m").strftime("%b %Y")
+        for month_key in ordered_months
+    ]
+    series = [
+        {
+            "name": rumor,
+            "values": [
+                trend_counts[rumor].get(month_key, 0) for month_key in ordered_months
+            ],
+        }
+        for rumor, _count in totals.most_common(top_n)
+    ]
+    return {
+        "has_rumors": bool(series),
+        "labels": labels,
+        "periods": labels,
+        "series": series,
+    }
+
+
+def _build_rumor_source_distribution(qs):
+    source_rows = (
+        qs.exclude(sorce_rum__isnull=True)
+        .exclude(sorce_rum="")
+        .values("sorce_rum")
+        .annotate(count=Count("pk"))
+        .order_by("-count")
+    )
+    labels, counts = [], []
+    for row in source_rows:
+        code = (row.get("sorce_rum") or "").strip()
+        label = RUMOR_SOURCE_LABELS.get(code, f"Other ({code})" if code else "Unknown")
+        labels.append(label)
+        counts.append(row.get("count") or 0)
+    # Add Unknown bucket for null/empty
+    unknown_count = qs.filter(Q(sorce_rum__isnull=True) | Q(sorce_rum="")).count()
+    if unknown_count:
+        labels.append("Unknown")
+        counts.append(unknown_count)
+    return labels, counts
+
+
+def _build_rumor_completeness_stats(qs):
+    today_date = timezone.localdate()
+    total = qs.count()
+
+    def _recent(days):
+        cutoff = (today_date - timedelta(days=days)).strftime("%Y-%m-%d")
+        return qs.filter(Q(today__gte=cutoff) | Q(submissiondate__gte=cutoff)).count()
+
+    missing_gps = qs.filter(
+        Q(hh_gps_latitude__isnull=True) | Q(hh_gps_latitude="")
+    ).count()
+    missing_desc = qs.filter(Q(desci__isnull=True) | Q(desci="")).count()
+    missing_source = qs.filter(Q(sorce_rum__isnull=True) | Q(sorce_rum="")).count()
+
+    return {
+        "total": total,
+        "recent_7_days": _recent(7),
+        "recent_30_days": _recent(30),
+        "with_gps": total - missing_gps,
+        "missing_gps": missing_gps,
+        "missing_description": missing_desc,
+        "missing_source": missing_source,
+    }
+
+
+def _build_rumor_map_payload(request):
+    from va_explorer.va_analytics.views import _build_map_hierarchy_counts
+
+    filter_state = _build_csa_rumor_filter_state(request)
+    filtered_qs = _build_csa_rumor_queryset(request)
+    hierarchy = _build_map_hierarchy_counts(filtered_qs)
+    province_counts = [
+        {"name": r.get("province_name") or "", "count": r.get("count") or 0}
+        for r in hierarchy["map_province_sums"]
+    ]
+    district_counts = [
+        {"name": r.get("district_name") or "", "count": r.get("count") or 0}
+        for r in hierarchy["map_district_sums"]
+    ]
+    constituency_counts = [
+        {"name": r.get("constituency_name") or "", "count": r.get("count") or 0}
+        for r in hierarchy["map_constituency_sums"]
+    ]
+    ward_counts = [
+        {"name": r.get("ward_name") or "", "count": r.get("count") or 0}
+        for r in hierarchy["map_ward_sums"]
+    ]
+    ea_counts = [
+        {"name": r.get("ea_name") or "", "count": r.get("count") or 0}
+        for r in hierarchy["map_ea_sums"]
+    ]
+    counts_by_view = {
+        "Province": province_counts,
+        "District": district_counts,
+        "Constituency": constituency_counts,
+        "Ward": ward_counts,
+        "EA": ea_counts,
+    }
+
+    # GPS points – CSADailyTracker has separate lat/lng columns; build them here.
+    user = getattr(request, "user", None)
+    gps_points = []
+    if user and user.is_authenticated and user.has_perm("va_analytics.view_pii"):
+        gps_qs = (
+            filtered_qs.exclude(hh_gps_latitude__isnull=True)
+            .exclude(hh_gps_latitude="")
+            .exclude(hh_gps_longitude__isnull=True)
+            .exclude(hh_gps_longitude="")
+            .values(
+                "hh_gps_latitude",
+                "hh_gps_longitude",
+                "province",
+                "district",
+                "constituency",
+                "ward",
+                "ea",
+                "enumerator",
+                "today",
+                "submissiondate",
+                "sorce_rum",
+                "other_rum",
+                "desci",
+                "ru_num",
+            )[:2000]
+        )
+        for row in gps_qs:
+            try:
+                lat = float(row["hh_gps_latitude"])
+                lng = float(row["hh_gps_longitude"])
+            except (TypeError, ValueError):
+                continue
+            report_date = _parse_rumor_date(
+                row.get("today") or row.get("submissiondate")
+            )
+            source_code = (row.get("sorce_rum") or "").strip()
+            gps_points.append(
+                {
+                    "lat": lat,
+                    "lng": lng,
+                    "province": row.get("province") or "",
+                    "district": row.get("district") or "",
+                    "constituency": row.get("constituency") or "",
+                    "ward": row.get("ward") or "",
+                    "ea": row.get("ea") or "",
+                    "enumerator": row.get("enumerator") or "",
+                    "report_date": (
+                        report_date.strftime("%Y-%m-%d") if report_date else ""
+                    ),
+                    "rumor_source_code": source_code,
+                    "rumor_source_label": RUMOR_SOURCE_LABELS.get(
+                        source_code, source_code or "Unknown"
+                    ),
+                    "other_rum": row.get("other_rum") or "",
+                    "desci": row.get("desci") or "",
+                    "ru_num": row.get("ru_num") or "",
+                }
+            )
+
+    payload = {
+        "map_view": filter_state["map_view"],
+        "counts": counts_by_view.get(filter_state["map_view"], province_counts),
+        "province_counts": province_counts,
+        "district_counts": district_counts,
+        "constituency_counts": constituency_counts,
+        "ward_counts": ward_counts,
+        "ea_counts": ea_counts,
+        "gps_points": gps_points,
+        "gps_total": len(gps_points),
+        "gps_truncated": False,
+        "gps_pii_denied": not (
+            user and user.is_authenticated and user.has_perm("va_analytics.view_pii")
+        ),
+        **hierarchy,
+    }
+    return payload
+
+
+# Category inference taxonomy for description table
+_RUMOR_CATEGORY_PATTERNS = [
+    (
+        "Vaccine / Immunization",
+        re.compile(r"vaccin|immuniz|immunis|injection|\bjab\b", re.I),
+    ),
+    (
+        "Disease Outbreak",
+        re.compile(
+            r"outbreak|epidemic|cholera|malaria|typhoid|infect|ebola|covid|spread", re.I
+        ),
+    ),
+    (
+        "Death / Mortality",
+        re.compile(r"\bdeath\b|\bdied\b|\bdead\b|\bkilled\b|fatal|mortalit", re.I),
+    ),
+    ("Family / Household", re.compile(r"family|household|child|children|parent", re.I)),
+    (
+        "Water / Sanitation",
+        re.compile(r"\bwater\b|sanitat|hygiene|\btoilet\b|sewage|contamin", re.I),
+    ),
+    (
+        "Food / Nutrition",
+        re.compile(r"\bfood\b|hunger|nutrition|poison|toxic|malnutri", re.I),
+    ),
+    (
+        "Health Facility",
+        re.compile(
+            r"hospital|clinic|\bnurse\b|\bdoctor\b|health cent|medicine|treatment", re.I
+        ),
+    ),
+]
+
+_SOURCE_DISPLAY_LABELS = {
+    "Social Media": "Social Media",
+    "Community Group": "Community Group",
+    "Offline Media": "Offline Media",
+    "Other": "Other",
+}
+_SOURCE_COLORS = {
+    "Social Media": "#4e79a7",
+    "Community Group": "#f28e2b",
+    "Offline Media": "#59a14f",
+    "Other": "#e15759",
+    "Unknown": "#9ca3af",
+}
+
+_RUMOR_SENTIMENT_HIGH_RE = re.compile(
+    r"outbreak|epidemic|\bdeath\b|\bdied\b|\bdead\b|\bkilled\b|fatal|panic"
+    r"|danger|emergenc|spread|cholera|ebola|covid|crisis|alert",
+    re.I,
+)
+_RUMOR_SENTIMENT_MOD_RE = re.compile(
+    r"\bsick\b|hospital|worr|medic|infect|treatment|warning|concern"
+    r"|illness|clinic|\bnurse\b|\bdoctor\b|symptom|fever|\bpain\b",
+    re.I,
+)
+
+# Word cloud clustering parameters
+_WC_TOP_N_PHRASES = 150
+_WC_MAX_NODES = 60
+_WC_CLUSTER_THRESHOLD = 75
+_WC_EDGE_THRESHOLD = 40
+_WC_NOISE_RE = re.compile(r"[^\w\s\-]")
+_WC_SKIP_VALUES = {"", "nan", "none", "null", "nat", "n/a", "na"}
+
+
+def _infer_rumor_category(text):
+    if not text:
+        return "General Concern"
+    for name, pattern in _RUMOR_CATEGORY_PATTERNS:
+        if pattern.search(text):
+            return name
+    return "General Concern"
+
+
+def _wc_token_sort_ratio(a, b):
+    try:
+        from rapidfuzz import fuzz as rf
+
+        return rf.token_sort_ratio(a, b)
+    except Exception:
+        ta = " ".join(sorted(a.split()))
+        tb = " ".join(sorted(b.split()))
+        return int(difflib.SequenceMatcher(None, ta, tb).ratio() * 100)
+
+
+def _wc_token_set_ratio(a, b):
+    try:
+        from rapidfuzz import fuzz as rf
+
+        return rf.token_set_ratio(a, b)
+    except Exception:
+        set_a, set_b = set(a.split()), set(b.split())
+        shared = set_a & set_b
+        if not shared:
+            return 0
+        return int(len(shared) / max(len(set_a), len(set_b)) * 100)
+
+
+def _build_rumor_word_cloud_data(qs, *, max_nodes=_WC_MAX_NODES):
+    raw_counts: Counter = Counter()
+    for (desci,) in (
+        qs.exclude(desci__isnull=True).exclude(desci="").values_list("desci").iterator()
+    ):
+        norm = re.sub(
+            r"\s+", " ", _WC_NOISE_RE.sub(" ", (desci or "").strip().lower())
+        ).strip()
+        if not norm or norm in _WC_SKIP_VALUES or len(norm) < 3:
+            continue
+        raw_counts[norm] += 1
+
+    total_events = sum(raw_counts.values())
+    if not raw_counts:
+        return {"nodes": [], "edges": [], "total_events": 0, "has_data": False}
+
+    top_phrases = [p for p, _ in raw_counts.most_common(_WC_TOP_N_PHRASES)]
+
+    # Union-Find clustering
+    parent = {p: p for p in top_phrases}
+
+    def _find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def _union(a, b):
+        parent[_find(a)] = _find(b)
+
+    for i, p1 in enumerate(top_phrases):
+        for p2 in top_phrases[i + 1 :]:
+            if _wc_token_sort_ratio(p1, p2) >= _WC_CLUSTER_THRESHOLD:
+                _union(p1, p2)
+
+    clusters: dict = defaultdict(list)
+    for phrase in top_phrases:
+        clusters[_find(phrase)].append(phrase)
+
+    nodes = []
+    for members in clusters.values():
+        canonical = max(members, key=lambda p: raw_counts[p])
+        freq = sum(raw_counts[p] for p in members)
+        variants = sorted(
+            (p for p in members if p != canonical), key=lambda p: -raw_counts[p]
+        )[:5]
+        nodes.append(
+            {
+                "id": canonical,
+                "label": canonical.title(),
+                "frequency": freq,
+                "pct": round(freq / total_events * 100, 1) if total_events else 0.0,
+                "variants": variants,
+                "category": _infer_rumor_category(canonical),
+            }
+        )
+
+    nodes.sort(key=lambda n: -n["frequency"])
+    nodes = nodes[:max_nodes]
+    node_ids = [n["id"] for n in nodes]
+
+    edges = []
+    for i, src in enumerate(node_ids):
+        for tgt in node_ids[i + 1 :]:
+            score = _wc_token_set_ratio(src, tgt)
+            if score >= _WC_EDGE_THRESHOLD:
+                edges.append(
+                    {"source": src, "target": tgt, "weight": round(score / 100, 3)}
+                )
+
+    return {
+        "nodes": nodes,
+        "edges": edges,
+        "total_events": total_events,
+        "has_data": True,
+    }
+
+
+def _build_rumor_source_by_province(qs):
+    province_choices = _get_csa_tracker_choice_label_map("province")
+    rows = (
+        qs.exclude(province__isnull=True)
+        .exclude(province="")
+        .values("province", "sorce_rum")
+        .annotate(count=Count("pk"))
+        .order_by("province")
+    )
+    data_map = {}
+    for row in rows:
+        prov = _resolve_csa_tracker_choice_label(province_choices, row["province"])
+        code = (row.get("sorce_rum") or "").strip()
+        label = RUMOR_SOURCE_LABELS.get(code, "Unknown")
+        data_map.setdefault(prov, Counter())[label] += row["count"]
+
+    provinces = sorted(data_map.keys())
+    seen_labels, all_labels = set(), []
+    for code in ["01", "02", "03", "04"]:
+        lbl = RUMOR_SOURCE_LABELS[code]
+        if lbl not in seen_labels:
+            seen_labels.add(lbl)
+            all_labels.append(lbl)
+    if any("Unknown" in data_map[p] for p in provinces):
+        all_labels.append("Unknown")
+
+    series = [
+        {
+            "label": lbl,
+            "data": [data_map.get(p, Counter()).get(lbl, 0) for p in provinces],
+            "backgroundColor": _SOURCE_COLORS.get(lbl, "#999"),
+        }
+        for lbl in all_labels
+        if any(data_map.get(p, Counter()).get(lbl, 0) > 0 for p in provinces)
+    ]
+    return {"provinces": provinces, "series": series}
+
+
+def _build_rumor_affected_population(qs):
+    rows = (
+        qs.exclude(today__isnull=True)
+        .exclude(today="")
+        .exclude(today__iexact="nan")
+        .exclude(today__iexact="none")
+        .filter(today__regex=r"^\d{4}-\d{2}-\d{2}")
+        .annotate(month_key=Substr("today", 1, 7))
+        .values("month_key", "ru_num")
+        .order_by("month_key")
+    )
+    month_events: Counter = Counter()
+    month_affected: Counter = Counter()
+    for row in rows:
+        mk = row.get("month_key") or ""
+        if not mk:
+            continue
+        month_events[mk] += 1
+        with suppress(TypeError, ValueError):
+            month_affected[mk] += int(float(row.get("ru_num") or 0))
+
+    ordered_months = sorted(set(month_events) | set(month_affected))
+    labels, event_counts, affected_counts = [], [], []
+    for mk in ordered_months:
+        try:
+            labels.append(datetime.strptime(mk, "%Y-%m").strftime("%b %Y"))
+        except ValueError:
+            continue
+        event_counts.append(month_events[mk])
+        affected_counts.append(month_affected[mk])
+    return {
+        "labels": labels,
+        "event_counts": event_counts,
+        "affected_counts": affected_counts,
+    }
+
+
+def _normalize_odk_lookup_value(value):
+    text = str(value or "").strip()
+    if re.fullmatch(r"\d+", text):
+        return str(int(text))  # strips leading zeros (e.g. "01" → "1")
+    if re.fullmatch(r"\d+\.0+", text):
+        return str(int(text.split(".", 1)[0]))  # handles ODK exports like "01.0"
+    return text
+
+
+def _get_csa_tracker_choice_label_map(field_name):
+    lookup = {}
+    for row in (
+        ODKFormChoice.objects.filter(field_name=field_name)
+        .order_by("id")
+        .values("value", "label")
+    ):
+        key = _normalize_odk_lookup_value(row["value"])
+        if key and key not in lookup:
+            lookup[key] = (row["label"] or "").strip()
+    return lookup
+
+
+def _resolve_csa_tracker_choice_label(choice_map, raw_value):
+    raw_text = str(raw_value or "").strip()
+    if not raw_text:
+        return ""
+    normalized = _normalize_odk_lookup_value(raw_text)
+    label = choice_map.get(normalized)
+    if label:
+        return label
+    return raw_text.replace("_", " ")
+
+
+def _build_rumor_location_stats(qs, *, top_n=5):
+    district_choices = _get_csa_tracker_choice_label_map("district")
+    constituency_choices = _get_csa_tracker_choice_label_map("constituency")
+    ward_choices = _get_csa_tracker_choice_label_map("ward")
+    rows = (
+        qs.exclude(district__isnull=True)
+        .exclude(district="")
+        .exclude(district__iexact="nan")
+        .exclude(district__iexact="none")
+        .exclude(district__iexact="null")
+        .exclude(district__iexact="nat")
+        .exclude(ward__isnull=True)
+        .exclude(ward="")
+        .exclude(ward__iexact="nan")
+        .exclude(ward__iexact="none")
+        .exclude(ward__iexact="null")
+        .exclude(ward__iexact="nat")
+        .values("district", "constituency", "ward")
+        .annotate(count=Count("pk"), last_reported=Max("today"))
+        .order_by("-count")
+    )
+
+    locations = {}
+    for row in rows:
+        district = _resolve_csa_tracker_choice_label(
+            district_choices, row.get("district")
+        )
+        constituency = _resolve_csa_tracker_choice_label(
+            constituency_choices, row.get("constituency")
+        )
+        ward = _resolve_csa_tracker_choice_label(ward_choices, row.get("ward"))
+        location_name = f"{district} - {constituency} - {ward}"
+        entry = locations.setdefault(
+            location_name,
+            {
+                "name": location_name,
+                "district": district,
+                "constituency": constituency,
+                "ward": ward,
+                "count": 0,
+                "last_reported": "",
+            },
+        )
+        entry["count"] += row["count"]
+        last_reported = row.get("last_reported") or ""
+        if last_reported > entry["last_reported"]:
+            entry["last_reported"] = last_reported
+
+    top_rows = sorted(
+        locations.values(), key=lambda row: (-row["count"], row["name"].lower())
+    )[:top_n]
+    return {
+        "rows": top_rows,
+    }
+
+
+def _build_rumor_gps_coverage_by_province(qs):
+    province_rows = (
+        qs.exclude(province__isnull=True)
+        .exclude(province="")
+        .values("province")
+        .annotate(
+            with_gps=Count(
+                "pk",
+                filter=Q(hh_gps_latitude__isnull=False) & ~Q(hh_gps_latitude=""),
+            ),
+            total=Count("pk"),
+        )
+        .order_by("-total")
+    )
+    provinces, with_gps, missing_gps = [], [], []
+    for row in province_rows:
+        provinces.append(row["province"])
+        wgps = row["with_gps"]
+        total = row["total"]
+        with_gps.append(wgps)
+        missing_gps.append(total - wgps)
+    return {"provinces": provinces, "with_gps": with_gps, "missing_gps": missing_gps}
+
+
+_VADER_ANALYZER = SentimentIntensityAnalyzer()
+_RUMOR_SKIP_TEXT_VALUES = {"nan", "none", "null", "nat"}
+
+# Matches text describing SRS programme objectives (verbal autopsy, mortality
+# surveillance, civil registration, etc.) and the broader subject matter the
+# programme tracks (birth, death, pregnancy, maternal/health). VADER scores
+# many of these terms as negative, but in this dataset they describe
+# operational/programmatic content, not concern.
+_SRS_DOMAIN_RE = re.compile(
+    # Programme structures and workflow vocabulary
+    r"\bverbal autopsy\b|\bautopsy\b|\bautopsies\b"
+    r"|\bmortality surveil|\bmortality data\b"
+    r"|\bcivil registr|\bdeath registr|\bbirth registr|\bCRVS\b"
+    r"|\bCSA\b|\bcommunity surveillance\b|\bMSO\b|\bRDM\b|\bSRS\b"
+    r"|\bsample.based registr|\bcause.of.death\b|\bcause of death\b"
+    r"|\bdeath certificate\b|\bcertificate\b|\bvital statistics\b|\bSDG\b|\bDNRPC\b"
+    r"|\binterva\b|\bodk\b|\bkobo\b"
+    # Subject matter the programme tracks (vital events, maternal/child health)
+    r"|\bbirth\b|\bbirths\b|\bdeath\b|\bdeaths\b"
+    r"|\bpregnan\w*|\bmaternal\b|\bhealth\b",
+    re.I,
+)
+
+# Domain text must exceed this VADER compound threshold to receive non-zero
+# sentiment. Keeps factually neutral programme language pinned to 0.
+_SRS_DOMAIN_SENTIMENT_THRESHOLD = 0.25
+
+
+def _rumor_sentiment_score_detail(text):
+    """Return (compound_score, is_srs_domain).
+
+    Rumors describing SRS programme activities (verbal autopsy, mortality
+    registration, CSA/MSO field work, etc.) are scored 0 unless the text
+    carries clear positive or negative connotation beyond the threshold.
+    Non-domain rumors use the raw VADER compound score.
+    """
+    if not text:
+        return 0.0, False
+    cleaned = text.strip()
+    if not cleaned or cleaned.lower() in _RUMOR_SKIP_TEXT_VALUES:
+        return 0.0, False
+    compound = float(_VADER_ANALYZER.polarity_scores(cleaned)["compound"])
+    is_domain = bool(_SRS_DOMAIN_RE.search(cleaned))
+    if is_domain and abs(compound) < _SRS_DOMAIN_SENTIMENT_THRESHOLD:
+        return 0.0, True
+    return compound, is_domain
+
+
+def _rumor_sentiment_score(text):
+    """Backwards-compatible wrapper returning the score only."""
+    return _rumor_sentiment_score_detail(text)[0]
+
+
+def _rumor_ru_num_int(value):
+    """Coerce ru_num (CharField) to a non-negative int; 0 on any failure."""
+    if value is None:
+        return 0
+    raw = str(value).strip()
+    if not raw or raw.lower() in _RUMOR_SKIP_TEXT_VALUES:
+        return 0
+    try:
+        n = int(float(raw))
+    except (TypeError, ValueError):
+        return 0
+    return max(0, n)
+
+
+def _rumor_source_label(sorce_rum, other_rum):
+    code = (sorce_rum or "").strip()
+    label = RUMOR_SOURCE_LABELS.get(code, "")
+    if label == "Other":
+        other = (other_rum or "").strip()
+        if other and other.lower() not in _RUMOR_SKIP_TEXT_VALUES:
+            return f"Other — {other}"
+    return label or "Unknown"
+
+
+def _build_rumor_sentiment_data(qs, *, filter_state=None):
+    """Per-rumor scatter points for the sentiment-over-time chart.
+
+    Each CSADailyTracker row that passes the filter becomes its own point
+    (no aggregation by description) so that more rumor reports render as
+    more dots, not fewer larger ones. Bubble size is driven separately by
+    `ru_num` (population affected) per the dashboard spec.
+
+    The response also carries:
+      - `counts` for a positive/neutral/negative summary
+      - `monthly_means` for a trendline overlay
+      - `range` so the chart x-axis can span the full filter window even
+        when some months have no points (surfacing reporting gaps)
+    """
+    points = []
+    rows = qs.values(
+        "pk",
+        "desci",
+        "ru_num",
+        "today",
+        "submissiondate",
+        "start",
+        "sorce_rum",
+        "other_rum",
+        "province",
+        "district",
+    ).iterator()
+
+    for row in rows:
+        desci = (row.get("desci") or "").strip()
+        if not desci or desci.lower() in _RUMOR_SKIP_TEXT_VALUES:
+            continue
+
+        parsed = _parse_rumor_date(_rumor_date_str(row))
+        if parsed is None:
+            continue
+
+        ru_num = _rumor_ru_num_int(row.get("ru_num"))
+        sentiment, is_srs_domain = _rumor_sentiment_score_detail(desci)
+        weighted = sentiment * math.log1p(ru_num)
+
+        points.append(
+            {
+                "id": row.get("pk"),
+                "date": parsed.strftime("%Y-%m-%d"),
+                "month": parsed.strftime("%Y-%m"),
+                "sentiment": round(sentiment, 4),
+                "weighted": round(weighted, 4),
+                "ru_num": ru_num,
+                "description": desci,
+                "category": _infer_rumor_category(desci),
+                "is_srs_domain": is_srs_domain,
+                "source": _rumor_source_label(
+                    row.get("sorce_rum"), row.get("other_rum")
+                ),
+                "province": (row.get("province") or "").strip(),
+                "district": (row.get("district") or "").strip(),
+            }
+        )
+
+    # Counts by sentiment sign (zero counts as neutral).
+    counts = {"positive": 0, "neutral": 0, "negative": 0}
+    monthly_buckets = defaultdict(list)
+    for p in points:
+        w = p["weighted"]
+        if w > 0:
+            counts["positive"] += 1
+        elif w < 0:
+            counts["negative"] += 1
+        else:
+            counts["neutral"] += 1
+        monthly_buckets[p["month"]].append(w)
+
+    monthly_means = []
+    for month_str in sorted(monthly_buckets.keys()):
+        values = monthly_buckets[month_str]
+        year, month = month_str.split("-")
+        x = int(year) * 12 + (int(month) - 1)
+        monthly_means.append(
+            {
+                "month": month_str,
+                "x": x,
+                "mean": round(sum(values) / len(values), 4),
+                "count": len(values),
+            }
+        )
+
+    # Range: prefer the filter window so empty months remain visible. Fall
+    # back to the observed point months for the all_time preset.
+    range_payload = {"start_month": None, "end_month": None}
+    start_dt, end_dt = (
+        _csa_rumor_filter_window(filter_state) if filter_state else (None, None)
+    )
+    if start_dt:
+        range_payload["start_month"] = start_dt.strftime("%Y-%m")
+    if end_dt:
+        range_payload["end_month"] = end_dt.strftime("%Y-%m")
+    if not range_payload["start_month"] and points:
+        range_payload["start_month"] = min(p["month"] for p in points)
+    if not range_payload["end_month"] and points:
+        range_payload["end_month"] = max(p["month"] for p in points)
+
+    return {
+        "points": points,
+        "total": len(points),
+        "has_data": bool(points),
+        "counts": counts,
+        "monthly_means": monthly_means,
+        "range": range_payload,
+    }
+
+
+def _build_rumor_description_table(qs, *, page=1, page_size=5):
+    ws_re = re.compile(r"\s+")
+    desc_data = {}
+    for row in (
+        qs.exclude(desci__isnull=True)
+        .exclude(desci="")
+        .values("desci", "sorce_rum")
+        .iterator()
+    ):
+        raw = (row.get("desci") or "").strip()
+        normalized = ws_re.sub(" ", raw).lower().strip()
+        if not normalized or normalized in {"nan", "none", "null", "nat"}:
+            continue
+        if normalized not in desc_data:
+            desc_data[normalized] = {"count": 0, "original": raw, "sources": Counter()}
+        desc_data[normalized]["count"] += 1
+        code = (row.get("sorce_rum") or "").strip()
+        desc_data[normalized]["sources"][RUMOR_SOURCE_LABELS.get(code, "Unknown")] += 1
+
+    sorted_items = sorted(
+        desc_data.items(), key=lambda kv: kv[1]["count"], reverse=True
+    )
+    page_size = 5
+    page = 1
+    page_slice = sorted_items[:page_size]
+    total_events = sum(entry["count"] for _norm, entry in sorted_items)
+
+    rows = []
+    for _norm, entry in page_slice:
+        top_source = (
+            entry["sources"].most_common(1)[0][0] if entry["sources"] else "Unknown"
+        )
+        rows.append(
+            {
+                "description": entry["original"],
+                "category": _infer_rumor_category(entry["original"]),
+                "count": entry["count"],
+                "pct": (
+                    round(entry["count"] * 100 / total_events, 1)
+                    if total_events
+                    else 0.0
+                ),
+                "source": top_source,
+            }
+        )
+    return {
+        "rows": rows,
+        "total_rows": len(rows),
+        "page": page,
+        "page_size": page_size,
+        "total_pages": 1,
+    }
+
+
+class RumorOverviewSummaryAPIView(CustomAuthMixin, View):
+    def get(self, request, *args, **kwargs):
+        return JsonResponse(
+            _build_rumor_summary_data(_build_csa_rumor_queryset(request))
+        )
+
+
+rumor_overview_summary_api_view = transaction.non_atomic_requests(
+    RumorOverviewSummaryAPIView.as_view()
+)
+
+
+class RumorOverviewTrendAPIView(CustomAuthMixin, View):
+    def get(self, request, *args, **kwargs):
+        labels, counts = _build_rumor_trend_data(_build_csa_rumor_queryset(request))
+        return JsonResponse({"labels": labels, "data": counts})
+
+
+rumor_overview_trend_api_view = transaction.non_atomic_requests(
+    RumorOverviewTrendAPIView.as_view()
+)
+
+
+class RumorOverviewTopRumorsTrendAPIView(CustomAuthMixin, View):
+    def get(self, request, *args, **kwargs):
+        return JsonResponse(
+            _build_top_rumors_trend_data(_build_csa_rumor_queryset(request))
+        )
+
+
+rumor_overview_top_rumors_trend_api_view = transaction.non_atomic_requests(
+    RumorOverviewTopRumorsTrendAPIView.as_view()
+)
+
+
+class RumorOverviewDetectionAPIView(CustomAuthMixin, View):
+    """Source distribution – kept on the 'detection' URL for API stability."""
+
+    def get(self, request, *args, **kwargs):
+        labels, counts = _build_rumor_source_distribution(
+            _build_csa_rumor_queryset(request)
+        )
+        return JsonResponse({"labels": labels, "data": counts})
+
+
+rumor_overview_detection_api_view = transaction.non_atomic_requests(
+    RumorOverviewDetectionAPIView.as_view()
+)
+
+
+class RumorOverviewFollowUpAPIView(CustomAuthMixin, View):
+    """Data completeness stats – kept on the 'follow-up' URL for API stability."""
+
+    def get(self, request, *args, **kwargs):
+        return JsonResponse(
+            _build_rumor_completeness_stats(_build_csa_rumor_queryset(request))
+        )
+
+
+rumor_overview_follow_up_api_view = transaction.non_atomic_requests(
+    RumorOverviewFollowUpAPIView.as_view()
+)
+
+
+class RumorOverviewMapAPIView(CustomAuthMixin, View):
+    def get(self, request, *args, **kwargs):
+        return JsonResponse(_build_rumor_map_payload(request))
+
+
+rumor_overview_map_api_view = transaction.non_atomic_requests(
+    RumorOverviewMapAPIView.as_view()
+)
+
+
+class RumorOverviewSourceByProvinceAPIView(CustomAuthMixin, View):
+    def get(self, request, *args, **kwargs):
+        return JsonResponse(
+            _build_rumor_source_by_province(_build_csa_rumor_queryset(request))
+        )
+
+
+rumor_overview_source_by_province_api_view = transaction.non_atomic_requests(
+    RumorOverviewSourceByProvinceAPIView.as_view()
+)
+
+
+class RumorOverviewAffectedPopulationAPIView(CustomAuthMixin, View):
+    def get(self, request, *args, **kwargs):
+        return JsonResponse(
+            _build_rumor_affected_population(_build_csa_rumor_queryset(request))
+        )
+
+
+rumor_overview_affected_population_api_view = transaction.non_atomic_requests(
+    RumorOverviewAffectedPopulationAPIView.as_view()
+)
+
+
+class RumorDetailsEnumeratorStatsAPIView(CustomAuthMixin, View):
+    def get(self, request, *args, **kwargs):
+        return JsonResponse(
+            _build_rumor_location_stats(_build_csa_rumor_queryset(request))
+        )
+
+
+rumor_details_enumerator_stats_api_view = transaction.non_atomic_requests(
+    RumorDetailsEnumeratorStatsAPIView.as_view()
+)
+
+
+class RumorOverviewGpsCoverageAPIView(CustomAuthMixin, View):
+    def get(self, request, *args, **kwargs):
+        return JsonResponse(
+            _build_rumor_gps_coverage_by_province(_build_csa_rumor_queryset(request))
+        )
+
+
+rumor_overview_gps_coverage_api_view = transaction.non_atomic_requests(
+    RumorOverviewGpsCoverageAPIView.as_view()
+)
+
+
+class RumorDetailsDescriptionTableAPIView(CustomAuthMixin, View):
+    def get(self, request, *args, **kwargs):
+        try:
+            page = max(1, int(request.GET.get("page", 1)))
+        except (TypeError, ValueError):
+            page = 1
+        try:
+            page_size = min(100, max(5, int(request.GET.get("page_size", 5))))
+        except (TypeError, ValueError):
+            page_size = 5
+        return JsonResponse(
+            _build_rumor_description_table(
+                _build_csa_rumor_queryset(request), page=page, page_size=page_size
+            )
+        )
+
+
+rumor_details_description_table_api_view = transaction.non_atomic_requests(
+    RumorDetailsDescriptionTableAPIView.as_view()
+)
+
+
+class RumorDetailsSentimentAPIView(CustomAuthMixin, View):
+    def get(self, request, *args, **kwargs):
+        return JsonResponse(
+            _build_rumor_sentiment_data(
+                _build_csa_rumor_queryset(request),
+                filter_state=_build_csa_rumor_filter_state(request),
+            )
+        )
+
+
+rumor_details_sentiment_api_view = transaction.non_atomic_requests(
+    RumorDetailsSentimentAPIView.as_view()
+)
+
+
+class RumorDetailsWordCloudAPIView(CustomAuthMixin, View):
+    def get(self, request, *args, **kwargs):
+        return JsonResponse(
+            _build_rumor_word_cloud_data(_build_csa_rumor_queryset(request))
+        )
+
+
+rumor_details_word_cloud_api_view = transaction.non_atomic_requests(
+    RumorDetailsWordCloudAPIView.as_view()
+)
 
 
 class HomeDashboardKpisAPIView(CustomAuthMixin, PermissionRequiredMixin, View):
@@ -1128,7 +1498,9 @@ class HomeDashboardTabChartAPIView(CustomAuthMixin, PermissionRequiredMixin, Vie
             }
             graph_key = graph_map.get(chart_key)
             if not graph_key:
-                return JsonResponse({"detail": "Unsupported va_statistics chart."}, status=400)
+                return JsonResponse(
+                    {"detail": "Unsupported va_statistics chart."}, status=400
+                )
             graph = trends_payload.get("graphs", {}).get(graph_key, {})
             labels, series = _shallow_downsample(
                 graph.get("x", []),
@@ -1143,7 +1515,9 @@ class HomeDashboardTabChartAPIView(CustomAuthMixin, PermissionRequiredMixin, Vie
             )
             return JsonResponse(payload)
 
-        return JsonResponse({"detail": "Unsupported tab/chart combination."}, status=400)
+        return JsonResponse(
+            {"detail": "Unsupported tab/chart combination."}, status=400
+        )
 
 
 home_dashboard_tab_chart_api_view = HomeDashboardTabChartAPIView.as_view()
@@ -1196,9 +1570,7 @@ class HomeDashboardTabTableAPIView(CustomAuthMixin, PermissionRequiredMixin, Vie
             if not metric:
                 return JsonResponse({"detail": "Unsupported trends table."}, status=400)
             table_payload = (
-                trends_payload.get("modelTrends", {})
-                .get(metric, {})
-                .get("table", {})
+                trends_payload.get("modelTrends", {}).get(metric, {}).get("table", {})
             )
             payload = {"table": table_payload}
             cache.set(
@@ -1235,16 +1607,22 @@ class HomeDashboardTabTableAPIView(CustomAuthMixin, PermissionRequiredMixin, Vie
             if table_key == "indeterminate":
                 rows = trends_payload.get("indeterminateCodList", [])
                 paged = _paginate_list(rows, page=page, page_size=page_size)
-                paged["additional"] = trends_payload.get("additionalIndeterminateCods", 0)
+                paged["additional"] = trends_payload.get(
+                    "additionalIndeterminateCods", 0
+                )
                 cache.set(
                     response_cache_key,
                     paged,
                     timeout=HOME_FASTPATH_TABLE_CACHE_TTL_SECONDS,
                 )
                 return JsonResponse(paged)
-            return JsonResponse({"detail": "Unsupported va_statistics table."}, status=400)
+            return JsonResponse(
+                {"detail": "Unsupported va_statistics table."}, status=400
+            )
 
-        return JsonResponse({"detail": "Unsupported tab/table combination."}, status=400)
+        return JsonResponse(
+            {"detail": "Unsupported tab/table combination."}, status=400
+        )
 
 
 home_dashboard_tab_table_api_view = HomeDashboardTabTableAPIView.as_view()
@@ -1312,7 +1690,7 @@ class RegionalOperationsComponentContextMixin:
         {"value": "facility", "label": "Facility"},
     )
     csa_column_map = (
-        ("name", "CSA Name (Search)"),
+        ("name", "CSA Name"),
         ("district", "District"),
         ("ward", "Ward"),
         ("visits", "Visits"),
@@ -1327,6 +1705,7 @@ class RegionalOperationsComponentContextMixin:
         ("supervisor", "Supervisor"),
         ("csa_target", "CSA Target"),
         ("coverage_pct", "Coverage %"),
+        ("status", "Status"),
     )
     mso_column_map = (
         ("name", "MSO Name (Search)"),
@@ -1359,6 +1738,7 @@ class RegionalOperationsComponentContextMixin:
         "24": "time24",
     }
     ui_id_to_preset = {v: k for k, v in preset_to_ui_id.items()}
+
     @staticmethod
     def _pick(value, valid_values, default):
         return value if value in valid_values else default
@@ -1405,11 +1785,12 @@ class RegionalOperationsComponentContextMixin:
 
     @staticmethod
     def _mso_name_from_va_row(va_row):
-        raw_name = (
-            (va_row.get("Id10010") or "").strip()
-            or (va_row.get("location__name") or "").strip()
+        raw_name = (va_row.get("Id10010") or "").strip() or (
+            va_row.get("location__name") or ""
+        ).strip()
+        return RegionalOperationsComponentContextMixin._format_mso_display_name(
+            raw_name
         )
-        return RegionalOperationsComponentContextMixin._format_mso_display_name(raw_name)
 
     @staticmethod
     def normalize_person_name(value):
@@ -1451,18 +1832,25 @@ class RegionalOperationsComponentContextMixin:
         """
         cache = {}
         for norm in norm_series.dropna().unique():
-            cache[norm] = RegionalOperationsComponentContextMixin._best_match_name_norm_with_score(
-                norm, candidate_norms, threshold
+            cache[norm] = (
+                RegionalOperationsComponentContextMixin._best_match_name_norm_with_score(
+                    norm, candidate_norms, threshold
+                )
             )
         return cache
 
     @staticmethod
     def _apply_norm_match_cache(df, col, cache):
         """Expand a match cache onto a DataFrame column, returning matched_norm/best_norm/best_score."""
+
         def _lookup(value):
             return pd.Series(cache.get(value, (None, None, 0.0)))
-        return df[col].map(lambda v: _lookup(v)).apply(pd.Series).rename(
-            columns={0: "matched_norm", 1: "best_norm", 2: "best_score"}
+
+        return (
+            df[col]
+            .map(lambda v: _lookup(v))
+            .apply(pd.Series)
+            .rename(columns={0: "matched_norm", 1: "best_norm", 2: "best_score"})
         )
 
     @staticmethod
@@ -1575,7 +1963,11 @@ class RegionalOperationsComponentContextMixin:
         )
 
     def _normalized_geo(self):
-        geo = (self.request.GET.get("geo") or self.request.GET.get("geography") or "").strip().lower()
+        geo = (
+            (self.request.GET.get("geo") or self.request.GET.get("geography") or "")
+            .strip()
+            .lower()
+        )
         return geo if geo in self.geo_filter_values else ""
 
     def _normalized_preset(self):
@@ -1596,8 +1988,12 @@ class RegionalOperationsComponentContextMixin:
         now_local = timezone.now().astimezone(ZoneInfo("Africa/Lusaka"))
 
         if manual_valid:
-            start_dt = datetime.combine(start_date, datetime.min.time(), tzinfo=ZoneInfo("Africa/Lusaka"))
-            end_dt = datetime.combine(end_date, datetime.max.time(), tzinfo=ZoneInfo("Africa/Lusaka"))
+            start_dt = datetime.combine(
+                start_date, datetime.min.time(), tzinfo=ZoneInfo("Africa/Lusaka")
+            )
+            end_dt = datetime.combine(
+                end_date, datetime.max.time(), tzinfo=ZoneInfo("Africa/Lusaka")
+            )
             time_label = f"{start_date.isoformat()} to {end_date.isoformat()}"
             return {
                 "selected_preset": selected_preset,
@@ -1612,11 +2008,11 @@ class RegionalOperationsComponentContextMixin:
             }
 
         if selected_preset == "30":
-            start_dt = now_local - timedelta(days=30)
+            start_dt = now_local - timedelta(days=29)
             end_dt = now_local
             time_label = "Last 30 days"
         elif selected_preset == "7":
-            start_dt = now_local - timedelta(days=7)
+            start_dt = now_local - timedelta(days=6)
             end_dt = now_local
             time_label = "Last 7 days"
         elif selected_preset == "24":
@@ -1733,7 +2129,11 @@ class RegionalOperationsComponentContextMixin:
                 if getattr(ancestor, "depth", None) == 2:
                     provinces.add(ancestor.name.strip().lower())
 
-            for name in location.get_descendants().filter(depth=2).values_list("name", flat=True):
+            for name in (
+                location.get_descendants()
+                .filter(depth=2)
+                .values_list("name", flat=True)
+            ):
                 if name:
                     provinces.add(name.strip().lower())
         return provinces
@@ -1785,9 +2185,14 @@ class RegionalOperationsComponentContextMixin:
     def _sort_rows(rows, sort_key, sort_dir):
         reverse = sort_dir == "desc"
         if sort_key == "name":
-            return sorted(rows, key=lambda r: str(r.get("name", "")).lower(), reverse=reverse)
-        if sort_key in {"district", "ward", "province", "supervisor"}:
-            return sorted(rows, key=lambda r: str(r.get(sort_key, "")).lower(), reverse=reverse)
+            return sorted(
+                rows, key=lambda r: str(r.get("name", "")).lower(), reverse=reverse
+            )
+        if sort_key in {"district", "ward", "province", "supervisor", "status"}:
+            return sorted(
+                rows, key=lambda r: str(r.get(sort_key, "")).lower(), reverse=reverse
+            )
+
         def numeric_key(row):
             value = row.get(sort_key, 0)
             if value in (None, ""):
@@ -1818,7 +2223,9 @@ class RegionalOperationsComponentContextMixin:
             "has_prev": current_page > 1,
             "has_next": current_page < total_pages,
             "prev_page": current_page - 1 if current_page > 1 else 1,
-            "next_page": current_page + 1 if current_page < total_pages else total_pages,
+            "next_page": (
+                current_page + 1 if current_page < total_pages else total_pages
+            ),
             "visible_count": len(rows[start:end]),
             "total_count": total,
         }
@@ -1843,10 +2250,15 @@ class RegionalOperationsComponentContextMixin:
 
     def _get_csa_target_supervisor_map(self):
         cache_attr = "_csa_target_supervisor_map_cache"
+        cache_meta = CSASupervisorTargetMap.objects.aggregate(
+            latest_updated=Max("updated"),
+            count=Count("id"),
+            latest_id=Max("id"),
+        )
         cache_version = (
-            CSASupervisorTargetMap.objects.order_by("-updated")
-            .values_list("updated", flat=True)
-            .first()
+            cache_meta["latest_updated"],
+            cache_meta["count"],
+            cache_meta["latest_id"],
         )
         cached = getattr(self.__class__, cache_attr, None)
         if cached and cached.get("version") == cache_version:
@@ -1859,11 +2271,12 @@ class RegionalOperationsComponentContextMixin:
             "supervisor_name",
             "csa_target",
             "tracker_first_date",
+            "status",
         ):
             csa_name = self._format_csa_display_name(row.get("csa_display_name"))
-            normalized_key = row.get("csa_name_normalized") or normalize_csa_name_for_join(
-                csa_name
-            )
+            normalized_key = row.get(
+                "csa_name_normalized"
+            ) or normalize_csa_name_for_join(csa_name)
             display_key = csa_name.strip().lower()
             if not normalized_key and not display_key:
                 continue
@@ -1873,6 +2286,7 @@ class RegionalOperationsComponentContextMixin:
                 "supervisor": (row.get("supervisor_name") or "").strip() or "—",
                 "csa_target": self._to_int(target_raw) if target_raw is not None else 0,
                 "tracker_first_date": row.get("tracker_first_date"),
+                "status": row.get("status") or CSASupervisorTargetMap.STATUS_INACTIVE,
             }
             if normalized_key:
                 mapping[normalized_key] = payload
@@ -1886,7 +2300,14 @@ class RegionalOperationsComponentContextMixin:
         )
         return mapping
 
-    def _build_csa_rows(self, selected_geo, start_date_str, end_date_str, province_scope):
+    def _build_csa_rows(
+        self,
+        selected_geo,
+        start_date_str,
+        end_date_str,
+        province_scope,
+        selected_preset="all",
+    ):
         counts_by_csa = defaultdict(
             lambda: {
                 "name": "",
@@ -1901,6 +2322,7 @@ class RegionalOperationsComponentContextMixin:
                 "overdue_without_interview": 0,
                 "supervisor": "—",
                 "csa_target": 0,
+                "status": CSASupervisorTargetMap.STATUS_INACTIVE,
                 "coverage_pct": None,
                 "coverage_band": "empty",
             }
@@ -1957,11 +2379,14 @@ class RegionalOperationsComponentContextMixin:
         # scaled to match the selected filter.
         # - 7-day preset   → window_days = 7  (scale = 1, target unchanged)
         # - 30-day preset  → window_days = 30 (scale = 30/7)
+        # - 24-hour preset → window_days = 1
         # - custom range   → window_days = (end - start + 1)
         # - "all time"     → window_days = None → resolved per-CSA in the loop
         #                    using tracker_first_date from CSASupervisorTargetMap
         today = date.today()
-        if start_date_str and end_date_str:
+        if selected_preset == "24":
+            window_days = 1
+        elif start_date_str and end_date_str:
             _cov_start = date.fromisoformat(start_date_str)
             _cov_end = date.fromisoformat(end_date_str)
             window_days = max(1, (_cov_end - _cov_start).days + 1)
@@ -2020,11 +2445,15 @@ class RegionalOperationsComponentContextMixin:
         for entry in counts_by_csa.values():
             display_key = str(entry.get("name") or "").strip().lower()
             normalized_key = normalize_csa_name_for_join(entry.get("name"))
-            mapping_row = csa_mapping.get(normalized_key) or csa_mapping.get(display_key) or {}
+            mapping_row = (
+                csa_mapping.get(normalized_key) or csa_mapping.get(display_key) or {}
+            )
 
             entry["supervisor"] = mapping_row.get("supervisor", "—")
+            entry["status"] = mapping_row.get(
+                "status", CSASupervisorTargetMap.STATUS_INACTIVE
+            )
             weekly_target = self._to_int(mapping_row.get("csa_target"))
-            entry["csa_target"] = weekly_target  # always show the raw weekly target in the table
 
             # Resolve the effective window length for this CSA.
             # For "all time" (window_days is None) use the per-CSA tracker_first_date
@@ -2039,10 +2468,12 @@ class RegionalOperationsComponentContextMixin:
 
             if weekly_target > 0 and effective_window is not None:
                 scaled_target = weekly_target * (effective_window / 7)
+                entry["csa_target"] = round(scaled_target)
                 entry["coverage_pct"] = round(
                     (entry["visits"] / scaled_target) * 100, 1
                 )
             else:
+                entry["csa_target"] = weekly_target
                 entry["coverage_pct"] = None
             entry["coverage_band"] = self._coverage_band(entry["coverage_pct"])
 
@@ -2085,9 +2516,9 @@ class RegionalOperationsComponentContextMixin:
             "location__name",
             "province_name",
             "province",
-            "Id10012",   # interview_date (for duration outliers)
-            "Id10011",   # start_time
-            "Id10481",   # end_datetime
+            "Id10012",  # interview_date (for duration outliers)
+            "Id10011",  # start_time
+            "Id10481",  # end_datetime
         ):
             mso_name = self._mso_name_from_va_row(va_row)
             mso_name_norm = self.normalize_person_name(mso_name)
@@ -2120,12 +2551,11 @@ class RegionalOperationsComponentContextMixin:
 
         if base_va_records:
             df_base_va = pd.DataFrame.from_records(base_va_records)
-            df_va_totals = (
-                df_base_va.groupby(["name", "mso_name_norm"], as_index=False)
-                .agg(
-                    va_total=("va_id", "count"),
-                    province=("province", "first"),
-                )
+            df_va_totals = df_base_va.groupby(
+                ["name", "mso_name_norm"], as_index=False
+            ).agg(
+                va_total=("va_id", "count"),
+                province=("province", "first"),
             )
         else:
             df_base_va = pd.DataFrame(
@@ -2165,7 +2595,9 @@ class RegionalOperationsComponentContextMixin:
         va_ids = list(va_to_mso_name.keys())
 
         causes_by_va = defaultdict(list)
-        for row in CauseOfDeath.objects.filter(verbalautopsy_id__in=va_ids).values("verbalautopsy_id", "cause"):
+        for row in CauseOfDeath.objects.filter(verbalautopsy_id__in=va_ids).values(
+            "verbalautopsy_id", "cause"
+        ):
             causes_by_va[row["verbalautopsy_id"]].append(row["cause"])
 
         va_ids_with_error = set(
@@ -2180,8 +2612,7 @@ class RegionalOperationsComponentContextMixin:
             causes = causes_by_va.get(va_id, [])
             valid_cod = int(
                 any(
-                    (cause or "").strip()
-                    and cause != self.INDETERMINATE_LABEL
+                    (cause or "").strip() and cause != self.INDETERMINATE_LABEL
                     for cause in causes
                 )
             )
@@ -2207,7 +2638,9 @@ class RegionalOperationsComponentContextMixin:
                 ]
                 .sum()
             )
-            df_mso = df_mso.merge(df_va_metrics, on=["name", "mso_name_norm"], how="outer")
+            df_mso = df_mso.merge(
+                df_va_metrics, on=["name", "mso_name_norm"], how="outer"
+            )
             for col in ("va_total", "valid_cod", "indeterminate", "error"):
                 if col not in df_mso:
                     df_mso[col] = 0
@@ -2235,11 +2668,13 @@ class RegionalOperationsComponentContextMixin:
         all_event_rows = list(
             Event.objects.filter(
                 self._province_access_q_with_codes("province", province_scope)
-            ).filter(
-                self._province_filter_q("province", selected_geo)
-            ).filter(
-                Q(event_type=Event.EventType.DEATH) | Q(event_type_code__icontains="death")
-            ).values(
+            )
+            .filter(self._province_filter_q("province", selected_geo))
+            .filter(
+                Q(event_type=Event.EventType.DEATH)
+                | Q(event_type_code__icontains="death")
+            )
+            .values(
                 "event_status",
                 "va_interview_status",
                 "interview_scheduled_date",
@@ -2278,10 +2713,9 @@ class RegionalOperationsComponentContextMixin:
         for event in all_event_rows:
             if event.get("death_id") is None:
                 continue
-            death_name_raw = (
-                (event.get("va__Id10010") or "").strip()
-                or (event.get("va_interview_staff__name") or "").strip()
-            )
+            death_name_raw = (event.get("va__Id10010") or "").strip() or (
+                event.get("va_interview_staff__name") or ""
+            ).strip()
             if not death_name_raw:
                 continue
             death_date = self._coerce_date(event.get("death__DE_06"))
@@ -2308,22 +2742,30 @@ class RegionalOperationsComponentContextMixin:
                 df_death = df_death.drop_duplicates(subset=["agg_name", "death_id"])
                 df_death[["matched_norm", "best_norm", "best_score"]] = df_death[
                     "agg_name_norm"
-                ].apply(lambda v: pd.Series(shared_norm_cache.get(v, (None, None, 0.0))))
+                ].apply(
+                    lambda v: pd.Series(shared_norm_cache.get(v, (None, None, 0.0)))
+                )
                 unmatched_agg_logs.extend(
                     [
                         {
                             "source": "death_events",
                             "agg_name": row.get("agg_name"),
-                            "best_match": mso_name_norm_to_name.get(row.get("best_norm"), row.get("best_norm")),
+                            "best_match": mso_name_norm_to_name.get(
+                                row.get("best_norm"), row.get("best_norm")
+                            ),
                             "score": row.get("best_score", 0.0),
                         }
-                        for _, row in df_death[df_death["matched_norm"].isna()].iterrows()
+                        for _, row in df_death[
+                            df_death["matched_norm"].isna()
+                        ].iterrows()
                     ]
                 )
                 df_death = df_death[df_death["matched_norm"].notna()]
                 df_death["name"] = df_death["matched_norm"].map(mso_name_norm_to_name)
                 df_death = df_death[df_death["name"].notna()]
-                df_death = df_death.groupby("name", as_index=False)["death_events"].sum()
+                df_death = df_death.groupby("name", as_index=False)[
+                    "death_events"
+                ].sum()
                 df_mso = df_mso.merge(df_death, on="name", how="left")
                 if "death_events" not in df_mso:
                     df_mso["death_events"] = 0
@@ -2341,19 +2783,17 @@ class RegionalOperationsComponentContextMixin:
             # Prefer the actual VA form interviewer name; fall back to the User
             # assigned in case management for events where the VA has not yet
             # been submitted (va is null, so va__Id10010 is blank).
-            mso_name_raw = (
-                (event.get("va__Id10010") or "").strip()
-                or (event.get("va_interview_staff__name") or "").strip()
-            )
+            mso_name_raw = (event.get("va__Id10010") or "").strip() or (
+                event.get("va_interview_staff__name") or ""
+            ).strip()
             if not mso_name_raw:
                 continue
             mso_name = self._format_mso_display_name(mso_name_raw)
-            is_scheduled = (
-                event.get("event_status") == Event.EventStatus.VA_INTERVIEW_SCHEDULED
-                or (
-                    event.get("va_interview_status") == Event.VAInterviewStatus.SCHEDULED
-                    and event.get("interview_scheduled_date") is not None
-                )
+            is_scheduled = event.get(
+                "event_status"
+            ) == Event.EventStatus.VA_INTERVIEW_SCHEDULED or (
+                event.get("va_interview_status") == Event.VAInterviewStatus.SCHEDULED
+                and event.get("interview_scheduled_date") is not None
             )
             is_not_complete = (
                 event.get("va_interview_status") == Event.VAInterviewStatus.SCHEDULED
@@ -2378,21 +2818,24 @@ class RegionalOperationsComponentContextMixin:
                     {
                         "source": "scheduling",
                         "agg_name": row.get("agg_name"),
-                        "best_match": mso_name_norm_to_name.get(row.get("best_norm"), row.get("best_norm")),
+                        "best_match": mso_name_norm_to_name.get(
+                            row.get("best_norm"), row.get("best_norm")
+                        ),
                         "score": row.get("best_score", 0.0),
                     }
-                    for _, row in df_scheduling[df_scheduling["matched_norm"].isna()].iterrows()
+                    for _, row in df_scheduling[
+                        df_scheduling["matched_norm"].isna()
+                    ].iterrows()
                 ]
             )
             df_scheduling = df_scheduling[df_scheduling["matched_norm"].notna()]
-            df_scheduling["name"] = df_scheduling["matched_norm"].map(mso_name_norm_to_name)
-            df_scheduling = df_scheduling[df_scheduling["name"].notna()]
-            df_scheduling = (
-                df_scheduling.groupby("name", as_index=False)[
-                    ["va_scheduled", "va_not_complete"]
-                ]
-                .sum()
+            df_scheduling["name"] = df_scheduling["matched_norm"].map(
+                mso_name_norm_to_name
             )
+            df_scheduling = df_scheduling[df_scheduling["name"].notna()]
+            df_scheduling = df_scheduling.groupby("name", as_index=False)[
+                ["va_scheduled", "va_not_complete"]
+            ].sum()
             df_mso = df_mso.merge(df_scheduling, on="name", how="left")
             for col in ("va_scheduled", "va_not_complete"):
                 if col not in df_mso:
@@ -2409,16 +2852,18 @@ class RegionalOperationsComponentContextMixin:
 
         mean_days_records = []
         for event in all_event_rows:
-            if event.get("death_id") is None or event.get("interview_complete_date") is None:
+            if (
+                event.get("death_id") is None
+                or event.get("interview_complete_date") is None
+            ):
                 continue
             death_date = self._coerce_date(event.get("death__DE_06"))
             complete_date = event.get("interview_complete_date")
             if not death_date or not complete_date:
                 continue
-            mean_name_raw = (
-                (event.get("va__Id10010") or "").strip()
-                or (event.get("va_interview_staff__name") or "").strip()
-            )
+            mean_name_raw = (event.get("va__Id10010") or "").strip() or (
+                event.get("va_interview_staff__name") or ""
+            ).strip()
             if not mean_name_raw:
                 continue
             mean_name = self._format_mso_display_name(mean_name_raw)
@@ -2440,14 +2885,20 @@ class RegionalOperationsComponentContextMixin:
                     {
                         "source": "mean_days",
                         "agg_name": row.get("agg_name"),
-                        "best_match": mso_name_norm_to_name.get(row.get("best_norm"), row.get("best_norm")),
+                        "best_match": mso_name_norm_to_name.get(
+                            row.get("best_norm"), row.get("best_norm")
+                        ),
                         "score": row.get("best_score", 0.0),
                     }
-                    for _, row in df_mean_days[df_mean_days["matched_norm"].isna()].iterrows()
+                    for _, row in df_mean_days[
+                        df_mean_days["matched_norm"].isna()
+                    ].iterrows()
                 ]
             )
             df_mean_days = df_mean_days[df_mean_days["matched_norm"].notna()]
-            df_mean_days["name"] = df_mean_days["matched_norm"].map(mso_name_norm_to_name)
+            df_mean_days["name"] = df_mean_days["matched_norm"].map(
+                mso_name_norm_to_name
+            )
             df_mean_days = df_mean_days[df_mean_days["name"].notna()]
             df_mean_days = (
                 df_mean_days.groupby("name", as_index=False)["days_to_complete"]
@@ -2509,9 +2960,9 @@ class RegionalOperationsComponentContextMixin:
                     .sum()
                     .rename(columns={"duration_outlier": "duration_outliers"})
                 )
-                df_duration_metrics["mso_name_norm"] = df_duration_metrics["name"].apply(
-                    self.normalize_person_name
-                )
+                df_duration_metrics["mso_name_norm"] = df_duration_metrics[
+                    "name"
+                ].apply(self.normalize_person_name)
                 df_mso = df_mso.merge(
                     df_duration_metrics,
                     on=["name", "mso_name_norm"],
@@ -2550,9 +3001,9 @@ class RegionalOperationsComponentContextMixin:
             df_mso[col] = df_mso[col].fillna(0).astype(int)
         if "mean_death_to_va_complete" not in df_mso:
             df_mso["mean_death_to_va_complete"] = ""
-        df_mso["mean_death_to_va_complete"] = df_mso[
-            "mean_death_to_va_complete"
-        ].where(pd.notna(df_mso["mean_death_to_va_complete"]), "")
+        df_mso["mean_death_to_va_complete"] = df_mso["mean_death_to_va_complete"].where(
+            pd.notna(df_mso["mean_death_to_va_complete"]), ""
+        )
 
         if unmatched_agg_logs:
             unmatched_count = len(unmatched_agg_logs)
@@ -2626,8 +3077,15 @@ class RegionalOperationsComponentContextMixin:
             {key for key, _ in self.csa_column_map},
             "visits",
         )
-        csa_dir = self._pick(self.request.GET.get("csa_dir", "desc"), {"asc", "desc"}, "desc")
+        csa_dir = self._pick(
+            self.request.GET.get("csa_dir", "desc"), {"asc", "desc"}, "desc"
+        )
         csa_search = self.request.GET.get("csa_search", "").strip()
+        csa_supervisor_search = self.request.GET.get(
+            "csa_supervisor_search", ""
+        ).strip()
+        csa_district_search = self.request.GET.get("csa_district_search", "").strip()
+        csa_ward_search = self.request.GET.get("csa_ward_search", "").strip()
         csa_page = max(1, self._to_int(self.request.GET.get("csa_page", "1")))
 
         csa_rows = self._build_csa_rows(
@@ -2635,19 +3093,57 @@ class RegionalOperationsComponentContextMixin:
             time_window["start_date_str"],
             time_window["end_date_str"],
             province_scope,
+            time_window["selected_preset"],
         )
         if selected_geo and selected_geo != "national":
             csa_rows = [
-                row for row in csa_rows
+                row
+                for row in csa_rows
                 if self._matches_geo_by_province(row.get("province"), selected_geo)
             ]
         if csa_search:
             csa_rows = [
-                row for row in csa_rows
+                row
+                for row in csa_rows
                 if self._matches_name_search(row.get("name", ""), csa_search)
             ]
+        if csa_supervisor_search:
+            supervisor_query = csa_supervisor_search.lower()
+            csa_rows = [
+                row
+                for row in csa_rows
+                if supervisor_query in str(row.get("supervisor") or "").lower()
+            ]
+        if csa_district_search:
+            district_query = csa_district_search.lower()
+            csa_rows = [
+                row
+                for row in csa_rows
+                if district_query in str(row.get("district") or "").lower()
+            ]
+        if csa_ward_search:
+            ward_query = csa_ward_search.lower()
+            csa_rows = [
+                row
+                for row in csa_rows
+                if ward_query in str(row.get("ward") or "").lower()
+            ]
         csa_rows_sorted = self._sort_rows(csa_rows, csa_sort, csa_dir)
-        csa_pagination = self._paginate_rows(csa_rows_sorted, csa_page)
+        csa_sort_param = (self.request.GET.get("csa_sort") or "").strip().lower()
+        csa_dir_param = (self.request.GET.get("csa_dir") or "").strip().lower()
+        using_default_sort = csa_sort_param in {"", "visits"} and csa_dir_param in {
+            "",
+            "desc",
+        }
+        if using_default_sort:
+            csa_rows_sorted = sorted(
+                csa_rows_sorted,
+                key=lambda row: (
+                    str(row.get("status") or "").strip().lower()
+                    == CSASupervisorTargetMap.STATUS_INACTIVE
+                ),
+            )
+        csa_pagination = self._paginate_rows(csa_rows_sorted, csa_page, per_page=10)
 
         return {
             "csa_stats": csa_pagination["rows"],
@@ -2655,6 +3151,9 @@ class RegionalOperationsComponentContextMixin:
             "csa_sort": csa_sort,
             "csa_dir": csa_dir,
             "csa_search": csa_search,
+            "csa_supervisor_search": csa_supervisor_search,
+            "csa_district_search": csa_district_search,
+            "csa_ward_search": csa_ward_search,
             "csa_page": csa_pagination["page"],
             "csa_total_pages": csa_pagination["total_pages"],
             "csa_has_prev": csa_pagination["has_prev"],
@@ -2671,18 +3170,21 @@ class RegionalOperationsComponentContextMixin:
         time_window = params["time_window"]
         province_scope = params["province_scope"]
 
-        selected_mso_source = self._pick(
-            self.request.GET.get("source", "community"),
-            {item["value"] for item in self.mso_source_options},
-            "community",
+        allowed_mso_sources = {item["value"] for item in self.mso_source_options}
+        requested_mso_source = (self.request.GET.get("source") or "").strip().lower()
+        selected_mso_source = (
+            requested_mso_source if requested_mso_source in allowed_mso_sources else ""
         )
         mso_sort = self._pick(
             self.request.GET.get("mso_sort", "death_events"),
             {key for key, _ in self.mso_column_map},
             "death_events",
         )
-        mso_dir = self._pick(self.request.GET.get("mso_dir", "desc"), {"asc", "desc"}, "desc")
+        mso_dir = self._pick(
+            self.request.GET.get("mso_dir", "desc"), {"asc", "desc"}, "desc"
+        )
         mso_search = self.request.GET.get("mso_search", "").strip()
+        mso_province_search = self.request.GET.get("mso_province_search", "").strip()
         mso_page = max(1, self._to_int(self.request.GET.get("mso_page", "1")))
 
         va_queryset = self.request.user.verbal_autopsies().annotate(
@@ -2709,17 +3211,28 @@ class RegionalOperationsComponentContextMixin:
         )
         if selected_geo and selected_geo != "national":
             mso_rows = [
-                row for row in mso_rows
+                row
+                for row in mso_rows
                 if self._matches_geo_by_province(row.get("province"), selected_geo)
             ]
+
+        def matches_mso_filter(value, query):
+            return query.lower() in str(value or "").lower()
+
         if mso_search:
-            mso_search_lower = mso_search.lower()
             mso_rows = [
-                row for row in mso_rows
-                if mso_search_lower in str(row.get("name", "")).lower()
+                row
+                for row in mso_rows
+                if matches_mso_filter(row.get("name"), mso_search)
+            ]
+        if mso_province_search:
+            mso_rows = [
+                row
+                for row in mso_rows
+                if matches_mso_filter(row.get("province"), mso_province_search)
             ]
         mso_rows_sorted = self._sort_rows(mso_rows, mso_sort, mso_dir)
-        mso_pagination = self._paginate_rows(mso_rows_sorted, mso_page)
+        mso_pagination = self._paginate_rows(mso_rows_sorted, mso_page, per_page=10)
 
         return {
             "mso_source_options": self.mso_source_options,
@@ -2729,6 +3242,7 @@ class RegionalOperationsComponentContextMixin:
             "mso_sort": mso_sort,
             "mso_dir": mso_dir,
             "mso_search": mso_search,
+            "mso_province_search": mso_province_search,
             "mso_page": mso_pagination["page"],
             "mso_total_pages": mso_pagination["total_pages"],
             "mso_has_prev": mso_pagination["has_prev"],
@@ -2794,7 +3308,9 @@ class RegionalOperationsMapData(
                 )[:1]
             ),
         )
-        va_queryset = va_queryset.filter(self._province_filter_q("province_name", selected_geo))
+        va_queryset = va_queryset.filter(
+            self._province_filter_q("province_name", selected_geo)
+        )
         va_queryset = va_queryset.filter(
             self._province_access_q("province_name", province_scope)
         )
@@ -2834,7 +3350,9 @@ class RegionalOperationsFiltersComponent(
         # Skip the mixin's get_context_data (which builds both CSA and MSO
         # rows) since the filter template needs only the lightweight filter
         # parameters.
-        context = super(RegionalOperationsComponentContextMixin, self).get_context_data(**kwargs)
+        context = super(RegionalOperationsComponentContextMixin, self).get_context_data(
+            **kwargs
+        )
         params = self._resolve_regional_params()
         time_window = params["time_window"]
         context["geography_options"] = self.geography_options
@@ -2854,7 +3372,9 @@ class RegionalOperationsCsaComponent(
     template_name = "home/components/_regional_operations_csa_table.html"
 
     def get_context_data(self, **kwargs):
-        context = super(RegionalOperationsComponentContextMixin, self).get_context_data(**kwargs)
+        context = super(RegionalOperationsComponentContextMixin, self).get_context_data(
+            **kwargs
+        )
         params = self._resolve_regional_params()
         context.update(self._get_csa_context(params))
         return context
@@ -2866,7 +3386,9 @@ class RegionalOperationsMsoComponent(
     template_name = "home/components/_regional_operations_mso_table.html"
 
     def get_context_data(self, **kwargs):
-        context = super(RegionalOperationsComponentContextMixin, self).get_context_data(**kwargs)
+        context = super(RegionalOperationsComponentContextMixin, self).get_context_data(
+            **kwargs
+        )
         params = self._resolve_regional_params()
         context.update(self._get_mso_context(params))
         return context

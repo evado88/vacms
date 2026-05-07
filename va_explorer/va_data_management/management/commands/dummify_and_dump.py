@@ -2,7 +2,6 @@ import csv
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 
@@ -14,7 +13,6 @@ from va_explorer.va_data_management.models import (
     VerbalAutopsy,
 )
 from va_explorer.va_data_management.utils.fake_data import FakeDataGenerator
-
 
 MODEL_CONFIGS = [
     {
@@ -170,7 +168,9 @@ class Command(BaseCommand):
         timestamp = timezone.now().strftime("%Y%m%d%H%M%S")
 
         for config in MODEL_CONFIGS:
-            self._process_model(config, record_limit, generator, outdir, timestamp, options["write"])
+            self._process_model(
+                config, record_limit, generator, outdir, timestamp, options["write"]
+            )
 
     def _resolve_output_dir(self, directory: str) -> Path:
         output_path = Path(directory)
@@ -181,7 +181,6 @@ class Command(BaseCommand):
 
         output_path.mkdir(parents=True, exist_ok=True)
         return output_path
-
 
     def _process_model(
         self,
@@ -241,7 +240,9 @@ class Command(BaseCommand):
 
     def _select_records(self, model, record_limit: int):
         order_field = (
-            "-created" if any(f.name == "created" for f in model._meta.get_fields()) else "-pk"
+            "-created"
+            if any(f.name == "created" for f in model._meta.get_fields())
+            else "-pk"
         )
         return model.objects.order_by(order_field)[:record_limit]
 
@@ -256,9 +257,17 @@ class Command(BaseCommand):
         updates: Dict[str, str] = {}
         row: Dict[str, object] = {}
 
-        location_fields = [field for field in config.get("location_fields", []) if hasattr(obj, field)]
-        location_key = tuple(getattr(obj, field, None) for field in location_fields) if location_fields else tuple()
-        location_values = generator.fake_location(location_key) if location_fields else {}
+        location_fields = [
+            field for field in config.get("location_fields", []) if hasattr(obj, field)
+        ]
+        location_key = (
+            tuple(getattr(obj, field, None) for field in location_fields)
+            if location_fields
+            else ()
+        )
+        location_values = (
+            generator.fake_location(location_key) if location_fields else {}
+        )
 
         for field in field_objs:
             field_name = field.name
@@ -285,7 +294,9 @@ class Command(BaseCommand):
 
         return updates, row
 
-    def _write_csv(self, file_path: Path, field_names: List[str], rows: List[Dict[str, object]]):
+    def _write_csv(
+        self, file_path: Path, field_names: List[str], rows: List[Dict[str, object]]
+    ):
         if not rows:
             with file_path.open("w", newline="") as csvfile:
                 writer = csv.writer(csvfile)

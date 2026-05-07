@@ -1,17 +1,18 @@
 # blog/urls.py
 from django.urls import path
+
 from va_explorer.vacms.views import (
-    EventListView,
-    EventListScheduledView,
-    EventListCompletedView,
-    EventCreateView,
     EventCreateDeathView,
-    EventUpdateView,
-    EventScheduleDataCollectionView,
-    EventScheduleVAInterviewView,
+    EventCreateView,
     EventDetailView,
     EventLinkDataView,
     EventLinkVA,
+    EventListCompletedView,
+    EventListScheduledView,
+    EventListView,
+    EventScheduleDataCollectionView,
+    EventScheduleVAInterviewView,
+    EventUpdateView,
 )
 
 urlpatterns = [
@@ -28,7 +29,11 @@ urlpatterns = [
         name="cms-event-completed-list",
     ),
     path("event/create", EventCreateView.as_view(), name="cms-event-create"),
-    path("event/create-death/<int:death>", EventCreateDeathView, name="cms-event-death-create"),
+    path(
+        "event/create-death/<int:death>",
+        EventCreateDeathView,
+        name="cms-event-death-create",
+    ),
     path("event/update/<int:pk>", EventUpdateView.as_view(), name="cms-event-update"),
     path(
         "event/schedule/data-collection/<int:pk>",

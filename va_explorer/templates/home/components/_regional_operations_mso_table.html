@@ -1,11 +1,21 @@
 <div class="mso-header-row">
   <h4 class="mso-title">MSO</h4>
-  <span class="mso-source-label">Source:</span>
-  <select class="form-control mso-source-select" aria-label="MSO source" id="msoSourceSelect">
-    {% for option in mso_source_options %}
-      <option value="{{ option.value }}" {% if option.value == selected_mso_source %}selected{% endif %}>{{ option.label }}</option>
-    {% endfor %}
-  </select>
+  <div class="mso-search-group">
+    <div class="mso-source-control">
+      <select class="form-control mso-source-select" aria-label="MSO source" id="msoSourceSelect">
+        <option value="" {% if not selected_mso_source %}selected{% endif %} disabled>Source</option>
+        {% for option in mso_source_options %}
+          <option value="{{ option.value }}" {% if option.value == selected_mso_source %}selected{% endif %}>{{ option.label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="mso-search">
+      <input type="search" placeholder="MSO Name (Search)" aria-label="Search MSO" id="msoNameSearch" value="{{ mso_search }}">
+    </div>
+    <div class="mso-search">
+      <input type="search" placeholder="Province (Search)" aria-label="Search province" id="msoProvinceSearch" value="{{ mso_province_search }}">
+    </div>
+  </div>
 </div>
 <div class="section-body">
   <div class="mso-table-container" role="region" aria-label="MSO table">
@@ -13,14 +23,12 @@
       <thead>
         <tr>
           <th style="width: 16%;">
-            <div class="mso-search mso-table-header">
-              <input type="search" placeholder="MSO Name (Search)" aria-label="Search MSO" id="msoNameSearch" value="{{ mso_search }}"><a
-                href="?mso_sort=name&mso_dir={% if mso_sort == 'name' and mso_dir == 'desc' %}asc{% else %}desc{% endif %}&mso_page=1"
-                class="regional-sort-link sort-icon"
-                data-table="mso"
-                aria-label="Sort MSO name"
-              >{% if mso_sort == 'name' %}{% if mso_dir == 'asc' %}▲{% else %}▼{% endif %}{% else %}▲{% endif %}</a>
-            </div>
+            <a
+              href="?mso_sort=name&mso_dir={% if mso_sort == 'name' and mso_dir == 'desc' %}asc{% else %}desc{% endif %}&mso_page=1"
+              class="regional-sort-link"
+              data-table="mso"
+              aria-label="Sort MSO name"
+            >MSO Name</a><span class="sort-icon">{% if mso_sort == 'name' %}{% if mso_dir == 'asc' %}▲{% else %}▼{% endif %}{% else %}▲{% endif %}</span>
           </th>
           <th style="width: 7%;">
             <a href="?mso_sort=province&mso_dir={% if mso_sort == 'province' and mso_dir == 'desc' %}asc{% else %}desc{% endif %}&mso_page=1" class="regional-sort-link" data-table="mso">Province</a><span class="sort-icon">{% if mso_sort == 'province' %}{% if mso_dir == 'asc' %}▲{% else %}▼{% endif %}{% else %}▲{% endif %}</span>

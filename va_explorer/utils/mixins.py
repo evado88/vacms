@@ -3,6 +3,10 @@ from django.contrib.auth.mixins import AccessMixin, UserPassesTestMixin
 from django.http.response import HttpResponseRedirect
 from django.urls import reverse
 
+from va_explorer.va_data_management.utils.location_access import (
+    restrict_queryset_to_user_locations,
+)
+
 
 class CustomAuthMixin(AccessMixin):
     def dispatch(self, request, *args, **kwargs):
@@ -18,6 +22,26 @@ class CustomAuthMixin(AccessMixin):
 
     def user_has_valid_password(self, request):
         return request.user.has_valid_password
+
+
+class LocationRestrictedQuerySetMixin:
+    """Applies ``restrict_queryset_to_user_locations`` in ``get_queryset``.
+
+    Place before concrete view base classes (ListView, DetailView, etc.) in MRO
+    so that ``super().get_queryset()`` reaches the view's default manager call
+    first, then this mixin wraps the result with location scoping.
+
+    Override ``location_field_mapping`` on a subclass when the model's geography
+    columns differ from the default province/district/constituency/ward/ea mapping.
+    """
+
+    location_field_mapping = None
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        return restrict_queryset_to_user_locations(
+            qs, self.request.user, self.location_field_mapping
+        )
 
 
 class UserDetailViewMixin(UserPassesTestMixin):

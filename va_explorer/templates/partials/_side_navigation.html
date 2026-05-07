@@ -1,5 +1,5 @@
 {% load va_explorer_tags %} {% load static i18n %} {% block css %}
-<link rel="stylesheet" href="{% static 'css/sidebar.css' %}" />
+<link rel="stylesheet" href="{% static 'css/sidebar.css' %}?v=20260427a" />
 {% endblock %}
 
 <!-- Sidebar -->
@@ -40,7 +40,7 @@
         </li>
       {% endif %}
 
-      {% if request.user.is_superuser or request.user|has_group:"Admins" or request.user|has_group:"Data Managers" %}
+      {% if request.user|can_view_va_schedule %}
         <ul
           class="collapse-section"
           id="case-section"

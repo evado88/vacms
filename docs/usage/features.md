@@ -237,7 +237,7 @@ Finally, when users would like to send the {term}`VA`s processed by VA Explorer 
 another step in their analysis, or just save a copy for themselves, VA Explorer
 supports data export in both {term}`CSV` and {term}`JSON` formats. Additionally,
 if VA Explorer has been configured to integrate with {term}`DHIS2` then users
-can export their data directly to that service. See [DHIS2](integrations.md#dhis2) 
+can export their data directly to that service. See [DHIS2](integrations.md#dhis2)
 for more info.
 
 - Choose between {term}`CSV` and {term}`JSON` data download

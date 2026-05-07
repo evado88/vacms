@@ -41,7 +41,7 @@
               >Link Data</a
             >
             {% endif %}
-            {% if request.user.is_superuser or request.user|has_group:"Admins" or request.user|has_group:"Data Managers" %}
+            {% if user_can_manage_schedule %}
               {% if event.event_type == 3 and event.event_status == 2 %}
                 <a
                   href="{% url 'cms-event-vainterview-schedule' event.pk %}"

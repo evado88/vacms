@@ -3,7 +3,7 @@ import re
 from django.contrib import messages
 from django.contrib.auth.mixins import PermissionRequiredMixin
 from django.contrib.messages.views import SuccessMessageMixin
-from django.db.models import Count, F, OuterRef, Q, Subquery, TextField
+from django.db.models import Count, OuterRef, Subquery, TextField
 from django.db.models import Value as V
 from django.db.models.functions import Coalesce, Concat
 from django.shortcuts import redirect
@@ -21,7 +21,11 @@ from django.views.generic.detail import SingleObjectMixin
 from va_explorer.utils.mixins import CustomAuthMixin
 from va_explorer.va_data_management.filters import VAFilter
 from va_explorer.va_data_management.forms import VerbalAutopsyForm
-from va_explorer.va_data_management.models import CauseCodingIssue, Location, VerbalAutopsy
+from va_explorer.va_data_management.models import (
+    CauseCodingIssue,
+    Location,
+    VerbalAutopsy,
+)
 from va_explorer.va_data_management.tasks import run_coding_algorithms
 from va_explorer.va_data_management.utils.date_parsing import parse_date
 from va_explorer.va_data_management.utils.loading import get_va_summary_stats

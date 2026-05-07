@@ -1,12 +1,13 @@
 {% extends "base.html" %}
 {% load static i18n %}
 {% block title %}Outcomes Dashboard{% endblock %}
+{% block heading %}Outcomes Dashboard{% endblock heading %}
 {% block container-type %}container outcomes-container{% endblock %}
 
 {% block css %}
   {{ block.super }}
   <link rel="stylesheet" href="{% static 'css/dashboard.css' %}">
-  <link rel="stylesheet" href="{% static 'css/outcomes_dashboard.css' %}?v=20260225t">
+  <link rel="stylesheet" href="{% static 'css/outcomes_dashboard.css' %}?v=20260225v">
   <link rel="stylesheet" href="{% static 'vendor/vuesalize-0.2.0/vuesalize.css' %}">
   <link rel="stylesheet" href="{% static 'vendor/leaflet-1.9.2/leaflet.css' %}">
   <link rel="stylesheet" href="https://unpkg.com/leaflet.fullscreen/dist/Control.FullScreen.css" />
@@ -45,7 +46,6 @@
 {% block content %}
   <div class="row dashboard-shell" data-shell="outcomes">
     <div class="col">
-      <h4 class="mb-4">Outcomes Dashboard</h4>
       <ul class="nav nav-tabs" id="outcomesTabs" role="tablist">
         <li class="nav-item" role="presentation">
           <a
@@ -101,7 +101,7 @@
         </li>
       </ul>
 
-      <div class="tab-content mt-2" id="outcomesTabsContent">
+      <div class="tab-content" id="outcomesTabsContent">
         <div
           class="tab-pane dashboard-tab-panel fade {% if active_tab == 'pregnancies' %}show active{% endif %}"
           id="pregnancies-pane"
@@ -151,10 +151,11 @@
   <script type="text/javascript" src="{% static 'vendor/chartjs-3.7.1/chart.min.js' %}"></script>
   <script type="text/javascript" src="{% static 'vendor/leaflet-1.9.2/leaflet.js' %}"></script>
   <script type="text/javascript" src="{% static 'vendor/leaflet-fullscreen/Control.FullScreen.umd.js' %}"></script>
-  <script type="text/javascript" src="{% static 'js/hierarchical_dashboard_map.js' %}?v=20260220c"></script>
-  <script type="text/javascript" src="{% static 'js/map_performance_wrapper.js' %}"></script>
-  <script type="text/javascript" src="{% static 'js/outcomes_dashboard.js' %}?v=20260225a"></script>
-  <script type="text/javascript" src="{% static 'js/pregnancy_dashboard.js' %}?v=20260225d"></script>
-  <script type="text/javascript" src="{% static 'js/deaths_dashboard.js' %}?v=20260220c"></script>
-  <script type="text/javascript" src="{% static 'js/dashboard_map.js' %}?v=20260225i"></script>
+  <script type="text/javascript" src="{% static 'js/dashboard_gps_layer.js' %}?v=20260506b"></script>
+  <script type="text/javascript" src="{% static 'js/hierarchical_dashboard_map.js' %}?v=20260506b"></script>
+  <script type="text/javascript" src="{% static 'js/map_performance_wrapper.js' %}?v=20260506b"></script>
+  <script type="text/javascript" src="{% static 'js/outcomes_dashboard.js' %}?v=20260506b"></script>
+  <script type="text/javascript" src="{% static 'js/pregnancy_dashboard.js' %}?v=20260506b"></script>
+  <script type="text/javascript" src="{% static 'js/deaths_dashboard.js' %}?v=20260506b"></script>
+  <script type="text/javascript" src="{% static 'js/dashboard_map.js' %}?v=20260506b"></script>
 {% endblock %}

@@ -1,9 +1,10 @@
 from django import forms
-from django.db.models import Q
 from django.forms import DateField, ModelMultipleChoiceField, Select, SelectMultiple
 
 from va_explorer.users.forms import LocationRestrictionsSelectMultiple
 from va_explorer.va_data_management.models import CauseOfDeath, SRSClusterLocation
+
+EXPORT_LOCATION_LEVELS = ("province", "district", "constituency", "ward")
 
 
 # load COD options for export form
@@ -28,6 +29,7 @@ class VADownloadForm(forms.Form):
             ("pregnancy", "Pregnancy"),
             ("pregnancy_outcome", "Pregnancy Outcome"),
             ("death", "Death"),
+            ("rumor_surveillance", "Rumor Surveillance"),
         ),
         initial="verbalautopsy",
         widget=Select(),
@@ -59,9 +61,10 @@ class VADownloadForm(forms.Form):
     )
 
     locations = ModelMultipleChoiceField(
-        # Don't include 'Unknown' or Root/Country node in options
-        queryset=SRSClusterLocation.objects.all()
-        .exclude(Q(location_type="country") | Q(name="Unknown"))
+        queryset=SRSClusterLocation.objects.filter(
+            location_type__in=EXPORT_LOCATION_LEVELS
+        )
+        .exclude(name="Unknown")
         .order_by("path"),
         widget=LocationRestrictionsSelectMultiple(
             attrs={"class": "location-restrictions-select"}

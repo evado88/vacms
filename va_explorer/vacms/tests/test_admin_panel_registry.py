@@ -5,14 +5,13 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, TestCase
 from django.urls import reverse
 
-from va_explorer.va_admin.command_registry import ALLOWLIST
-from va_explorer.va_admin.command_registry import data_dir
+from va_explorer.va_admin.command_registry import ALLOWLIST, data_dir
 
 
 class AdminPanelRegistryTests(TestCase):
     def test_registry_has_explicit_allowlist(self):
-        self.assertIn("load_household_csv", ALLOWLIST)
-        self.assertIn("bulk_load_users", ALLOWLIST)
+        assert "load_household_csv" in ALLOWLIST
+        assert "bulk_load_users" in ALLOWLIST
 
     def test_execute_endpoint_rejects_unregistered_command(self):
         admin = get_user_model().objects.create_user(
@@ -29,8 +28,8 @@ class AdminPanelRegistryTests(TestCase):
             content_type="application/json",
         )
 
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("allowlisted", response.content.decode("utf-8"))
+        assert response.status_code == 400
+        assert "allowlisted" in response.content.decode("utf-8")
 
     def test_non_admin_cannot_access_admin_panel_page(self):
         user = get_user_model().objects.create_user(
@@ -40,7 +39,7 @@ class AdminPanelRegistryTests(TestCase):
         )
         self.client.force_login(user)
         response = self.client.get(reverse("va_admin:index"))
-        self.assertEqual(response.status_code, 403)
+        assert response.status_code == 403
 
     def test_non_admin_cannot_run_endpoint(self):
         user = get_user_model().objects.create_user(
@@ -51,10 +50,12 @@ class AdminPanelRegistryTests(TestCase):
         self.client.force_login(user)
         response = self.client.post(
             reverse("va_admin:run"),
-            data=json.dumps({"command_id": "load_death_csv", "inputs": {"csv_file": "E_DEATH.csv"}}),
+            data=json.dumps(
+                {"command_id": "load_death_csv", "inputs": {"csv_file": "E_DEATH.csv"}}
+            ),
             content_type="application/json",
         )
-        self.assertEqual(response.status_code, 403)
+        assert response.status_code == 403
 
     def test_path_traversal_filename_rejected(self):
         admin = get_user_model().objects.create_user(
@@ -67,12 +68,17 @@ class AdminPanelRegistryTests(TestCase):
 
         response = self.client.post(
             reverse("va_admin:run"),
-            data=json.dumps({"command_id": "load_death_csv", "inputs": {"csv_file": "../etc/passwd"}}),
+            data=json.dumps(
+                {
+                    "command_id": "load_death_csv",
+                    "inputs": {"csv_file": "../etc/passwd"},
+                }
+            ),
             content_type="application/json",
         )
 
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("Invalid filename", response.content.decode("utf-8"))
+        assert response.status_code == 400
+        assert "Invalid filename" in response.content.decode("utf-8")
 
     def test_missing_file_rejected_with_clear_message(self):
         admin = get_user_model().objects.create_user(
@@ -85,12 +91,17 @@ class AdminPanelRegistryTests(TestCase):
 
         response = self.client.post(
             reverse("va_admin:run"),
-            data=json.dumps({"command_id": "load_death_csv", "inputs": {"csv_file": "does_not_exist.csv"}}),
+            data=json.dumps(
+                {
+                    "command_id": "load_death_csv",
+                    "inputs": {"csv_file": "does_not_exist.csv"},
+                }
+            ),
             content_type="application/json",
         )
 
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("File not found in static/data", response.content.decode("utf-8"))
+        assert response.status_code == 400
+        assert "File not found in static/data" in response.content.decode("utf-8")
 
     def test_csrf_is_enforced_on_run_endpoint(self):
         admin = get_user_model().objects.create_user(
@@ -107,10 +118,10 @@ class AdminPanelRegistryTests(TestCase):
             data=json.dumps({"command_id": "definitely_not_allowlisted", "inputs": {}}),
             content_type="application/json",
         )
-        self.assertEqual(no_token_response.status_code, 403)
+        assert no_token_response.status_code == 403
 
         panel_response = csrf_client.get(reverse("va_admin:index"))
-        self.assertEqual(panel_response.status_code, 200)
+        assert panel_response.status_code == 200
         csrf_token = panel_response.cookies.get("csrftoken").value
 
         with_token_response = csrf_client.post(
@@ -119,8 +130,8 @@ class AdminPanelRegistryTests(TestCase):
             content_type="application/json",
             HTTP_X_CSRFTOKEN=csrf_token,
         )
-        self.assertEqual(with_token_response.status_code, 400)
-        self.assertIn("allowlisted", with_token_response.content.decode("utf-8"))
+        assert with_token_response.status_code == 400
+        assert "allowlisted" in with_token_response.content.decode("utf-8")
 
     def test_non_admin_cannot_upload_file(self):
         user = get_user_model().objects.create_user(
@@ -135,7 +146,7 @@ class AdminPanelRegistryTests(TestCase):
             reverse("va_admin:upload-file"),
             data={"file": upload, "filename": "demo.csv"},
         )
-        self.assertEqual(response.status_code, 403)
+        assert response.status_code == 403
 
     def test_upload_rejects_path_traversal_filename(self):
         admin = get_user_model().objects.create_user(
@@ -151,8 +162,8 @@ class AdminPanelRegistryTests(TestCase):
             reverse("va_admin:upload-file"),
             data={"file": upload, "filename": "../demo.csv"},
         )
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("Invalid filename", response.content.decode("utf-8"))
+        assert response.status_code == 400
+        assert "Invalid filename" in response.content.decode("utf-8")
 
     def test_upload_overwrites_existing_file_by_default(self):
         admin = get_user_model().objects.create_user(
@@ -173,16 +184,16 @@ class AdminPanelRegistryTests(TestCase):
                 reverse("va_admin:upload-file"),
                 data={"file": first, "filename": filename},
             )
-            self.assertEqual(response_one.status_code, 200)
-            self.assertTrue(target.exists())
+            assert response_one.status_code == 200
+            assert target.exists()
 
             second = SimpleUploadedFile(filename, b"col\n2\n", content_type="text/csv")
             response_two = self.client.post(
                 reverse("va_admin:upload-file"),
                 data={"file": second, "filename": filename},
             )
-            self.assertEqual(response_two.status_code, 200)
-            self.assertEqual(target.read_bytes(), b"col\n2\n")
+            assert response_two.status_code == 200
+            assert target.read_bytes() == b"col\n2\n"
         finally:
             if target.exists():
                 target.unlink()

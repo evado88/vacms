@@ -5,8 +5,8 @@ from va_explorer.tests.factories import (
     UserFactory,
     VerbalAutopsyFactory,
 )
-from va_explorer.va_data_management.models import SRSClusterLocation
 from va_explorer.users.models import User, UserPasswordHistory
+from va_explorer.va_data_management.models import SRSClusterLocation
 
 pytestmark = pytest.mark.django_db
 

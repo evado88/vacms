@@ -10,6 +10,7 @@
   data-kpis-endpoint="{% url 'va_analytics:po-kpis-api' %}"
   data-place-of-birth-endpoint="{% url 'va_analytics:po-place-of-birth-api' %}"
   data-map-endpoint="{% url 'va_analytics:po-map-api' %}"
+  data-user-pii="{% if perms.va_analytics.view_pii %}true{% else %}false{% endif %}"
 >
   <!-- Row 1: KPIs -->
   <div class="po-top-row">

@@ -36,8 +36,8 @@
   </header>
 {% block inner %}
 {% include "partials/_messages.html" %}
-  <main class="login-card-container">	
-    
+  <main class="login-card-container">
+
       <div class="login-card row no-gutters">
           <div class="col-md-6 d-flex align-items-center justify-content-center card-image">
 			  <img class="auth-logo-3 img-fluid" src="{% static 'images/srs1.png' %}" alt="System Image"  class="img-fluid" />
@@ -45,18 +45,18 @@
           <div class="col-md-6 card-form">
               <h2>Sign in</h2>
               <form class="login" method="POST" action="{% url 'account_login' %}">
-                {% csrf_token %}                        
-                {{ form|crispy }}                        
+                {% csrf_token %}
+                {{ form|crispy }}
                 {% if redirect_field_value %}
                   <input type="hidden" name="{{ redirect_field_name }}" value="{{ redirect_field_value }}" />
                 {% endif %}
-                        
+
                 <div class="form-group mt-4">
                   <button class="btn btn-primary btn-block primaryAction btn-success" type="submit">
                     {% trans "Sign In" %}
                   </button>
                 </div>
-                        
+
                 <div class="text-center mt-3">
                   <a class="btn btn-link secondaryAction" href="{% url 'account_reset_password' %}">
                     {% trans "Forgot Password?" %}
@@ -74,7 +74,7 @@
           <p>Maintained by ZNPHI ICT</p>
       </div>
   </footer>
-  
+
   <!-- Scripts -->
     <script src="{% static 'vendor/jquery-3.5.1/jquery.min.js' %}"></script>
     <script src="{% static 'vendor/bootstrap-4.3.1/bootstrap.min.js' %}"></script>

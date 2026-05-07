@@ -4,7 +4,7 @@
 :alt: Two women talking as one takes notes on a laptop
 :width: 50%
 :figclass: "none"
-<small>An example VA Interview <br/> Image from 
+<small>An example VA Interview <br/> Image from
 healthdata.org/data-tools-practices/verbal-autopsy</small>
 ```
 

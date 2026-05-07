@@ -4,8 +4,8 @@ from django.urls import reverse
 
 from va_explorer.tests.factories import UserFactory
 from va_explorer.users.models import UserMessage
-from va_explorer.vacms.cmsmodels.events import Event
 from va_explorer.utils.context_processors import mailbox
+from va_explorer.vacms.cmsmodels.events import Event
 
 pytestmark = pytest.mark.django_db
 
@@ -32,7 +32,9 @@ def test_mailbox_context_processor_counts_unread(user, rf):
 def test_mailbox_list_view_shows_user_messages(client: Client, user):
     UserMessage.objects.create(user=user, subject="Hello", body="Greetings")
     other_user = UserFactory()
-    UserMessage.objects.create(user=other_user, subject="Hidden", body="Should not show")
+    UserMessage.objects.create(
+        user=other_user, subject="Hidden", body="Should not show"
+    )
 
     client.force_login(user)
     response = client.get(reverse("users:mailbox"))

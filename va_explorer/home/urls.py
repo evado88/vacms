@@ -45,6 +45,76 @@ urlpatterns = [
         name="home_overview_map_data",
     ),
     path(
+        "rumor-overview/summary/",
+        views.rumor_overview_summary_api_view,
+        name="rumor_overview_summary_api",
+    ),
+    path(
+        "rumor-overview/trend/",
+        views.rumor_overview_trend_api_view,
+        name="rumor_overview_trend_api",
+    ),
+    path(
+        "rumor-overview/top-rumors-trend/",
+        views.rumor_overview_top_rumors_trend_api_view,
+        name="rumor_overview_top_rumors_trend_api",
+    ),
+    path(
+        "rumor-overview/detection/",
+        views.rumor_overview_detection_api_view,
+        name="rumor_overview_detection_api",
+    ),
+    path(
+        "rumor-overview/follow-up/",
+        views.rumor_overview_follow_up_api_view,
+        name="rumor_overview_follow_up_api",
+    ),
+    path(
+        "rumor-overview/map/",
+        views.rumor_overview_map_api_view,
+        name="rumor_overview_map_api",
+    ),
+    path(
+        "rumor-overview/source-by-province/",
+        views.rumor_overview_source_by_province_api_view,
+        name="rumor_overview_source_by_province_api",
+    ),
+    path(
+        "rumor-overview/affected-population/",
+        views.rumor_overview_affected_population_api_view,
+        name="rumor_overview_affected_population_api",
+    ),
+    path(
+        "rumor-details/enumerator-stats/",
+        views.rumor_details_enumerator_stats_api_view,
+        name="rumor_details_enumerator_stats_api",
+    ),
+    path(
+        "rumor-overview/gps-coverage/",
+        views.rumor_overview_gps_coverage_api_view,
+        name="rumor_overview_gps_coverage_api",
+    ),
+    path(
+        "rumor-details/description-table/",
+        views.rumor_details_description_table_api_view,
+        name="rumor_details_description_table_api",
+    ),
+    path(
+        "rumor-details/sentiment/",
+        views.rumor_details_sentiment_api_view,
+        name="rumor_details_sentiment_api",
+    ),
+    path(
+        "rumor-overview/sentiment/",
+        views.rumor_details_sentiment_api_view,
+        name="rumor_overview_sentiment_api",
+    ),
+    path(
+        "rumor-details/word-cloud/",
+        views.rumor_details_word_cloud_api_view,
+        name="rumor_details_word_cloud_api",
+    ),
+    path(
         "components/overview/events/",
         views.home_overview_events_component_view,
         name="home_overview_events_component",

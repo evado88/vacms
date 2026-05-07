@@ -672,79 +672,79 @@ table thead th,
   :root {
     --base-font-size: 14px;
   }
-  
+
   .sidebar-container {
     width: 100%;
     transform: translateX(-100%);
   }
-  
+
   .sidebar-container.active {
     transform: translateX(0);
   }
-  
+
   .main-content {
     margin-left: 0;
     padding: 0.75rem;
   }
-  
+
   .dashboard-comp-container {
     margin-left: 0;
     flex-direction: column;
     align-items: stretch;
   }
-  
+
   .dashboard-title {
     margin-left: 0;
     text-align: center;
   }
-  
+
   .form-date {
     width: 100%;
   }
-  
+
   .tab-spacing {
     margin-left: 0;
     margin-right: 0;
     flex-direction: column;
   }
-  
+
   .auth-container {
     width: 95%;
     padding: 0.5rem;
   }
-  
+
   .auth-sign-in-box {
     padding: 1rem;
   }
-  
+
   .logo-title-container {
     flex-direction: column;
     text-align: center;
     padding: 1rem;
   }
-  
+
   .location-tree-depth-2 {
     padding-left: 0.75rem;
   }
-  
+
   .location-tree-depth-3 {
     padding-left: 1.5rem;
   }
-  
+
   .duplicates-table-text {
     width: 100%;
     min-width: auto;
   }
-  
+
   .home-page-statistics {
     font-size: 0.75rem;
   }
-  
+
   .pagination {
     flex-wrap: wrap;
     justify-content: center;
   }
-  
+
   .pagination li {
     margin: 0.125rem;
   }
@@ -755,24 +755,24 @@ table thead th,
   .sidebar-container {
     transform: translateX(-var(--sidebar-width));
   }
-  
+
   .sidebar-container.active {
     transform: translateX(0);
   }
-  
+
   .main-content {
     margin-left: 0;
     padding: 1rem;
   }
-  
+
   .dashboard-comp-container {
     margin-left: 0.5rem;
   }
-  
+
   .auth-container {
     width: 85%;
   }
-  
+
   .tab-spacing {
     margin-left: -0.5rem;
     margin-right: -0.5rem;
@@ -784,23 +784,23 @@ table thead th,
   .sidebar-container {
     transform: translateX(0);
   }
-  
+
   .main-content {
     margin-left: var(--sidebar-width);
   }
-  
+
   .sidebar-toggle {
     display: none;
   }
-  
+
   .collapse-toggle {
     display: flex;
   }
-  
+
   .auth-container {
     width: 75%;
   }
-  
+
   .dashboard-title {
     font-size: 1.8rem;
   }
@@ -811,7 +811,7 @@ table thead th,
   .auth-container {
     width: 70%;
   }
-  
+
   .dashboard-title {
     font-size: 2rem;
   }
@@ -823,7 +823,7 @@ table thead th,
     width: 60%;
     max-width: 800px;
   }
-  
+
   .dashboard-title {
     font-size: 2.2rem;
   }
@@ -834,11 +834,11 @@ table thead th,
   .sidebar-container.collapsed {
     width: var(--sidebar-collapsed-width);
   }
-  
+
   .sidebar-container.collapsed + .sidebar-overlay + .main-content {
     margin-left: var(--sidebar-collapsed-width);
   }
-  
+
   .sidebar-container.collapsed .brand-text,
   .sidebar-container.collapsed .nav-label,
   .sidebar-container.collapsed .section-title,
@@ -847,37 +847,37 @@ table thead th,
     visibility: hidden;
     transform: translateX(-0.625rem);
   }
-  
+
   .sidebar-container.collapsed .user-profile {
     justify-content: center;
   }
-  
+
   .sidebar-container.collapsed .nav-link {
     justify-content: center;
     padding: 0.75rem;
   }
-  
+
   .sidebar-container.collapsed .nav-link:hover {
     padding-left: 0.75rem;
   }
-  
+
   .sidebar-container.collapsed .nav-icon {
     margin-right: 0;
   }
-  
+
   .sidebar-container.collapsed .nav-section-header {
     padding: 0.9375rem 0.625rem 0.625rem;
     text-align: center;
   }
-  
+
   .sidebar-container.collapsed .collapse-toggle {
     right: 1.25rem;
   }
-  
+
   .sidebar-container.collapsed .nav-link {
     position: relative;
   }
-  
+
   .sidebar-container.collapsed .nav-link:hover::after {
     content: attr(data-tooltip);
     position: absolute;
@@ -903,15 +903,15 @@ table thead th,
   .sidebar-overlay {
     display: none;
   }
-  
+
   .main-content {
     margin-left: 0;
   }
-  
+
   .auth-body {
     background: none;
   }
-  
+
   .auth-title-name,
   .auth-title-desc {
     color: black !important;
@@ -925,11 +925,11 @@ table thead th,
     --primary-color: #006600;
     --secondary-color: #cc3300;
   }
-  
+
   .nav-link {
     border-bottom: 1px solid transparent;
   }
-  
+
   .nav-link:hover,
   .nav-link:focus {
     border-bottom-color: var(--secondary-color);
@@ -951,21 +951,21 @@ table thead th,
     background-color: #2c3e50;
     color: white;
   }
-  
+
   .main-content-wrapper {
     background-color: #1a1a1a;
     color: white;
   }
-  
+
   .custom-footer {
     background: #2c3e50;
     color: white;
   }
-  
+
   .table {
     color: white;
   }
-  
+
   .form-control {
     background-color: #d1d8de;
     border-color: #5a6c7d;

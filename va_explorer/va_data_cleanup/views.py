@@ -1,7 +1,7 @@
 from django.contrib.auth import get_user_model
 from django.contrib.auth.mixins import PermissionRequiredMixin
-from django.core.exceptions import PermissionDenied
 from django.contrib.contenttypes.models import ContentType
+from django.core.exceptions import PermissionDenied
 from django.db.models import CharField, Q
 from django.db.models import Value as V
 from django.db.models.functions import Concat
@@ -37,6 +37,24 @@ def _norm_ref(value):
     return normalized
 
 
+def _first_cause(va):
+    """Return the first coded cause string using the prefetched causes cache."""
+    causes = va.causes.all()
+    return causes[0].cause if causes else "Not Coded"
+
+
+def _issue_severity_counts(va):
+    """Count warnings and errors in a single pass over the prefetched coding issues."""
+    warnings = 0
+    errors = 0
+    for issue in va.coding_issues.all():
+        if issue.severity == "warning":
+            warnings += 1
+        elif issue.severity == "error":
+            errors += 1
+    return warnings, errors
+
+
 def _issue_label(issue):
     subtype = str((issue.details or {}).get("subtype") or "").strip()
     if subtype:
@@ -45,32 +63,24 @@ def _issue_label(issue):
 
 
 def _get_context_for_va_table(va_list, user):
-    context = [
-        {
-            "id": va.id,
-            "deceased": f"{va.Id10017} {va.Id10018}",
-            "interviewer": va.Id10010,
-            "interviewed": (
-                parse_date(va.Id10012) if (va.Id10012 != "dk") else "Unknown"
-            ),
-            "dod": parse_date(va.Id10023) if (va.Id10023 != "dk") else "Unknown",
-            "facility": va.location.name if va.location else "Not Provided",
-            "cause": (
-                va.causes.all()[0].cause if len(va.causes.all()) > 0 else "Not Coded"
-            ),
-            "warnings": len(
-                [
-                    issue
-                    for issue in va.coding_issues.all()
-                    if issue.severity == "warning"
-                ]
-            ),
-            "errors": len(
-                [issue for issue in va.coding_issues.all() if issue.severity == "error"]
-            ),
-        }
-        for va in va_list
-    ]
+    context = []
+    for va in va_list:
+        warnings, errors = _issue_severity_counts(va)
+        context.append(
+            {
+                "id": va.id,
+                "deceased": f"{va.Id10017} {va.Id10018}",
+                "interviewer": va.Id10010,
+                "interviewed": (
+                    parse_date(va.Id10012) if (va.Id10012 != "dk") else "Unknown"
+                ),
+                "dod": parse_date(va.Id10023) if (va.Id10023 != "dk") else "Unknown",
+                "facility": va.location.name if va.location else "Not Provided",
+                "cause": _first_cause(va),
+                "warnings": warnings,
+                "errors": errors,
+            }
+        )
     for item in context:
         if not user.can_view_pii:
             item["deceased"] = REDACTED_STRING
@@ -100,41 +110,27 @@ class DataCleanupIndexView(CustomAuthMixin, PermissionRequiredMixin, ListView):
         context = super().get_context_data(**kwargs)
         user_vas = self.request.user.verbal_autopsies()
 
-        context["total_duplicate_records"] = (
-            user_vas.filter(duplicate=True).count()
-        )
+        context["total_duplicate_records"] = user_vas.filter(duplicate=True).count()
         context["va_data_cleanup"] = True
 
-        va_duplicate_rows = [
-            {
-                "id": va.id,
-                "interviewer": va.Id10010,
-                "interviewed": parse_date(va.Id10012),
-                "dod": parse_date(va.Id10023) if (va.Id10023 != "dk") else "Unknown",
-                "facility": va.location.name if va.location else "Not Provided",
-                "deceased": va.deceased,
-                "cause": (
-                    va.causes.all()[0].cause
-                    if len(va.causes.all()) > 0
-                    else "Not Coded"
-                ),
-                "warnings": len(
-                    [
-                        issue
-                        for issue in va.coding_issues.all()
-                        if issue.severity == "warning"
-                    ]
-                ),
-                "errors": len(
-                    [
-                        issue
-                        for issue in va.coding_issues.all()
-                        if issue.severity == "error"
-                    ]
-                ),
-            }
-            for va in context["object_list"]
-        ]
+        va_duplicate_rows = []
+        for va in context["object_list"]:
+            warnings, errors = _issue_severity_counts(va)
+            va_duplicate_rows.append(
+                {
+                    "id": va.id,
+                    "interviewer": va.Id10010,
+                    "interviewed": parse_date(va.Id10012),
+                    "dod": (
+                        parse_date(va.Id10023) if (va.Id10023 != "dk") else "Unknown"
+                    ),
+                    "facility": va.location.name if va.location else "Not Provided",
+                    "deceased": va.deceased,
+                    "cause": _first_cause(va),
+                    "warnings": warnings,
+                    "errors": errors,
+                }
+            )
         context["object_list"] = va_duplicate_rows
         context["va_duplicate_rows"] = va_duplicate_rows
         # Keep parity with the former Home VA Statistics tables.
@@ -233,7 +229,7 @@ class DataCleanupIndexView(CustomAuthMixin, PermissionRequiredMixin, ListView):
         context["household_issue_rows"] = household_issue_rows
         context["dq_issue_total"] = len(household_issues)
 
-        reference_values = [ref for ref in household_reference_map.keys() if ref]
+        reference_values = [ref for ref in household_reference_map if ref]
         if not reference_values:
             context["pregnancy_issue_rows"] = []
             context["pregnancy_outcome_issue_rows"] = []
@@ -256,7 +252,16 @@ class DataCleanupIndexView(CustomAuthMixin, PermissionRequiredMixin, ListView):
 
         pregnancies = (
             Pregnancy.objects.filter(Q(PE_04__in=reference_candidates))
-            .only("id", "PE_04", "PE_06", "PE_07", "enumerator", "province", "district", "ward")
+            .only(
+                "id",
+                "PE_04",
+                "PE_06",
+                "PE_07",
+                "enumerator",
+                "province",
+                "district",
+                "ward",
+            )
             .order_by("-id")
         )[:MAX_DQ_RELATED_ROWS]
         pregnancy_rows = []
@@ -280,7 +285,17 @@ class DataCleanupIndexView(CustomAuthMixin, PermissionRequiredMixin, ListView):
 
         outcomes = (
             PregnancyOutcome.objects.filter(Q(PO_02__in=reference_candidates))
-            .only("id", "PO_02", "PO_04", "PO_41", "PO_46", "enumerator", "province", "district", "ward")
+            .only(
+                "id",
+                "PO_02",
+                "PO_04",
+                "PO_41",
+                "PO_46",
+                "enumerator",
+                "province",
+                "district",
+                "ward",
+            )
             .order_by("-id")
         )[:MAX_DQ_RELATED_ROWS]
         pregnancy_outcome_rows = []
@@ -306,7 +321,16 @@ class DataCleanupIndexView(CustomAuthMixin, PermissionRequiredMixin, ListView):
 
         deaths = (
             Death.objects.filter(Q(DE_01__in=reference_candidates))
-            .only("id", "DE_01", "DE_03", "DE_06", "enumerator", "province", "district", "ward")
+            .only(
+                "id",
+                "DE_01",
+                "DE_03",
+                "DE_06",
+                "enumerator",
+                "province",
+                "district",
+                "ward",
+            )
             .order_by("-id")
         )[:MAX_DQ_RELATED_ROWS]
         death_rows = []

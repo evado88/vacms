@@ -9,6 +9,7 @@
   data-place-endpoint="{% url 'va_analytics:outcomes-deaths-place-api' %}"
   data-signals-endpoint="{% url 'va_analytics:outcomes-deaths-signals-api' %}"
   data-timeliness-endpoint="{% url 'va_analytics:outcomes-deaths-timeliness-api' %}"
+  data-user-pii="{% if perms.va_analytics.view_pii %}true{% else %}false{% endif %}"
 >
   <div class="deaths-top-row">
   <section class="sectionContainer panelView" id="deathsPanelSection" data-component="panel">

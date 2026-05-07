@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import time
-from datetime import date, datetime, time, timedelta
-from typing import Iterable, Optional, Sequence
+from datetime import date, datetime, timedelta
+from datetime import time as dt_time
+from typing import Iterable, Sequence
 
 from django.core.cache import cache
 from django.utils import timezone
@@ -30,7 +31,7 @@ def _fix_tz_offset(s: str) -> str:
     return s
 
 
-def _parse_submission_timestamp(value: object) -> Optional[datetime]:
+def _parse_submission_timestamp(value: object) -> datetime | None:
     """Return a timezone-aware ``datetime`` for heterogeneous timestamp inputs."""
     if isinstance(value, datetime):
         dt = value
@@ -81,7 +82,7 @@ def _parse_submission_timestamp(value: object) -> Optional[datetime]:
     return dt
 
 
-def _first_valid_timestamp(obj: object, fields: Sequence[str]) -> Optional[datetime]:
+def _first_valid_timestamp(obj: object, fields: Sequence[str]) -> datetime | None:
     for field in fields:
         value = getattr(obj, field, None)
         timestamp = _parse_submission_timestamp(value)
@@ -97,7 +98,7 @@ def _normalise_queryset(qs, key_field: str):
 def _count_recent_records(
     qs,
     *,
-    key_field: Optional[str],
+    key_field: str | None,
     date_fields: Iterable[str],
     return_identifiers: bool = False,
 ) -> tuple[int, int, int] | tuple[int, int, int, set, set]:
@@ -177,7 +178,8 @@ def _scope_suffix(user) -> str:
     if not user or not getattr(user, "is_authenticated", False):
         return "anon"
     location_ids = ",".join(
-        str(pk) for pk in user.location_restrictions.order_by("pk").values_list("pk", flat=True)
+        str(pk)
+        for pk in user.location_restrictions.order_by("pk").values_list("pk", flat=True)
     )
     return f"user:{user.pk}|super:{int(bool(user.is_superuser))}|loc:{location_ids}"
 
@@ -215,7 +217,7 @@ def _compute_homepage_metrics(user=None) -> dict[str, int]:
     total_people = HouseholdMember.objects.count()
     if user and getattr(user, "is_authenticated", False):
         total_people = HouseholdMember.objects.filter(
-            household__in=households_qs.values_list("pk", flat=True)
+            household_id__in=households_qs.values_list("key", flat=True)
         ).count()
     today_people = (
         HouseholdMember.objects.filter(
@@ -244,10 +246,12 @@ def _compute_homepage_metrics(user=None) -> dict[str, int]:
     # -------------------------
     # Pregnancy Outcomes (use submissiondate/start/today)
     # -------------------------
-    total_preg_outcomes, today_preg_outcomes, week_preg_outcomes = _count_recent_records(
-        restrict_queryset_to_user_locations(PregnancyOutcome.objects.all(), user),
-        key_field="key",
-        date_fields=("submissiondate", "start", "today"),
+    total_preg_outcomes, today_preg_outcomes, week_preg_outcomes = (
+        _count_recent_records(
+            restrict_queryset_to_user_locations(PregnancyOutcome.objects.all(), user),
+            key_field="key",
+            date_fields=("submissiondate", "start", "today"),
+        )
     )
 
     # -------------------------
@@ -263,9 +267,13 @@ def _compute_homepage_metrics(user=None) -> dict[str, int]:
     # Verbal Autopsies (canonical, non-deleted; use submissiondate/Id10012/created)
     # -------------------------
     if user and getattr(user, "is_authenticated", False):
-        vas_canonical = user.verbal_autopsies().filter(deleted_at__isnull=True, duplicate=False)
+        vas_canonical = user.verbal_autopsies().filter(
+            deleted_at__isnull=True, duplicate=False
+        )
     else:
-        vas_canonical = VerbalAutopsy.objects.filter(deleted_at__isnull=True, duplicate=False)
+        vas_canonical = VerbalAutopsy.objects.filter(
+            deleted_at__isnull=True, duplicate=False
+        )
     total_vas, today_vas, week_vas = _count_recent_records(
         vas_canonical,
         key_field="instanceid",

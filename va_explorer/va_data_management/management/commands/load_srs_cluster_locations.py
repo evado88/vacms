@@ -1,15 +1,17 @@
 import argparse
+
 import pandas as pd
-from anytree import Node, RenderTree, LevelOrderIter
+from anytree import LevelOrderIter, Node, RenderTree
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
 from va_explorer.va_data_management.models import SRSClusterLocation
 
-
 # === Configuration toggles ===
-USE_UPPER_LOCATION_TYPES = False  # set True if your model choices are uppercase (e.g., "PROVINCE")
-PATH_SEPARATOR_FALLBACK = "/"     # used only if we cannot infer from an existing DB node
+USE_UPPER_LOCATION_TYPES = (
+    False  # set True if your model choices are uppercase (e.g., "PROVINCE")
+)
+PATH_SEPARATOR_FALLBACK = "/"  # used only if we cannot infer from an existing DB node
 
 
 def _lt(val: str) -> str:
@@ -30,7 +32,11 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument("csv_file", type=argparse.FileType("r"))
         # Use store_true so '--delete_previous' works as a flag
-        parser.add_argument("--delete_previous", action="store_true", help="Delete existing SRSClusterLocation rows before load")
+        parser.add_argument(
+            "--delete_previous",
+            action="store_true",
+            help="Delete existing SRSClusterLocation rows before load",
+        )
 
     def handle(self, *args, **options):
         csv_file = options["csv_file"]
@@ -39,17 +45,29 @@ class Command(BaseCommand):
         df = _process_cluster_csv(csv_file)
 
         # Fail fast if essential columns are missing
-        required = {"province", "district", "constituency", "ward", "ea", "cluster", "is_active"}
+        required = {
+            "province",
+            "district",
+            "constituency",
+            "ward",
+            "ea",
+            "cluster",
+            "is_active",
+        }
         missing = required - set(df.columns)
         if missing:
-            raise CommandError(f"CSV is missing required columns: {', '.join(sorted(missing))}")
+            raise CommandError(
+                f"CSV is missing required columns: {', '.join(sorted(missing))}"
+            )
 
         tree = _treeify_clusters(df)
         _process_cluster_tree(tree, delete_previous)
 
 
 def _process_cluster_csv(csv_file) -> pd.DataFrame:
-    df = pd.read_csv(csv_file, dtype=str).rename(columns=lambda c: str(c).strip().lower())
+    df = pd.read_csv(csv_file, dtype=str).rename(
+        columns=lambda c: str(c).strip().lower()
+    )
     df = df.applymap(lambda v: v.strip() if isinstance(v, str) else v)
 
     if "is_active" in df.columns and "status" not in df.columns:
@@ -62,9 +80,18 @@ def _process_cluster_csv(csv_file) -> pd.DataFrame:
     def _boolish(x):
         s = str(x).strip().lower()
         return s in {"1", "true", "t", "yes", "y", "active"}
+
     df["is_active"] = df["is_active"].map(_boolish)
 
-    for col in ["country", "province", "district", "constituency", "ward", "ea", "cluster"]:
+    for col in [
+        "country",
+        "province",
+        "district",
+        "constituency",
+        "ward",
+        "ea",
+        "cluster",
+    ]:
         if col not in df.columns:
             df[col] = ""
     if not df.get("country", pd.Series()).any():
@@ -75,8 +102,13 @@ def _process_cluster_csv(csv_file) -> pd.DataFrame:
         df = df[df[col] != ""]
 
     # Dedup ONLY on the admin path (one row per EA)
-    df = df.sort_values(["country", "province", "district", "constituency", "ward", "ea"])
-    df = df.drop_duplicates(subset=["country", "province", "district", "constituency", "ward", "ea"], keep="last")
+    df = df.sort_values(
+        ["country", "province", "district", "constituency", "ward", "ea"]
+    )
+    df = df.drop_duplicates(
+        subset=["country", "province", "district", "constituency", "ward", "ea"],
+        keep="last",
+    )
 
     return df.reset_index(drop=True)
 
@@ -161,7 +193,9 @@ def _build_path_from_anytree(node, sep: str) -> str:
 
 def _process_cluster_tree(tree: Node, delete_previous: bool = False):
     if delete_previous:
-        confirm = input("This will delete all SRSClusterLocation data. Continue? (yes/no): ")
+        confirm = input(
+            "This will delete all SRSClusterLocation data. Continue? (yes/no): "
+        )
         if confirm.strip().lower() not in {"yes", "y"}:
             print("Aborted.")
             return
@@ -177,7 +211,9 @@ def _process_cluster_tree(tree: Node, delete_previous: bool = False):
     added = updated = 0
 
     for node in tree_nodes:
-        model_data = {k: getattr(node, k) for k in allowed_node_attrs if hasattr(node, k)}
+        model_data = {
+            k: getattr(node, k) for k in allowed_node_attrs if hasattr(node, k)
+        }
 
         if node.is_root:
             # Root: get-or-create by name (and optionally location_type)

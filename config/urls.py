@@ -35,7 +35,7 @@ urlpatterns = [
         include("va_explorer.va_data_cleanup.urls", namespace="va_data_cleanup"),
     ),
     # case management
-    path('case-management/', include('va_explorer.vacms.urls')), # new
+    path("case-management/", include("va_explorer.vacms.urls")),  # new
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 
 

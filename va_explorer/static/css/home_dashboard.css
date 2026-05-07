@@ -1,15 +1,17 @@
 #homeTabs .nav-link {
-  font-weight: 400;
+  font-weight: 700;
 }
 
 #homeTabs .nav-link.active {
   font-weight: 700;
+  color: #009140 !important;
 }
 
 #homeTabsContent {
   width: 100%;
   min-width: 0;
   overflow-x: hidden;
+  margin-top: 0;
 }
 
 #national-operational-view .national-operational-view-shell {
@@ -394,6 +396,12 @@
   color: #0f172a;
   font-weight: 700;
   margin-bottom: 14px;
+}
+
+#tab-3.home-va-tab #homeVAStatisticsComponentSlot .row > .msg-header:first-of-type {
+  margin-left: 10px;
+  text-indent: 10px;
+  overflow: hidden;
 }
 
 #tab-3.home-va-tab .home-page-statistics,

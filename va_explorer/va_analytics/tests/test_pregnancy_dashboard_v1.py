@@ -3,13 +3,13 @@ from django.contrib.auth.models import Group, Permission
 from django.test import RequestFactory, TestCase
 from django.urls import reverse
 
+from va_explorer.tests.factories import LocationFactory
 from va_explorer.va_analytics.views import (
     _build_pregnancy_ga_anc_points,
     _build_pregnancy_ga_detection_distribution,
     _build_pregnancy_trend_series,
     build_pregnancy_qs,
 )
-from va_explorer.tests.factories import LocationFactory
 from va_explorer.va_data_management.models import Pregnancy
 
 
@@ -47,7 +47,7 @@ class PregnancyDashboardDataTests(TestCase):
         )
         qs = build_pregnancy_qs(request)
 
-        self.assertEqual(list(qs.values_list("key", flat=True)), [in_range.key])
+        assert list(qs.values_list("key", flat=True)) == [in_range.key]
 
     def test_applies_user_location_restrictions(self):
         User = get_user_model()
@@ -65,7 +65,7 @@ class PregnancyDashboardDataTests(TestCase):
         request.user = user
         qs = build_pregnancy_qs(request)
 
-        self.assertEqual(set(qs.values_list("key", flat=True)), {"preg-south"})
+        assert set(qs.values_list("key", flat=True)) == {"preg-south"}
 
     def test_ga_detection_distribution_computation(self):
         self._create_pregnancy(
@@ -74,9 +74,11 @@ class PregnancyDashboardDataTests(TestCase):
             submissiondate="2026-01-15",  # 14 days => 2 weeks
         )
 
-        labels, counts = _build_pregnancy_ga_detection_distribution(Pregnancy.objects.all())
-        self.assertEqual(labels[1], "2")
-        self.assertEqual(counts[1], 1)
+        labels, counts = _build_pregnancy_ga_detection_distribution(
+            Pregnancy.objects.all()
+        )
+        assert labels[1] == "2"
+        assert counts[1] == 1
 
     def test_ga_anc_points_computation(self):
         self._create_pregnancy(
@@ -87,9 +89,9 @@ class PregnancyDashboardDataTests(TestCase):
         )
 
         payload = _build_pregnancy_ga_anc_points(Pregnancy.objects.all())
-        self.assertIn({"x": 4, "y": 5}, payload["points"])
-        self.assertEqual(payload["x_min"], 1)
-        self.assertEqual(payload["x_max"], 40)
+        assert {"x": 4, "y": 5} in payload["points"]
+        assert payload["x_min"] == 1
+        assert payload["x_max"] == 40
 
     def test_ga_anc_points_caps_anc_visits_at_fifteen(self):
         self._create_pregnancy(
@@ -100,7 +102,7 @@ class PregnancyDashboardDataTests(TestCase):
         )
 
         payload = _build_pregnancy_ga_anc_points(Pregnancy.objects.all())
-        self.assertIn({"x": 4, "y": 15}, payload["points"])
+        assert {"x": 4, "y": 15} in payload["points"]
 
     def test_pregnancy_trend_hard_starts_at_september_2024(self):
         self._create_pregnancy("preg-legacy", PE_09A="2024-08-20")
@@ -108,9 +110,9 @@ class PregnancyDashboardDataTests(TestCase):
 
         labels, counts = _build_pregnancy_trend_series(Pregnancy.objects.all())
 
-        self.assertIn("Sep 2024", labels)
-        self.assertNotIn("Aug 2024", labels)
-        self.assertEqual(sum(counts), 1)
+        assert "Sep 2024" in labels
+        assert "Aug 2024" not in labels
+        assert sum(counts) == 1
 
 
 class PregnancyDashboardEndpointSchemaTests(TestCase):
@@ -122,6 +124,7 @@ class PregnancyDashboardEndpointSchemaTests(TestCase):
         User = get_user_model()
         user = User.objects.create_user(
             username="pregnancy_dashboard_test_user",
+            email="pregnancy-dashboard-test@example.com",
             password="test-password-123",
         )
         user.groups.add(group)
@@ -142,44 +145,41 @@ class PregnancyDashboardEndpointSchemaTests(TestCase):
 
     def test_summary_schema(self):
         data = self.client.get(reverse("va_analytics:pregnancy-summary-api")).json()
-        self.assertEqual(
-            set(data.keys()),
-            {
-                "card_last_data_update",
-                "card_last_event_date",
-                "card_number_of_events",
-                "card_mean_age",
-            },
-        )
+        assert set(data.keys()) == {
+            "card_last_data_update",
+            "card_last_event_date",
+            "card_number_of_events",
+            "card_mean_age",
+        }
 
     def test_trend_schema(self):
         data = self.client.get(reverse("va_analytics:pregnancy-trend-api")).json()
-        self.assertEqual(set(data.keys()), {"labels", "data"})
+        assert set(data.keys()) == {"labels", "data"}
 
     def test_ga_detection_schema(self):
-        data = self.client.get(reverse("va_analytics:pregnancy-ga-detection-api")).json()
-        self.assertEqual(set(data.keys()), {"labels", "data"})
+        data = self.client.get(
+            reverse("va_analytics:pregnancy-ga-detection-api")
+        ).json()
+        assert set(data.keys()) == {"labels", "data"}
 
     def test_ga_anc_schema(self):
         data = self.client.get(reverse("va_analytics:pregnancy-ga-anc-api")).json()
-        self.assertEqual(set(data.keys()), {"points", "x_min", "x_max"})
+        assert set(data.keys()) == {"points", "x_min", "x_max"}
 
     def test_map_schema(self):
         data = self.client.get(reverse("va_analytics:pregnancy-map-api")).json()
-        self.assertTrue(
-            {
-                "map_view",
-                "counts",
-                "province_counts",
-                "district_counts",
-                "constituency_counts",
-                "ward_counts",
-                "ea_counts",
-                "map_total_events",
-                "map_province_sums",
-                "map_district_sums",
-                "map_constituency_sums",
-                "map_ward_sums",
-                "map_ea_sums",
-            }.issubset(set(data.keys()))
-        )
+        assert {
+            "map_view",
+            "counts",
+            "province_counts",
+            "district_counts",
+            "constituency_counts",
+            "ward_counts",
+            "ea_counts",
+            "map_total_events",
+            "map_province_sums",
+            "map_district_sums",
+            "map_constituency_sums",
+            "map_ward_sums",
+            "map_ea_sums",
+        }.issubset(set(data.keys()))

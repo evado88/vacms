@@ -4,6 +4,7 @@
   data-component="dashboard"
   data-cause-trend-endpoint="{% url 'va_analytics:dashboard-api' %}"
   data-map-endpoint="{% url 'va_analytics:dashboard-api' %}"
+  data-user-pii="{% if perms.va_analytics.view_pii %}true{% else %}false{% endif %}"
 >
   <!-- Row 1: KPIs -->
   <div class="va-top-row">

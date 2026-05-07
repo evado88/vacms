@@ -9,26 +9,18 @@
     5: { label: "EA", file: "level_5_ea.geojson", key: "ea_name" },
   };
 
-  const DEFAULT_COLORS = [
-    "#4575b4",
-    "#74add1",
-    "#abd9e9",
-    "#e0f3f8",
-    "#fee090",
-    "#fdae61",
-    "#f46d43",
-    "#d73027",
-  ];
-  const VA_COLORS = [
-    "#4575b4",
-    "#74add1",
-    "#abd9e9",
-    "#e0f3f8",
-    "#ffffbf",
-    "#fee090",
-    "#fdae61",
-    "#f46d43",
-    "#d73027",
+  // Sequential warm palette (ColorBrewer OrRd). Lightest → darkest maps to
+  // lowest → highest counts; teal-green GPS dots overlay on top with
+  // strong cool-vs-warm contrast.
+  const SEQUENTIAL_COLORS = [
+    "#fff7ec",
+    "#fee8c8",
+    "#fdd49e",
+    "#fdbb84",
+    "#fc8d59",
+    "#ef6548",
+    "#d7301f",
+    "#990000",
   ];
 
   const toTitleCase = (value) =>
@@ -67,8 +59,9 @@
     const shouldReproject = crsName.includes("3857") || crsName.includes("102100");
     if (!shouldReproject) return geojson;
 
-    const next = JSON.parse(JSON.stringify(geojson));
-    next.features = next.features.map((feature) => {
+    // Mutate in-place: this runs once per file (result is cached in geojsonCache),
+    // so a deep-copy via JSON.parse/JSON.stringify is not needed here.
+    geojson.features = geojson.features.map((feature) => {
       const geometry = feature?.geometry;
       if (!geometry || !geometry.coordinates) return feature;
       return {
@@ -79,8 +72,8 @@
         },
       };
     });
-    delete next.crs;
-    return next;
+    delete geojson.crs;
+    return geojson;
   };
 
   const createHierarchicalDashboardMap = (options) => {
@@ -98,6 +91,7 @@
       initialView = "Province",
       styleVariant = "default",
       fitToDataBounds = true,
+      userCanViewPII = false,
     } = options;
 
     const state = {
@@ -108,9 +102,7 @@
       filters: {},
       activeView: initialView,
       path: [{ id: "ZM", name: "Zambia", levelLabel: "Country", levelIndex: 0 }],
-      colors: (
-        colors && colors.length ? colors : (styleVariant === "va" ? VA_COLORS : DEFAULT_COLORS)
-      ).slice(),
+      colors: (colors && colors.length ? colors : SEQUENTIAL_COLORS).slice(),
       selectionKey: "",
       selectedNode: null,
     };
@@ -206,11 +198,16 @@
       return state.colors[Math.min(bins.length - 2, state.colors.length - 1)];
     };
 
+    const gpsLegendRow = () =>
+      userCanViewPII
+        ? `<div class="legend-gps-row"><span class="legend-gps-swatch"></span>GPS records</div>`
+        : "";
+
     const renderLegend = (bins) => {
       const legend = document.getElementById(legendId);
       if (!legend) return;
       if (!bins || bins.length <= 1) {
-        legend.innerHTML = `<div>${noDataMessage || "No map data available for the selected filters."}</div>`;
+        legend.innerHTML = `<div>${noDataMessage || "No map data available for the selected filters."}</div>${gpsLegendRow()}`;
         setEmpty(true);
         return;
       }
@@ -219,6 +216,7 @@
         const label = i === bins.length - 2 ? `${bins[i]}+` : `${bins[i]} - ${bins[i + 1]}`;
         html += `<div><svg width='18' height='14'><rect fill='${state.colors[i]}' width='14' height='14'></rect></svg>${label}</div>`;
       }
+      html += gpsLegendRow();
       legend.innerHTML = html;
       setEmpty(false);
     };
@@ -272,7 +270,9 @@
 
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         maxZoom: 19,
-        attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+        // OSM public tile servers block requests when the browser omits Referer.
+        referrerPolicy: "strict-origin-when-cross-origin",
+        attribution: '&copy; OpenStreetMap contributors',
       }).addTo(state.map);
 
       if (L.control && typeof L.control.fullscreen === "function") {
@@ -390,12 +390,15 @@
       }
 
       const parent = state.path[state.path.length - 1];
-      const filtered = JSON.parse(JSON.stringify(geojson));
-      filtered.features = filtered.features.filter((feature) => {
+      // Build a shallow wrapper with a filtered features array rather than a
+      // full deep-copy via JSON.parse/JSON.stringify. Leaflet does not mutate
+      // the feature objects, only reads their geometry/properties.
+      const filteredFeatures = geojson.features.filter((feature) => {
         if (state.path.length === 1 && level > 1) return true;
         if (level === 1) return feature?.properties?.parent_id == null;
         return String(feature?.properties?.parent_id) === String(parent.id);
       });
+      const filtered = { type: geojson.type, features: filteredFeatures };
 
       const rows = rowsForLevel(state.payload, level);
       const lookup = buildLookup(rows, level);
@@ -420,10 +423,12 @@
         onEachFeature: (feature, layer) => {
           const areaName = feature?.properties?.area_name || "";
           const rowData = lookupRowData(lookup, level, feature) || { count: 0 };
+          const count = toSafeInt(rowData.count);
           const levelLabel = toTitleCase(feature?.properties?.area_level_label || LEVEL_CONFIG[level]?.label || "");
-          const canDrill = level < 5;
+          const canDrill = level < 5 && count > 0;
           layer.bindTooltip(renderTooltipHtml(areaName, levelLabel, rowData, canDrill));
           layer.on("click", async () => {
+            if (!canDrill) return;
             const selectedNode = {
               id: feature?.properties?.area_id,
               name: areaName,
@@ -433,7 +438,6 @@
             state.selectedNode = selectedNode;
             emitSelectionChange();
 
-            if (!canDrill) return;
             const nextNode = {
               id: feature?.properties?.area_id,
               name: areaName,
@@ -451,7 +455,7 @@
       renderLegend(bins);
       renderBreadcrumbs();
       fitLayerBounds();
-      setEmpty(filtered.features.length === 0 || rows.length === 0);
+      setEmpty(filteredFeatures.length === 0 || rows.length === 0);
     };
 
     const fetchPayload = async (filters) => {
@@ -468,6 +472,31 @@
       return response.json();
     };
 
+    let gpsLayerCtl = null;
+
+    const ensureGPSLayer = () => {
+      if (gpsLayerCtl || !userCanViewPII) return gpsLayerCtl;
+      if (!state.map || !window.DashboardGPSLayer) return null;
+      gpsLayerCtl = window.DashboardGPSLayer.attachGPSLayer(state.map, {
+        userCanViewPII: true,
+        fetchPoints: async () => {
+          const params = buildParams(state.filters || {});
+          params.set("include_gps_points", "true");
+          const requestUrl = params.toString()
+            ? `${endpoint}?${params.toString()}`
+            : endpoint;
+          const response = await fetch(requestUrl, {
+            method: "GET",
+            headers: { "X-Requested-With": "XMLHttpRequest" },
+            credentials: "same-origin",
+          });
+          if (!response.ok) throw new Error(`GPS request failed: ${requestUrl}`);
+          return response.json();
+        },
+      });
+      return gpsLayerCtl;
+    };
+
     const refresh = async (filters) => {
       state.filters = { ...(filters || {}) };
       const nextView = filters?.map_view || state.activeView || "Province";
@@ -479,12 +508,17 @@
       state.activeView = nextView;
       state.payload = await fetchPayload(state.filters);
       await render();
+      if (userCanViewPII) {
+        const layer = gpsLayerCtl || ensureGPSLayer();
+        if (layer) layer.refresh();
+      }
     };
 
     return {
       refresh,
       resize: () => {
         if (state.map) state.map.invalidateSize();
+        if (gpsLayerCtl) gpsLayerCtl.refresh();
       },
       resetDrill: async () => {
         state.path = [{ id: "ZM", name: "Zambia", levelLabel: "Country", levelIndex: 0 }];
@@ -493,6 +527,9 @@
         await refresh(state.filters);
       },
       getSelection: () => ({ ...currentSelection() }),
+      hideGPSLayer: () => {
+        if (gpsLayerCtl) gpsLayerCtl.hide();
+      },
     };
   };
 

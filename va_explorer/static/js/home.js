@@ -190,7 +190,18 @@ const setVAChart = (x, y, canvas) => {
 
   const existingChart = chartInstances.get(canvas);
   if (existingChart) {
-    existingChart.destroy();
+    existingChart.data.labels = x;
+    if (existingChart.data.datasets[0]) {
+      existingChart.data.datasets[0].data = y;
+      existingChart.data.datasets[0].borderColor = BORDER_COLOR;
+    } else {
+      existingChart.data.datasets = [{
+        data: y,
+        borderColor: BORDER_COLOR,
+      }];
+    }
+    existingChart.update("none");
+    return;
   }
 
   const chart = new Chart(ctx, {
@@ -353,32 +364,41 @@ const updateNationalOperationalKpis = (kpis) => {
 
   setElementTextById("nov-kpi-today-eas", eas.today);
   setElementTextById("nov-kpi-week-eas", eas.week);
+  setElementTextById("nov-kpi-30d-eas", eas.last_30_days);
   setElementTextById("nov-kpi-total-eas", eas.total);
 
   setElementTextById("nov-kpi-today-households", households.today);
   setElementTextById("nov-kpi-week-households", households.week);
+  setElementTextById("nov-kpi-30d-households", households.last_30_days);
   setElementTextById("nov-kpi-total-households", households.total);
 
   setElementTextById("nov-kpi-today-people", people.today);
   setElementTextById("nov-kpi-week-people", people.week);
+  setElementTextById("nov-kpi-30d-people", people.last_30_days);
   setElementTextById("nov-kpi-total-people", people.total);
 
   setElementTextById("nov-kpi-today-pregnancies", pregnancies.today);
   setElementTextById("nov-kpi-week-pregnancies", pregnancies.week);
+  setElementTextById("nov-kpi-30d-pregnancies", pregnancies.last_30_days);
   setElementTextById("nov-kpi-total-pregnancies", pregnancies.total);
 
   setElementTextById("nov-kpi-today-preg-outcomes", pregOutcomes.today);
   setElementTextById("nov-kpi-week-preg-outcomes", pregOutcomes.week);
+  setElementTextById("nov-kpi-30d-preg-outcomes", pregOutcomes.last_30_days);
   setElementTextById("nov-kpi-total-preg-outcomes", pregOutcomes.total);
 
   setElementTextById("nov-kpi-today-deaths", deaths.today);
   setElementTextById("nov-kpi-week-deaths", deaths.week);
+  setElementTextById("nov-kpi-30d-deaths", deaths.last_30_days);
   setElementTextById("nov-kpi-total-deaths", deaths.total);
 
   setElementTextById("nov-kpi-today-vas", vas.today);
   setElementTextById("nov-kpi-week-vas", vas.week);
+  setElementTextById("nov-kpi-30d-vas", vas.last_30_days);
   setElementTextById("nov-kpi-total-vas", vas.total);
 }
+
+let _novKpiInflight = null;
 
 const requestNationalOperationalFilterData = (options = {}) => {
   const started = perfNow();
@@ -399,6 +419,13 @@ const requestNationalOperationalFilterData = (options = {}) => {
 
   const kpiEndpoint = root.dataset.filterUrl || "";
   if (kpiEndpoint) {
+    // Abort any in-flight KPI request before starting a new one so rapid
+    // filter changes or tab switches don't queue up stale server calls.
+    if (_novKpiInflight) {
+      _novKpiInflight.abort();
+    }
+    const controller = new AbortController();
+    _novKpiInflight = controller;
     const params = new URLSearchParams({
       kpis_only: "1",
       preset: selectedPreset,
@@ -411,8 +438,10 @@ const requestNationalOperationalFilterData = (options = {}) => {
       method: "GET",
       headers: { "X-Requested-With": "XMLHttpRequest" },
       credentials: "same-origin",
+      signal: controller.signal,
     })
       .then((response) => {
+        _novKpiInflight = null;
         if (!response.ok) throw new Error(`Failed to load overview filter data: ${response.status}`);
         return response.json();
       })
@@ -421,7 +450,9 @@ const requestNationalOperationalFilterData = (options = {}) => {
         updateNationalOperationalKpis(jsonResponse.kpis || {});
       })
       .catch((error) => {
-        console.error("[home] failed to fetch National Operational KPIs", error);
+        if (error.name !== "AbortError") {
+          console.error("[home] failed to fetch National Operational KPIs", error);
+        }
       });
   }
 
@@ -433,6 +464,7 @@ const requestNationalOperationalFilterData = (options = {}) => {
   if (!homeOverviewMapController) {
     const endpoint = mapPanel.dataset.mapEndpoint || "";
     if (!endpoint) return;
+    const userCanViewPII = (mapPanel.dataset.userPii || "").toLowerCase() === "true";
     homeOverviewMapController = createMapFactory({
       containerId: "homeOverviewMapContainer",
       legendId: "homeOverviewMapLegend",
@@ -455,6 +487,7 @@ const requestNationalOperationalFilterData = (options = {}) => {
       fitToDataBounds: true,
       styleVariant: "va",
       noDataMessage: "No geographic pregnancy data available for the selected filters.",
+      userCanViewPII,
     });
   }
 
@@ -802,18 +835,10 @@ const detectActiveHomeTab = () =>
   document.querySelector(".dashboard-shell[data-shell='home'] .dashboard-tab-panel.show.active")?.dataset?.tabPanel
   || "overview";
 
+// dashboard_tabs.js dispatches "dashboard:refresh-tab" for the initial active tab,
+// so we rely on that event handler below instead of calling initHomeTab here.
+// This prevents the double-init that caused duplicate map-data/filter-data fetches.
 const initialStarted = perfNow();
-initHomeTab(detectActiveHomeTab())
-  .then(() => {
-    perfLog("initial.page_bootstrap", initialStarted, { activeTab: detectActiveHomeTab() });
-    if (!firstRenderMeasured) {
-      firstRenderMeasured = true;
-      console.log("[perf][acceptance] home.first_render_ms", {
-        durationMs: Number((perfNow() - initialStarted).toFixed(2)),
-      });
-    }
-  })
-  .catch((error) => console.error(error));
 
 document.querySelectorAll(".dashboard-shell[data-shell='home'] [data-tab]").forEach((tabLink) => {
   tabLink.addEventListener("click", () => {
@@ -871,6 +896,13 @@ document.addEventListener("dashboard:refresh-tab", (event) => {
   initHomeTab(tab)
     .then(() => {
       const durationMs = perfNow() - started;
+      if (!firstRenderMeasured) {
+        firstRenderMeasured = true;
+        perfLog("initial.page_bootstrap", initialStarted, { activeTab: tab });
+        console.log("[perf][acceptance] home.first_render_ms", {
+          durationMs: Number((perfNow() - initialStarted).toFixed(2)),
+        });
+      }
       if (tabWarmCache.has(tab)) {
         const nearInstantThresholdMs = 220;
         const pass = durationMs <= nearInstantThresholdMs;

@@ -13,4 +13,3 @@ def normalize_csa_name_for_join(value):
     text = re.sub(r"\s+\d+$", "", text).strip().lower()
     text = re.sub(r"\s+", " ", text)
     return text
-

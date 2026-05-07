@@ -1,12 +1,12 @@
-from .death import Death
-from .household_census import SRSClusterLocation, Household, HouseholdMember
 from .cluster_locations import ClusterLocationCodes
+from .csa_daily_tracker import CSADailyTracker
+from .csa_supervisor_target import CSASupervisorTargetMap
+from .death import Death
+from .household_census import Household, HouseholdMember, SRSClusterLocation
 from .odk_reference import ODKFormChoice
 from .odk_state import ODKPullLock, ODKPullState
 from .pregnancy import Pregnancy
 from .pregnancy_outcome import PregnancyOutcome, PregnancyOutcomeBaby
-from .csa_daily_tracker import CSADailyTracker
-from .csa_supervisor_target import CSASupervisorTargetMap
 from .verbal_autopsy import (
     CauseCodingIssue,
     CauseOfDeath,
@@ -17,7 +17,8 @@ from .verbal_autopsy import (
     questions_to_autodetect_duplicates,
 )
 
-__all__ = [ "SRSClusterLocation",
+__all__ = [
+    "SRSClusterLocation",
     "Household",
     "HouseholdMember",
     "ClusterLocationCodes",

@@ -1,10 +1,14 @@
 import argparse
+
 import pandas as pd
 from django.core.management.base import BaseCommand, CommandError
-from va_explorer.va_data_management.models import ODKFormChoice, Pregnancy
 
+from va_explorer.va_data_management.models import ODKFormChoice, Pregnancy
+from va_explorer.va_data_management.utils.geopoint import merge_geopoint_into
 from va_explorer.va_data_management.utils.loading import (
-    normalize_dataframe_columns, normalize_string, load_odk_csv_to_model
+    load_odk_csv_to_model,
+    normalize_dataframe_columns,
+    normalize_string,
 )
 
 
@@ -25,14 +29,18 @@ class Command(BaseCommand):
         if not ODKFormChoice.objects.filter(form_name=norm_form_name).exists():
             raise CommandError("Definition for form 'pregnancy' has not been loaded")
 
-        df = pd.read_csv(csv_file)        
-        
+        df = pd.read_csv(csv_file)
+
+        df = merge_geopoint_into(df, source_prefix="PE-25", target_field="PE_25")
+
         # Normalize columns to model fields (keeps 'key' once added to model)
         df = normalize_dataframe_columns(df, Pregnancy)
 
         # Ensure `key` exists
         if "key" not in df.columns:
-            raise CommandError("The CSV must include a 'key' column to enforce uniqueness.")
+            raise CommandError(
+                "The CSV must include a 'key' column to enforce uniqueness."
+            )
 
         # Drop rows with missing/blank keys (cannot dedupe reliably)
         before_nonnull = len(df)
@@ -54,9 +62,28 @@ class Command(BaseCommand):
 
         # Map ODK code values -> labels
         odk_map_columns = [
-            'province','district','constituency','ward','ea','enumerator','consent',
-            'PE_03','PE_08','PE_09','PE_10','PE_11','PE_12','PE_12A',
-            'PE_13','PE_14','PE_15','PE_16','PE_17','PE_18','PE_23','PE_24',
+            "province",
+            "district",
+            "constituency",
+            "ward",
+            "ea",
+            "enumerator",
+            "consent",
+            "PE_03",
+            "PE_08",
+            "PE_09",
+            "PE_10",
+            "PE_11",
+            "PE_12",
+            "PE_12A",
+            "PE_13",
+            "PE_14",
+            "PE_15",
+            "PE_16",
+            "PE_17",
+            "PE_18",
+            "PE_23",
+            "PE_24",
         ]
         odk_map_columns = [c.strip() for c in odk_map_columns]
 
@@ -65,7 +92,7 @@ class Command(BaseCommand):
             model=Pregnancy,
             odk_choices_queryset=ODKFormChoice.objects.filter(form_name=norm_form_name),
             odk_map_columns=odk_map_columns,
-            verbose=True  # Set to False to reduce output
+            verbose=True,  # Set to False to reduce output
         )
 
         # Bulk create (DB has unique index on key for safety)
@@ -76,12 +103,7 @@ class Command(BaseCommand):
             created = len(objects)
 
         self.stdout.write(
-            "Imported {created} pregnancy records "
-            "(skipped {skipped_existing} existing, {intrafile_dupes} intra-file duplicates, "
-            "dropped {dropped_blank} blank-key rows).".format(
-                created=created,
-                skipped_existing=skipped_existing,
-                intrafile_dupes=intrafile_dupes,
-                dropped_blank=dropped_blank,
-            )
+            f"Imported {created} pregnancy records "
+            f"(skipped {skipped_existing} existing, {intrafile_dupes} intra-file duplicates, "
+            f"dropped {dropped_blank} blank-key rows)."
         )

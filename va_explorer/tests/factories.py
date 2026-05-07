@@ -1,4 +1,5 @@
 import json
+import uuid
 
 import factory
 from django.contrib.auth import get_user_model, models
@@ -8,10 +9,13 @@ from factory.django import DjangoModelFactory
 from va_explorer.va_data_management.models import (
     CauseCodingIssue,
     CauseOfDeath,
+    Death,
     DhisStatus,
     Location,
-    VerbalAutopsy,
+    Pregnancy,
+    PregnancyOutcome,
     SRSClusterLocation,
+    VerbalAutopsy,
 )
 
 User = get_user_model()
@@ -168,6 +172,39 @@ class CauseCodingIssueFactory(DjangoModelFactory):
     text = "Warning: field username, the va record does not have an assigned username."
     severity = "warning"
     settings = json.dumps({"HIV": "l", "Malaria": "l"})
+
+
+class DeathFactory(DjangoModelFactory):
+    class Meta:
+        model = Death
+
+    key = factory.LazyFunction(lambda: str(uuid.uuid4()))
+    province = Faker("state")
+    district = Faker("city")
+    ward = Faker("city")
+    enumerator = Faker("name")
+
+
+class PregnancyFactory(DjangoModelFactory):
+    class Meta:
+        model = Pregnancy
+
+    key = factory.LazyFunction(lambda: str(uuid.uuid4()))
+    province = Faker("state")
+    district = Faker("city")
+    ward = Faker("city")
+    enumerator = Faker("name")
+
+
+class PregnancyOutcomeFactory(DjangoModelFactory):
+    class Meta:
+        model = PregnancyOutcome
+
+    key = factory.LazyFunction(lambda: str(uuid.uuid4()))
+    province = Faker("state")
+    district = Faker("city")
+    ward = Faker("city")
+    enumerator = Faker("name")
 
 
 class DhisStatusFactory(DjangoModelFactory):

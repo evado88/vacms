@@ -1,53 +1,64 @@
-<h4 class="section-header">CSAs</h4>
+<div class="csa-section-header">
+  <h4 class="section-header csa-section-title">Search</h4>
+  <div class="csa-search-group">
+    <div class="csa-search">
+      <input type="search" placeholder="CSA Name" aria-label="Search CSA name" id="csaNameSearch" value="{{ csa_search }}">
+    </div>
+    <div class="csa-search">
+      <input type="search" placeholder="Supervisor" aria-label="Search supervisor" id="csaSupervisorSearch" value="{{ csa_supervisor_search }}">
+    </div>
+    <div class="csa-search">
+      <input type="search" placeholder="District" aria-label="Search district" id="csaDistrictSearch" value="{{ csa_district_search }}">
+    </div>
+    <div class="csa-search">
+      <input type="search" placeholder="Ward" aria-label="Search ward" id="csaWardSearch" value="{{ csa_ward_search }}">
+    </div>
+  </div>
+</div>
 <div class="section-body">
   <div class="csa-table-container" role="region" aria-label="CSA table">
     <table class="csa-table">
       <thead>
         <tr>
-          <th style="width: 16%;">
-            <div class="csa-search csa-table-header">
-              <input type="search" placeholder="CSA Name (Search)" aria-label="Search CSA" id="csaNameSearch" value="{{ csa_search }}">
-              <a
-                href="?csa_sort=name&csa_dir={% if csa_sort == 'name' and csa_dir == 'desc' %}asc{% else %}desc{% endif %}&csa_page=1"
-                class="regional-sort-link sort-icon"
-                data-table="csa"
-                aria-label="Sort CSA name"
-              >{% if csa_sort == 'name' %}{% if csa_dir == 'asc' %}▲{% else %}▼{% endif %}{% else %}▲{% endif %}</a>
-            </div>
+          <th style="width: 12%;">
+            <a href="?csa_sort=name&csa_dir={% if csa_sort == 'name' and csa_dir == 'desc' %}asc{% else %}desc{% endif %}&csa_page=1" class="regional-sort-link" data-table="csa">CSA Name</a><span class="sort-icon">{% if csa_sort == 'name' %}{% if csa_dir == 'asc' %}▲{% else %}▼{% endif %}{% else %}▲{% endif %}</span>
           </th>
           <th style="display: none;" aria-hidden="true">Province</th>
-          <th style="width: 10%;">
+          <th style="width: 9%;">
             <a href="?csa_sort=supervisor&csa_dir={% if csa_sort == 'supervisor' and csa_dir == 'desc' %}asc{% else %}desc{% endif %}&csa_page=1" class="regional-sort-link" data-table="csa">Supervisor</a><span class="sort-icon">{% if csa_sort == 'supervisor' %}{% if csa_dir == 'asc' %}▲{% else %}▼{% endif %}{% else %}▲{% endif %}</span>
           </th>
-          <th style="width: 10%;">
+          <th style="width: 8%;">
             <a href="?csa_sort=district&csa_dir={% if csa_sort == 'district' and csa_dir == 'desc' %}asc{% else %}desc{% endif %}&csa_page=1" class="regional-sort-link" data-table="csa">District</a><span class="sort-icon">{% if csa_sort == 'district' %}{% if csa_dir == 'asc' %}▲{% else %}▼{% endif %}{% else %}▲{% endif %}</span>
           </th>
-          <th style="width: 10%;">
+          <th style="width: 8%;">
             <a href="?csa_sort=ward&csa_dir={% if csa_sort == 'ward' and csa_dir == 'desc' %}asc{% else %}desc{% endif %}&csa_page=1" class="regional-sort-link" data-table="csa">Ward</a><span class="sort-icon">{% if csa_sort == 'ward' %}{% if csa_dir == 'asc' %}▲{% else %}▼{% endif %}{% else %}▲{% endif %}</span>
           </th>
-          <th class="numeric" style="width: 8%;">
+          <th class="numeric" style="width: 6%;">
             <a href="?csa_sort=visits&csa_dir={% if csa_sort == 'visits' and csa_dir == 'desc' %}asc{% else %}desc{% endif %}&csa_page=1" class="regional-sort-link" data-table="csa">Visits</a><span class="sort-icon">{% if csa_sort == 'visits' %}{% if csa_dir == 'asc' %}▲{% else %}▼{% endif %}{% else %}▲{% endif %}</span>
           </th>
-          <th class="numeric" style="width: 8%;">
+          <th class="numeric" style="width: 6%;">
             <a href="?csa_sort=events&csa_dir={% if csa_sort == 'events' and csa_dir == 'desc' %}asc{% else %}desc{% endif %}&csa_page=1" class="regional-sort-link" data-table="csa">Events</a><span class="sort-icon">{% if csa_sort == 'events' %}{% if csa_dir == 'asc' %}▲{% else %}▼{% endif %}{% else %}▲{% endif %}</span>
           </th>
-          <th class="numeric" style="width: 8%;">
+          <th class="numeric" style="width: 6%;">
             <a href="?csa_sort=deaths&csa_dir={% if csa_sort == 'deaths' and csa_dir == 'desc' %}asc{% else %}desc{% endif %}&csa_page=1" class="regional-sort-link" data-table="csa">Deaths</a><span class="sort-icon">{% if csa_sort == 'deaths' %}{% if csa_dir == 'asc' %}▲{% else %}▼{% endif %}{% else %}▲{% endif %}</span>
           </th>
-          <th class="numeric" style="width: 8%;">
+          <th class="numeric" style="width: 7%;">
             <a href="?csa_sort=pregnancies&csa_dir={% if csa_sort == 'pregnancies' and csa_dir == 'desc' %}asc{% else %}desc{% endif %}&csa_page=1" class="regional-sort-link" data-table="csa">Pregnancies</a><span class="sort-icon">{% if csa_sort == 'pregnancies' %}{% if csa_dir == 'asc' %}▲{% else %}▼{% endif %}{% else %}▲{% endif %}</span>
           </th>
-          <th class="numeric" style="width: 10%;">
+          <th class="numeric" style="width: 8%;">
             <a href="?csa_sort=pregnancy_outcomes&csa_dir={% if csa_sort == 'pregnancy_outcomes' and csa_dir == 'desc' %}asc{% else %}desc{% endif %}&csa_page=1" class="regional-sort-link" data-table="csa">Pregnancy Outcomes</a><span class="sort-icon">{% if csa_sort == 'pregnancy_outcomes' %}{% if csa_dir == 'asc' %}▲{% else %}▼{% endif %}{% else %}▲{% endif %}</span>
           </th>
-          <th class="numeric" style="width: 15%;">
+          <th class="numeric" style="width: 12%;">
             <a href="?csa_sort=overdue_without_interview&csa_dir={% if csa_sort == 'overdue_without_interview' and csa_dir == 'desc' %}asc{% else %}desc{% endif %}&csa_page=1" class="regional-sort-link" data-table="csa">Preg. ≥ 6 mo. without int.</a><span class="sort-icon">{% if csa_sort == 'overdue_without_interview' %}{% if csa_dir == 'asc' %}▲{% else %}▼{% endif %}{% else %}▲{% endif %}</span>
           </th>
-          <th class="numeric" style="width: 8%;">
+          <th class="numeric" style="width: 6%;">
             <a href="?csa_sort=csa_target&csa_dir={% if csa_sort == 'csa_target' and csa_dir == 'desc' %}asc{% else %}desc{% endif %}&csa_page=1" class="regional-sort-link" data-table="csa">CSA Target</a><span class="sort-icon">{% if csa_sort == 'csa_target' %}{% if csa_dir == 'asc' %}▲{% else %}▼{% endif %}{% else %}▲{% endif %}</span>
           </th>
-          <th class="numeric" style="width: 8%;">
+          <th class="numeric" style="width: 6%;">
             <a href="?csa_sort=coverage_pct&csa_dir={% if csa_sort == 'coverage_pct' and csa_dir == 'desc' %}asc{% else %}desc{% endif %}&csa_page=1" class="regional-sort-link" data-table="csa">Coverage %</a><span class="sort-icon">{% if csa_sort == 'coverage_pct' %}{% if csa_dir == 'asc' %}▲{% else %}▼{% endif %}{% else %}▲{% endif %}</span>
+          </th>
+          <th style="width: 6%;">
+            <a href="?csa_sort=status&csa_dir={% if csa_sort == 'status' and csa_dir == 'desc' %}asc{% else %}desc{% endif %}&csa_page=1" class="regional-sort-link" data-table="csa">Status</a><span class="sort-icon">{% if csa_sort == 'status' %}{% if csa_dir == 'asc' %}▲{% else %}▼{% endif %}{% else %}▲{% endif %}</span>
           </th>
         </tr>
       </thead>
@@ -66,7 +77,8 @@
             <td class="numeric">{{ row.pregnancy_outcomes }}</td>
             <td class="numeric">{{ row.overdue_without_interview }}</td>
             <td class="numeric">{{ row.csa_target }}</td>
-            <td class="numeric coverage-cell coverage-cell--{{ row.coverage_band|default:'empty' }}">{% if row.coverage_pct is not None %}{{ row.coverage_pct }}%{% else %}—{% endif %}</td>
+            <td class="numeric coverage-cell coverage-cell--{{ row.coverage_band|default:'empty' }}{% if row.status == 'inactive' %} coverage-cell--inactive{% endif %}">{% if row.coverage_pct is not None %}{{ row.coverage_pct }}%{% else %}—{% endif %}</td>
+            <td>{{ row.status|capfirst }}</td>
           </tr>
         {% empty %}
           <tr>
@@ -83,6 +95,7 @@
             <td class="numeric">0</td>
             <td class="numeric">0</td>
             <td class="numeric">0</td>
+            <td>Inactive</td>
           </tr>
         {% endfor %}
       </tbody>

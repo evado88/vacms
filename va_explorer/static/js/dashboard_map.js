@@ -40,6 +40,9 @@ const dashboard = new Vue({
             mapEndpoint: (typeof document !== "undefined" && document.getElementById("dashboardApp"))
                 ? document.getElementById("dashboardApp").dataset.mapEndpoint
                 : "",
+            userCanViewPII: (typeof document !== "undefined" && document.getElementById("dashboardApp"))
+                ? (document.getElementById("dashboardApp").dataset.userPii === "true")
+                : false,
             mapController: null,
             mapSelection: { geography_level: "", geography_value: "" },
             drill: {
@@ -105,6 +108,7 @@ const dashboard = new Vue({
             vaRegionalCauseChart: null,
             vaSexAgePyramidChart: null,
             vaTabActivationHandler: null,
+            vaVisualRefreshTimer: null,
             // Fallback for environments where native dblclick can be unreliable in tab panes.
             featureClickState: { id: null, at: 0 },
             drillInFlight: false,
@@ -139,7 +143,7 @@ const dashboard = new Vue({
             if (!this.geographic_level_sums || Object.keys(this.geographic_level_sums).length === 0) return;
             const counts = Object.values(this.geographic_level_sums).map(item => item.count || 0);
             if (counts.length === 0) return;
-            
+
             const geoMax = Math.max(...counts) + 100;
             const geoMin = 1;
             const n = 10;
@@ -211,6 +215,22 @@ const dashboard = new Vue({
         this.resizeCharts();
         window.addEventListener('resize', this.resizeCharts);
 
+        this.vaTabActivationHandler = (event) => {
+            if (!this.isVerbalAutopsiesActivationEvent(event)) return;
+            this.scheduleVAVisualRefresh();
+        };
+        const vaTab = document.getElementById("verbal-autopsies-tab");
+        if (vaTab && this.vaTabActivationHandler) {
+            vaTab.addEventListener("click", this.vaTabActivationHandler);
+        }
+        if (this.vaTabActivationHandler) {
+            document.addEventListener("dashboard:refresh-tab", this.vaTabActivationHandler);
+            document.addEventListener("shown.bs.tab", this.vaTabActivationHandler);
+            if (window.jQuery) {
+                window.jQuery(document).on("shown.bs.tab", this.vaTabActivationHandler);
+            }
+        }
+
         if (typeof window.createHierarchicalDashboardMap === "function") {
             this.mapController = window.createHierarchicalDashboardMap({
                 containerId: "map",
@@ -232,38 +252,24 @@ const dashboard = new Vue({
                 // Keep VA dashboard default view aligned to the baseline dashboard zoom.
                 fitToDataBounds: false,
                 noDataMessage: "No geographic VA data available for the selected filters.",
+                userCanViewPII: this.userCanViewPII,
             });
-            await this.mapController.refresh({});
         }
-        // Ensure trend + comparison are hydrated and rendered on first load
-        // without requiring user interaction.
-        await this.runRegionalComparison();
 
-        // Charts can initialize while their tab pane is hidden, resulting in a
-        // zero-width canvas. Reflow both charts when the VA tab is activated.
-        this.vaTabActivationHandler = () => {
-            setTimeout(() => {
-                this.resizeCharts();
-                if (this.vaCauseTrendChart) {
-                    this.vaCauseTrendChart.resize();
-                    this.vaCauseTrendChart.update();
-                }
-                if (this.vaRegionalCauseChart) {
-                    this.vaRegionalCauseChart.resize();
-                    this.vaRegionalCauseChart.update();
-                }
-                if (this.vaSexAgePyramidChart) {
-                    this.vaSexAgePyramidChart.resize();
-                    this.vaSexAgePyramidChart.update();
-                }
-            }, 80);
-        };
-        const vaTab = document.getElementById("verbal-autopsies-tab");
-        if (vaTab && this.vaTabActivationHandler) {
-            vaTab.addEventListener("click", this.vaTabActivationHandler);
+        // Defer chart and map rendering until the VA pane is visible. Chart.js
+        // canvases initialised inside a display:none container come up at 0×0
+        // and chart.resize() does not reliably recover them, leaving every
+        // VA chart blank until the user reloads while the tab is already open.
+        // The vaTabActivationHandler registered above will fire
+        // scheduleVAVisualRefresh on first activation, which creates the
+        // charts on a correctly sized canvas.
+        if (this.isVerbalAutopsiesPaneActive()) {
+            if (this.mapController) await this.mapController.refresh({});
+            await this.runRegionalComparison();
+            await this.$nextTick();
+            this.resizeCharts();
+            this.scheduleVAVisualRefresh(0);
         }
-        await this.$nextTick();
-        this.resizeCharts();
     },
     beforeDestroy() {
         window.removeEventListener('resize', this.resizeCharts);
@@ -271,12 +277,75 @@ const dashboard = new Vue({
         if (vaTab && this.vaTabActivationHandler) {
             vaTab.removeEventListener("click", this.vaTabActivationHandler);
         }
+        if (this.vaTabActivationHandler) {
+            document.removeEventListener("dashboard:refresh-tab", this.vaTabActivationHandler);
+            document.removeEventListener("shown.bs.tab", this.vaTabActivationHandler);
+            if (window.jQuery) {
+                window.jQuery(document).off("shown.bs.tab", this.vaTabActivationHandler);
+            }
+        }
+        if (this.vaVisualRefreshTimer) {
+            window.clearTimeout(this.vaVisualRefreshTimer);
+            this.vaVisualRefreshTimer = null;
+        }
         if (this.vaSexAgePyramidChart) {
             this.vaSexAgePyramidChart.destroy();
             this.vaSexAgePyramidChart = null;
         }
     },
     methods: {
+        isVerbalAutopsiesActivationEvent(event) {
+            if (!event) return false;
+            if (event.type === "dashboard:refresh-tab") {
+                const detail = event.detail || {};
+                return detail.shell === "outcomes" && detail.tab === "verbal_autopsies";
+            }
+
+            const tabLink = event.target?.closest?.("[data-tab]");
+            if (tabLink?.dataset?.tab === "verbal_autopsies") return true;
+
+            const targetSelector =
+                event.target?.getAttribute?.("data-bs-target") ||
+                event.target?.getAttribute?.("data-target");
+            return targetSelector === "#verbal-autopsies-pane";
+        },
+        isVerbalAutopsiesPaneActive() {
+            const pane = document.getElementById("verbal-autopsies-pane");
+            if (!pane) return false;
+            return pane.classList.contains("active") || pane.getAttribute("aria-hidden") === "false";
+        },
+        scheduleVAVisualRefresh(delayMs = 120) {
+            if (this.vaVisualRefreshTimer) {
+                window.clearTimeout(this.vaVisualRefreshTimer);
+            }
+            this.vaVisualRefreshTimer = window.setTimeout(() => {
+                this.vaVisualRefreshTimer = null;
+                this.refreshVAVisuals().catch((error) => {
+                    console.error("Failed to refresh VA visuals after tab activation:", error);
+                });
+            }, delayMs);
+        },
+        async refreshVAVisuals() {
+            await this.$nextTick();
+            this.resizeCharts();
+            // Leaflet maps created on a hidden container need invalidateSize()
+            // once they become visible, otherwise tiles render in a clipped frame.
+            if (this.mapController && typeof this.mapController.resize === "function") {
+                this.mapController.resize();
+            }
+            await this.refreshMapOnly();
+            await this.refreshVACauseTrendChart();
+            this.renderRegionalCauseComparisonChart();
+            this.renderVASexAgePyramidChart();
+            await this.$nextTick();
+
+            [this.vaCauseTrendChart, this.vaRegionalCauseChart, this.vaSexAgePyramidChart]
+                .filter(Boolean)
+                .forEach((chart) => {
+                    chart.resize();
+                    chart.update();
+                });
+        },
         normalizeMapKey(value) {
             return String(value || "").trim().replace(/\s+/g, " ").toLowerCase();
         },
@@ -501,7 +570,7 @@ const dashboard = new Vue({
                     console.log(`[Reproject] Unknown CRS: ${crsName}, checking coordinates to determine if reprojection needed`);
                 }
             }
-            
+
             // Check if coordinates look like they're already in WGS84 (lat/lng range)
             // WGS84: lat -90 to 90, lng -180 to 180
             // EPSG:3857: x -20037508 to 20037508, y -20037508 to 20037508
@@ -522,19 +591,19 @@ const dashboard = new Vue({
                     }
                 }
             }
-            
-            const looksLikeWGS84 = sampleCoords && 
-                Math.abs(sampleCoords[0]) <= 180 && 
+
+            const looksLikeWGS84 = sampleCoords &&
+                Math.abs(sampleCoords[0]) <= 180 &&
                 Math.abs(sampleCoords[1]) <= 90;
-            
+
             if (looksLikeWGS84) {
                 console.log(`[Reproject] Coordinates appear to already be in WGS84 (sample: [${sampleCoords[0]}, ${sampleCoords[1]}]), skipping reprojection`);
                 delete geojson.crs;
                 return geojson;
             }
-            
+
             console.log(`[Reproject] Reprojecting from EPSG:3857 to EPSG:4326. Sample coords before: [${sampleCoords ? sampleCoords.join(', ') : 'N/A'}]`);
-            
+
             const R = 6378137; // Earth's radius in meters
             const reprojectCoords = (coords) => {
                 if (Array.isArray(coords[0])) {
@@ -570,7 +639,7 @@ const dashboard = new Vue({
 
             // Remove or update CRS to indicate WGS84
             delete geojson.crs;
-            
+
             if (sampleCoords && geojson.features.length > 0) {
                 const reprojectedSample = geojson.features[0].geometry.coordinates;
                 let reprojectedCoords = null;
@@ -602,7 +671,7 @@ const dashboard = new Vue({
                 const cacheBuster = `?v=${Date.now()}`;
                 const response = await fetch(`${url}${filename}${cacheBuster}`);
                 const geojson = await response.json();
-                
+
                 console.log(`[Load] Loaded ${geojson.features.length} features from ${filename}`);
                 // Log sample area_ids for debugging
                 if (geojson.features.length > 0) {
@@ -613,10 +682,10 @@ const dashboard = new Vue({
                     }));
                     console.log(`[Load] Sample features from ${filename}:`, sampleIds);
                 }
-                
+
                 // Reproject from EPSG:3857 to EPSG:4326
                 const reprojectedGeojson = this.reproject3857to4326(geojson);
-                
+
                 // Cache it
                 this.geojsonCache[level] = reprojectedGeojson;
                 return reprojectedGeojson;
@@ -660,10 +729,10 @@ const dashboard = new Vue({
                 cod_categories: [],
                 matrix_percent: [],
             };
-            
+
             // Get aggregates for current drill level
             this.geographic_level_sums = this.getAggregatesForLevel(jsonRes);
-            
+
             this.uncoded_vas = jsonRes.uncoded_vas;
             this.update_stats = jsonRes.update_stats;
             this.listOfCausesDropdownOptions = jsonRes.all_causes_list;
@@ -776,7 +845,9 @@ const dashboard = new Vue({
 
             const tiles = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                 maxZoom: 19, // Allow deep zooming for EA level features
-                attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+                // OSM public tile servers block requests when the browser omits Referer.
+                referrerPolicy: "strict-origin-when-cross-origin",
+                attribution: '&copy; OpenStreetMap contributors'
             }).addTo(this.map);
 
             // Map-level click runs after feature hit-testing and applies the same invalid-click rule.
@@ -814,7 +885,7 @@ const dashboard = new Vue({
             // Add explicit zoom control at top-left (prevent CSS/layout moving it)
             // Enable zoom controls with higher max zoom for EA level features
             try {
-                L.control.zoom({ 
+                L.control.zoom({
                     position: 'topleft',
                     zoomInTitle: 'Zoom in',
                     zoomOutTitle: 'Zoom out'
@@ -858,7 +929,7 @@ const dashboard = new Vue({
 
             // Filter features based on current drill-down path
             let filteredGeojson = JSON.parse(JSON.stringify(geojson));
-            
+
             // Log drilldown path for debugging
             console.log(`[Level ${this.currentLevel}] Drilldown path:`, this.drill.path.map(p => ({
                 level: p.level,
@@ -866,27 +937,27 @@ const dashboard = new Vue({
                 levelIndex: p.levelIndex,
                 area_id: p.id
             })));
-            
+
             filteredGeojson.features = filteredGeojson.features.filter(feature => {
                 // For provincial level with no drill-down, show all provinces (parent_id null)
                 if (this.drill.path.length === 1) {
                     return feature.properties.parent_id == null;
                 }
-                
+
                 // For all levels, filter by parent_id of the most recent drill-down
                 const parent = this.drill.path[this.drill.path.length - 1];
                 const matches = feature.properties.parent_id === parent.id;
-                
+
                 // Log first few features for debugging
                 if (filteredGeojson.features.indexOf(feature) < 3) {
                     console.log(`[Level ${this.currentLevel}] Feature: area_id=${feature.properties.area_id}, area_name="${feature.properties.area_name}", parent_id=${feature.properties.parent_id}, looking for parent.id=${parent.id}, matches=${matches}`);
                 }
-                
+
                 return matches;
             });
 
             console.log(`[Level ${this.currentLevel}] Filtered features: ${filteredGeojson.features.length} out of ${geojson.features.length} total`);
-            
+
             // Log which features were found
             if (filteredGeojson.features.length > 0) {
                 console.log(`[Level ${this.currentLevel}] Found features:`, filteredGeojson.features.map(f => {
@@ -912,11 +983,11 @@ const dashboard = new Vue({
                     };
                 }));
             }
-            
+
             // If no features found, log more details
             if (filteredGeojson.features.length === 0 && this.drill.path.length > 1) {
                 const parent = this.drill.path[this.drill.path.length - 1];
-                console.warn(`[Level ${this.currentLevel}] No features found! Looking for parent_id=${parent.id} (${parent.name} ${parent.level}), but available parent_ids in data:`, 
+                console.warn(`[Level ${this.currentLevel}] No features found! Looking for parent_id=${parent.id} (${parent.name} ${parent.level}), but available parent_ids in data:`,
                     [...new Set(geojson.features.slice(0, 10).map(f => f.properties.parent_id))]);
             }
 
@@ -935,7 +1006,7 @@ const dashboard = new Vue({
                 onEachFeature: function (feature, layer) {
                     const html_tooltip = vm.generateTooltip(feature);
                     layer.bindTooltip(html_tooltip);
-                    
+
                     // Handle double intent via rapid consecutive clicks as a robust fallback.
                     layer.on("click", async (e) => {
                         vm.featureHitInTick = true;
@@ -1015,7 +1086,7 @@ const dashboard = new Vue({
                         east: bounds.getEast(),
                         west: bounds.getWest()
                     } : 'null');
-                    
+
                     if (bounds && bounds.isValid()) {
                         // Validate bounds are within Zambia's approximate boundaries
                         // Zambia is roughly: lat -8 to -18, lng 22 to 33
@@ -1023,9 +1094,9 @@ const dashboard = new Vue({
                         const south = bounds.getSouth();
                         const east = bounds.getEast();
                         const west = bounds.getWest();
-                        
+
                         const isWithinZambia = north < -8 && south > -18 && east < 33 && west > 22;
-                        
+
                         if (!isWithinZambia) {
                             console.warn(`[Bounds] Calculated bounds are outside Zambia! North: ${north}, South: ${south}, East: ${east}, West: ${west}`);
                             console.warn(`[Bounds] Resetting to Zambia bounds instead`);
@@ -1038,20 +1109,20 @@ const dashboard = new Vue({
                             // Use minimal padding for tighter zoom to features
                             // For level 5 (EA), use even tighter padding since features are very small
                             const padding = this.currentLevel === 5 ? [3, 3] : [5, 5];
-                            this.map.fitBounds(bounds, { 
+                            this.map.fitBounds(bounds, {
                                 padding: padding,
                                 maxZoom: 18 // Allow deeper zoom for small features
                             });
                             // second invalidate to ensure tiles render correctly after fit
                             try { this.map.invalidateSize(); } catch (e) {}
-                            
+
                             // For level 5, ensure we can zoom in even more if needed
                             if (this.currentLevel === 5) {
                                 // Check if we're at max zoom and features are still small
                                 const currentZoom = this.map.getZoom();
                                 const boundsSize = bounds.getNorthEast().distanceTo(bounds.getSouthWest());
                                 console.log(`[Bounds] Level 5 - Current zoom: ${currentZoom}, bounds size: ${boundsSize.toFixed(2)}m`);
-                                
+
                                 // If bounds are very small and we're not at max zoom, try to zoom in more
                                 if (boundsSize < 50000 && currentZoom < 18) {
                                     // Manually zoom in a bit more
@@ -1128,13 +1199,13 @@ const dashboard = new Vue({
                 const regionAreaId = feature.properties.area_id;
 
                 console.log(`[Drill Down] Clicked on ${regionLevel}: "${regionName}" with area_id=${regionAreaId}, parent_id=${feature.properties.parent_id}`);
-            
+
             // Verify the clicked feature's area_id matches what's in the current GeoJSON cache
             // This helps detect cache mismatches
                 const currentGeojson = this.geojsonCache[this.currentLevel];
                 if (currentGeojson) {
-                    const matchingFeature = currentGeojson.features.find(f => 
-                        f.properties.area_name === regionName && 
+                    const matchingFeature = currentGeojson.features.find(f =>
+                        f.properties.area_name === regionName &&
                         f.properties.area_id === regionAreaId
                     );
                     if (!matchingFeature) {
@@ -1239,9 +1310,9 @@ const dashboard = new Vue({
             // Jump back to specific breadcrumb level
             // breadcrumbIndex 0 = Country (Zambia), breadcrumbIndex 1 = Province, breadcrumbIndex 2 = District, etc.
             // drill.path structure: [Zambia, Province, District, Constituency, ...]
-            
+
             console.log(`[Breadcrumb] Clicked on breadcrumb index ${breadcrumbIndex}`);
-            
+
             if (breadcrumbIndex === 0) {
                 // Clicked on Country (Zambia) - show all provinces (level 1)
                 this.drill.path = [{ level: this.drill.hierarchy[0], id: "ZM", name: "Zambia", levelIndex: 0 }];
@@ -1251,20 +1322,20 @@ const dashboard = new Vue({
                 // Get the breadcrumb that was clicked
                 const breadcrumbs = this.drilldownBreadcrumbs;
                 const clickedBreadcrumb = breadcrumbs[breadcrumbIndex];
-                
+
                 if (!clickedBreadcrumb) {
                     console.warn(`[Breadcrumb] Invalid breadcrumb index ${breadcrumbIndex}`);
                     return;
                 }
-                
+
                 // The clicked breadcrumb's levelIndex tells us what level to show
                 // Keep path up to and including the clicked breadcrumb.
                 this.drill.path = this.drill.path.slice(0, breadcrumbIndex + 1);
                 this.syncDrillState();
-                
+
                 console.log(`[Breadcrumb] Clicked on ${clickedBreadcrumb.name}, navigating to level ${this.currentLevel} (${LEVEL_CONFIG[this.currentLevel].label}), drilldownPath:`, this.drill.path.map(p => p.name));
             }
-            
+
             await this.refreshDashboardForDrillChange("breadcrumb_drill");
         },
         getColor(feature) {
@@ -1346,11 +1417,11 @@ const dashboard = new Vue({
             const areaName = feature.properties.area_name;
             const level = LEVEL_CONFIG[this.currentLevel].label;
             const count = this.getFeatureCount(feature);
-            
-            const drillHint = this.currentLevel < MAX_DRILL_LEVEL ? 
-                '<br><small style="font-style: italic;">(Double-click to drill down)</small>' : 
+
+            const drillHint = this.currentLevel < MAX_DRILL_LEVEL ?
+                '<br><small style="font-style: italic;">(Double-click to drill down)</small>' :
                 '<br><small style="font-style: italic;">(Max drill level reached)</small>';
-            
+
             const html_tooltip = `
                 <div class="mapTooltip">
                     <h4>${areaName}</h4>
@@ -1643,7 +1714,7 @@ const dashboard = new Vue({
             if (this.mapController && typeof this.mapController.resetDrill === "function") {
                 await this.mapController.resetDrill();
             }
-            
+
             await this.updateDataAndMap();
         },
         clearGeojsonCache() {

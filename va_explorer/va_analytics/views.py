@@ -1,11 +1,25 @@
-from datetime import date, datetime, time, timedelta
+import hashlib
+import json
+import logging
+from datetime import datetime, time, timedelta
 from statistics import median
 
 import pandas as pd
 from django.contrib.auth.mixins import PermissionRequiredMixin
+from django.core.cache import cache
+from django.db.models import (
+    Case,
+    CharField,
+    Count,
+    DateField,
+    F,
+    Max,
+    Q,
+    Value,
+    When,
+)
+from django.db.models.functions import Cast, Lower, Substr, Trim
 from django.urls import reverse
-from django.db.models import Avg, Case, CharField, Count, DateField, F, IntegerField, Max, Q, Value, When
-from django.db.models.functions import Cast, Lower, Substr, Trim, TruncMonth
 from django.utils import timezone
 from django.utils.dateparse import parse_date as django_parse_date
 from django.utils.dateparse import parse_datetime as django_parse_datetime
@@ -24,14 +38,20 @@ from va_explorer.va_data_management.utils.date_parsing import (
     get_interview_dates,
     parse_date,
 )
+from va_explorer.va_data_management.utils.geopoint import parse_geopoint
 from va_explorer.va_data_management.utils.location_access import (
     restrict_queryset_to_user_locations,
 )
 
-from .utils.loading import get_filtered_va_queryset, load_va_data
+from .utils.loading import _resolve_geo_name, get_filtered_va_queryset, load_va_data
 
-DEATHS_TREND_HARD_START_DATE = date(2024, 1, 1)
-PREGNANCY_TREND_HARD_START_DATE = date(2024, 9, 1)
+logger = logging.getLogger(__name__)
+
+GPS_DEFAULT_LIMIT = 2000
+GPS_CACHE_TIMEOUT = 3600  # 1 hour
+
+TREND_SUBMISSION_HARD_START_DATE = "2024-01-01"
+PREGNANCY_TREND_HARD_START_DATE = "2024-09-01"
 
 
 def get_pregnancy_outcomes_filter_state(request):
@@ -94,11 +114,7 @@ def _parse_outcome_datetime(value, *, end_of_day=False):
         return None
 
     normalized = raw.replace("Z", "+00:00")
-    if (
-        len(normalized) >= 5
-        and normalized[-5] in "+-"
-        and normalized[-4:].isdigit()
-    ):
+    if len(normalized) >= 5 and normalized[-5] in "+-" and normalized[-4:].isdigit():
         normalized = normalized[:-5] + normalized[-5:-2] + ":" + normalized[-2:]
 
     parsed = django_parse_datetime(normalized)
@@ -115,7 +131,9 @@ def _parse_outcome_datetime(value, *, end_of_day=False):
         if fallback_date and fallback_date not in {"dk", "nan"}:
             parsed_date = django_parse_date(fallback_date)
             if parsed_date is not None:
-                parsed = datetime.combine(parsed_date, time.max if end_of_day else time.min)
+                parsed = datetime.combine(
+                    parsed_date, time.max if end_of_day else time.min
+                )
 
     if parsed is None:
         return None
@@ -167,14 +185,17 @@ def _build_outcomes_summary_cards(filtered_qs):
             or _parse_outcome_datetime(row.get("today"))
             or _parse_outcome_datetime(row.get("start"))
         )
-        if candidate_update and (last_data_update is None or candidate_update > last_data_update):
+        if candidate_update and (
+            last_data_update is None or candidate_update > last_data_update
+        ):
             last_data_update = candidate_update
 
-        candidate_event = (
-            _parse_outcome_datetime(row.get("PO_41"), end_of_day=True)
-            or _parse_outcome_datetime(row.get("submissiondate"), end_of_day=True)
-        )
-        if candidate_event and (last_event_date is None or candidate_event > last_event_date):
+        candidate_event = _parse_outcome_datetime(
+            row.get("PO_41"), end_of_day=True
+        ) or _parse_outcome_datetime(row.get("submissiondate"), end_of_day=True)
+        if candidate_event and (
+            last_event_date is None or candidate_event > last_event_date
+        ):
             last_event_date = candidate_event
 
     multiple_birth_pct = (
@@ -193,16 +214,22 @@ def _build_outcomes_summary_cards(filtered_qs):
     }
 
 
-def _build_pregnancy_outcomes_trend_series(filtered_qs):
+def _build_text_date_trend_series(filtered_qs, *, date_field, hard_start_date):
+    """Group any text date field by month and return (labels, counts)."""
     month_rows = (
-        filtered_qs.exclude(PO_41__isnull=True)
-        .exclude(PO_41="")
-        .annotate(month_key=Substr("PO_41", 1, 7))
+        filtered_qs.exclude(**{f"{date_field}__isnull": True})
+        .exclude(**{date_field: ""})
+        .exclude(**{f"{date_field}__iexact": "nan"})
+        .exclude(**{f"{date_field}__iexact": "nat"})
+        .exclude(**{f"{date_field}__iexact": "none"})
+        .exclude(**{f"{date_field}__iexact": "null"})
+        .filter(**{f"{date_field}__regex": r"^\d{4}-\d{2}-\d{2}"})
+        .filter(**{f"{date_field}__gte": hard_start_date})
+        .annotate(month_key=Substr(date_field, 1, 7))
         .values("month_key")
         .annotate(count=Count("pk"))
         .order_by("month_key")
     )
-
     labels = []
     counts = []
     for row in month_rows:
@@ -213,6 +240,22 @@ def _build_pregnancy_outcomes_trend_series(filtered_qs):
         except ValueError:
             continue
     return labels, counts
+
+
+def _build_submission_trend_series(filtered_qs):
+    return _build_text_date_trend_series(
+        filtered_qs,
+        date_field="submissiondate",
+        hard_start_date=TREND_SUBMISSION_HARD_START_DATE,
+    )
+
+
+def _build_pregnancy_outcomes_trend_series(filtered_qs):
+    return _build_text_date_trend_series(
+        filtered_qs,
+        date_field="PO_41",
+        hard_start_date=TREND_SUBMISSION_HARD_START_DATE,
+    )
 
 
 def _normalize_birth_outcome_category(value):
@@ -255,7 +298,9 @@ def _build_birth_outcomes_bar_data(filtered_qs):
     count_data = [live_birth, stillbirth]
     total = sum(count_data)
     percentage_data = (
-        [round((value / total) * 100, 1) for value in count_data] if total else [0.0, 0.0]
+        [round((value / total) * 100, 1) for value in count_data]
+        if total
+        else [0.0, 0.0]
     )
 
     return labels, count_data, percentage_data
@@ -270,7 +315,9 @@ def _extract_gestational_age_weeks(po_44, po_44a):
         if not text:
             continue
         # Keep only first numeric token.
-        cleaned = "".join(ch if (ch.isdigit() or ch == "." or ch == " ") else " " for ch in text)
+        cleaned = "".join(
+            ch if (ch.isdigit() or ch == "." or ch == " ") else " " for ch in text
+        )
         tokens = [t for t in cleaned.split() if t]
         if not tokens:
             continue
@@ -400,7 +447,12 @@ def _normalize_place_of_birth_category(value):
         return "on route to hospital"
     if "district hospital" in normalized:
         return "district hospital"
-    if "health facility" in normalized or "health centre" in normalized or "health center" in normalized or "clinic" in normalized:
+    if (
+        "health facility" in normalized
+        or "health centre" in normalized
+        or "health center" in normalized
+        or "clinic" in normalized
+    ):
         return "health facility"
     if "home" in normalized or "house" in normalized:
         return "home"
@@ -427,7 +479,10 @@ def _build_place_of_birth_distribution(filtered_qs):
                     Q(PO_43__icontains="route") & Q(PO_43__icontains="hospital"),
                     then=Value("on route to hospital"),
                 ),
-                When(Q(PO_43__icontains="district hospital"), then=Value("district hospital")),
+                When(
+                    Q(PO_43__icontains="district hospital"),
+                    then=Value("district hospital"),
+                ),
                 When(
                     Q(PO_43__icontains="health facility")
                     | Q(PO_43__icontains="health centre")
@@ -437,7 +492,10 @@ def _build_place_of_birth_distribution(filtered_qs):
                     | Q(PO_43__icontains="clinic"),
                     then=Value("health facility"),
                 ),
-                When(Q(PO_43__icontains="home") | Q(PO_43__icontains="house"), then=Value("home")),
+                When(
+                    Q(PO_43__icontains="home") | Q(PO_43__icontains="house"),
+                    then=Value("home"),
+                ),
                 When(Q(PO_43__icontains="hospital"), then=Value("hospital")),
                 default=Value("other"),
                 output_field=CharField(),
@@ -446,7 +504,7 @@ def _build_place_of_birth_distribution(filtered_qs):
         .values("category")
         .annotate(count=Count("pk"))
     )
-    counts = {category: 0 for category in categories}
+    counts = dict.fromkeys(categories, 0)
     for row in categorized_rows:
         category = row["category"]
         if category in counts:
@@ -456,12 +514,24 @@ def _build_place_of_birth_distribution(filtered_qs):
     count_data = [counts[label] for label in labels]
     total = sum(count_data)
     percentage_data = (
-        [round((value / total) * 100, 1) for value in count_data] if total else [0.0] * len(labels)
+        [round((value / total) * 100, 1) for value in count_data]
+        if total
+        else [0.0] * len(labels)
     )
     return labels, count_data, percentage_data
 
 
+GEO_LEVEL_LABELS = {
+    "province": "Province",
+    "district": "District",
+    "constituency": "Constituency",
+    "ward": "Ward",
+    "ea": "EA",
+}
+
+
 def _build_geo_level_counts(filtered_qs, *, field_name, output_key):
+    level_label = GEO_LEVEL_LABELS.get(field_name)
     rows = (
         filtered_qs.exclude(**{f"{field_name}__isnull": True})
         .exclude(**{field_name: ""})
@@ -476,6 +546,8 @@ def _build_geo_level_counts(filtered_qs, *, field_name, output_key):
         normalized_lc = normalized.lower()
         if not normalized or normalized_lc in {"nan", "none", "null", "na", "n/a"}:
             continue
+        if level_label:
+            normalized = _resolve_geo_name(normalized, level_label)
         counts[normalized] = counts.get(normalized, 0) + (row.get("count") or 0)
     return [
         {output_key: name, "count": count}
@@ -493,8 +565,12 @@ def _build_map_hierarchy_counts(filtered_qs):
     constituency_sums = _build_geo_level_counts(
         filtered_qs, field_name="constituency", output_key="constituency_name"
     )
-    ward_sums = _build_geo_level_counts(filtered_qs, field_name="ward", output_key="ward_name")
-    ea_sums = _build_geo_level_counts(filtered_qs, field_name="ea", output_key="ea_name")
+    ward_sums = _build_geo_level_counts(
+        filtered_qs, field_name="ward", output_key="ward_name"
+    )
+    ea_sums = _build_geo_level_counts(
+        filtered_qs, field_name="ea", output_key="ea_name"
+    )
     return {
         "map_total_events": filtered_qs.count(),
         "map_province_sums": province_sums,
@@ -516,6 +592,164 @@ def _build_map_counts(filtered_qs):
         for row in hierarchy["map_district_sums"]
     ]
     return province_data, district_data
+
+
+def _gps_cache_key(*, event_type, qs_signature, limit, offset, pii):
+    """Build a PII-aware cache key for a GPS points response."""
+    raw = json.dumps(
+        {
+            "et": event_type,
+            "qs": qs_signature,
+            "limit": limit,
+            "offset": offset,
+            "pii": bool(pii),
+        },
+        sort_keys=True,
+        default=str,
+    )
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()
+    return f"gps_points:{event_type}:{digest}"
+
+
+def _build_gps_points(
+    filtered_qs,
+    *,
+    gps_field,
+    event_type,
+    limit=GPS_DEFAULT_LIMIT,
+    offset=0,
+    cache_signature=None,
+):
+    """Extract parsed GPS points from a queryset.
+
+    Returns a tuple ``(points, total_count, truncated)``.
+    Each point is a dict with id/event_type/latitude/longitude/altitude/accuracy
+    plus province/district/ward/ea (when those columns exist on the model).
+    """
+    try:
+        limit = max(0, int(limit))
+    except (TypeError, ValueError):
+        limit = GPS_DEFAULT_LIMIT
+    try:
+        offset = max(0, int(offset))
+    except (TypeError, ValueError):
+        offset = 0
+
+    if cache_signature is not None:
+        cache_key = _gps_cache_key(
+            event_type=event_type,
+            qs_signature=cache_signature,
+            limit=limit,
+            offset=offset,
+            pii=True,
+        )
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+    else:
+        cache_key = None
+
+    model = filtered_qs.model
+    model_field_names = {f.name for f in model._meta.get_fields()}
+    geo_fields = [
+        f for f in ("province", "district", "ward", "ea") if f in model_field_names
+    ]
+    only_fields = ["id", gps_field] + geo_fields
+
+    qs = filtered_qs.exclude(**{f"{gps_field}__isnull": True}).exclude(
+        **{gps_field: ""}
+    )
+    total_with_gps = qs.count()
+    # Clear any select_related so .only() doesn't collide with traversed FKs
+    # (e.g. PregnancyOutcome's `cluster` FK). GPS extraction needs only scalar fields.
+    qs = qs.select_related(None).only(*only_fields).order_by("id")
+    if offset:
+        qs = qs[offset:]
+    # Iterate in chunks; collect up to limit valid (parseable) points.
+    points = []
+    for record in qs.iterator(chunk_size=500):
+        if len(points) >= limit:
+            break
+        raw = getattr(record, gps_field, None)
+        parsed = parse_geopoint(raw)
+        if not parsed:
+            continue
+        point = {
+            "id": f"{event_type}_{record.pk}",
+            "event_type": event_type,
+            "latitude": parsed["latitude"],
+            "longitude": parsed["longitude"],
+        }
+        if parsed.get("altitude") is not None:
+            point["altitude"] = parsed["altitude"]
+        if parsed.get("accuracy") is not None:
+            point["accuracy"] = parsed["accuracy"]
+        for f in geo_fields:
+            point[f] = (getattr(record, f, "") or "").strip()
+        points.append(point)
+
+    truncated = total_with_gps > (offset + len(points))
+    result = (points, total_with_gps, truncated)
+    if cache_key:
+        cache.set(cache_key, result, timeout=GPS_CACHE_TIMEOUT)
+    return result
+
+
+def _gps_request_params(request):
+    """Parse common GPS query parameters from a request."""
+    include = (request.GET.get("include_gps_points") or "").lower() == "true"
+    try:
+        limit = int(request.GET.get("gps_limit") or GPS_DEFAULT_LIMIT)
+    except (TypeError, ValueError):
+        limit = GPS_DEFAULT_LIMIT
+    try:
+        offset = int(request.GET.get("gps_offset") or 0)
+    except (TypeError, ValueError):
+        offset = 0
+    return include, max(0, min(limit, GPS_DEFAULT_LIMIT)), max(0, offset)
+
+
+def _qs_cache_signature(filtered_qs):
+    """Build a deterministic signature for a queryset to use in cache keys."""
+    try:
+        return str(filtered_qs.query)
+    except Exception:
+        return None
+
+
+def _attach_gps_payload(payload, request, filtered_qs, *, gps_field, event_type):
+    """Attach GPS-related fields to a map API payload, applying PII gating."""
+    include, limit, offset = _gps_request_params(request)
+    if not include:
+        return payload
+    user = getattr(request, "user", None)
+    if not (user and user.is_authenticated and user.has_perm("va_analytics.view_pii")):
+        logger.info(
+            "PII GPS access denied",
+            extra={
+                "user_id": getattr(user, "id", None),
+                "path": request.path,
+                "event_type": event_type,
+            },
+        )
+        payload["gps_points"] = []
+        payload["gps_total"] = 0
+        payload["gps_truncated"] = False
+        payload["gps_pii_denied"] = True
+        return payload
+    points, total, truncated = _build_gps_points(
+        filtered_qs,
+        gps_field=gps_field,
+        event_type=event_type,
+        limit=limit,
+        offset=offset,
+        cache_signature=_qs_cache_signature(filtered_qs),
+    )
+    payload["gps_points"] = points
+    payload["gps_total"] = total
+    payload["gps_truncated"] = truncated
+    payload["gps_pii_denied"] = False
+    return payload
 
 
 def _apply_geography_filter(qs, filter_state):
@@ -548,7 +782,10 @@ def build_pregnancy_outcomes_qs(request):
                 | Q(PO_46__icontains="born alive")
                 | (
                     (Q(PO_46__isnull=True) | Q(PO_46=""))
-                    & (Q(po_group__icontains="live") | Q(po_group__icontains="born alive"))
+                    & (
+                        Q(po_group__icontains="live")
+                        | Q(po_group__icontains="born alive")
+                    )
                 )
             )
         elif _po_lower in ("stillbirth", "still birth", "born dead"):
@@ -557,7 +794,10 @@ def build_pregnancy_outcomes_qs(request):
                 | Q(PO_46__icontains="born dead")
                 | (
                     (Q(PO_46__isnull=True) | Q(PO_46=""))
-                    & (Q(po_group__icontains="still") | Q(po_group__icontains="born dead"))
+                    & (
+                        Q(po_group__icontains="still")
+                        | Q(po_group__icontains="born dead")
+                    )
                 )
             )
         else:
@@ -637,14 +877,11 @@ def build_pregnancy_qs(request):
             start_dt, end_dt = end_dt, start_dt
 
     if start_dt or end_dt:
-        # Pregnancy model LMP field currently mapped to PE_09A.
         qs = qs.exclude(PE_09A__isnull=True).exclude(PE_09A="")
         if start_dt:
-            start_token = start_dt.strftime("%Y-%m-%d")
-            qs = qs.filter(PE_09A__gte=start_token)
+            qs = qs.filter(PE_09A__gte=start_dt.strftime("%Y-%m-%d"))
         if end_dt:
-            end_token = (end_dt + timedelta(days=1)).strftime("%Y-%m-%d")
-            qs = qs.filter(PE_09A__lt=end_token)
+            qs = qs.filter(PE_09A__lt=(end_dt + timedelta(days=1)).strftime("%Y-%m-%d"))
 
     return qs
 
@@ -775,7 +1012,9 @@ def build_deaths_qs(request, *, apply_time_filter=True):
             if start_dt:
                 qs = qs.filter(DE_06__gte=start_dt.strftime("%Y-%m-%d"))
             if end_dt:
-                qs = qs.filter(DE_06__lt=(end_dt + timedelta(days=1)).strftime("%Y-%m-%d"))
+                qs = qs.filter(
+                    DE_06__lt=(end_dt + timedelta(days=1)).strftime("%Y-%m-%d")
+                )
 
     age_group = filter_state["age_group"]
     if age_group in {"neonate", "child", "adult"}:
@@ -789,7 +1028,9 @@ def build_deaths_qs(request, *, apply_time_filter=True):
 
 
 def _build_deaths_summary_cards(filtered_qs):
-    rows = filtered_qs.values("submissiondate", "today", "start", "DE_06", "DE_04").iterator()
+    rows = filtered_qs.values(
+        "submissiondate", "today", "start", "DE_06", "DE_04"
+    ).iterator()
 
     last_data_update = None
     last_death_date = None
@@ -804,7 +1045,9 @@ def _build_deaths_summary_cards(filtered_qs):
             or _parse_outcome_datetime(row.get("today"))
             or _parse_outcome_datetime(row.get("start"))
         )
-        if candidate_update and (last_data_update is None or candidate_update > last_data_update):
+        if candidate_update and (
+            last_data_update is None or candidate_update > last_data_update
+        ):
             last_data_update = candidate_update
 
         dod_dt = _parse_outcome_datetime(row.get("DE_06"), end_of_day=True)
@@ -821,14 +1064,18 @@ def _build_deaths_summary_cards(filtered_qs):
             if delay >= 0:
                 delay_days.append(delay)
 
-        age_years, age_days = _compute_death_age_years(row.get("DE_04"), row.get("DE_06"))
+        age_years, age_days = _compute_death_age_years(
+            row.get("DE_04"), row.get("DE_06")
+        )
         if age_days is None:
             continue
         age_values.append(age_years)
         if age_years < 5:
             under_5_count += 1
 
-    under_5_pct = round((under_5_count / total_events) * 100, 1) if total_events else 0.0
+    under_5_pct = (
+        round((under_5_count / total_events) * 100, 1) if total_events else 0.0
+    )
     mean_age = round(sum(age_values) / len(age_values), 1) if age_values else None
     median_delay = round(float(median(delay_days)), 1) if delay_days else None
 
@@ -857,32 +1104,19 @@ def _with_valid_death_date(qs, *, source_field="DE_06", alias="death_date"):
         .exclude(**{f"{source_field}__iexact": "none"})
         .exclude(**{f"{source_field}__iexact": "null"})
         .filter(**{f"{source_field}__regex": r"^\d{4}-\d{2}-\d{2}.*$"})
-        .annotate(**{alias: Cast(Substr(source_field, 1, 10), output_field=DateField())})
+        .annotate(
+            **{alias: Cast(Substr(source_field, 1, 10), output_field=DateField())}
+        )
         .exclude(**{f"{alias}__isnull": True})
     )
 
 
 def _build_deaths_trend_series(filtered_qs):
-    # DE_06 is stored as text; normalize to YYYY-MM-DD then group with TruncMonth.
-    month_rows = (
-        _with_valid_death_date(filtered_qs, source_field="DE_06", alias="death_date")
-        .filter(death_date__gte=DEATHS_TREND_HARD_START_DATE)
-        .annotate(month=TruncMonth("death_date"))
-        .values("month")
-        .annotate(count=Count("pk"))
-        .order_by("month")
+    return _build_text_date_trend_series(
+        filtered_qs,
+        date_field="DE_06",
+        hard_start_date=TREND_SUBMISSION_HARD_START_DATE,
     )
-
-    labels = []
-    counts = []
-    for row in month_rows:
-        month = row.get("month")
-        if month is None:
-            continue
-        labels.append(month.strftime("%b %Y"))
-        counts.append(row.get("count") or 0)
-
-    return labels, counts
 
 
 def _build_pregnancy_summary_cards(filtered_qs):
@@ -897,7 +1131,9 @@ def _build_pregnancy_summary_cards(filtered_qs):
     latest_update_dt = agg.get("latest_updated") or agg.get("latest_created")
     total_events = agg.get("total") or 0
 
-    last_event_dt = _parse_outcome_datetime(agg.get("latest_submission"), end_of_day=True)
+    last_event_dt = _parse_outcome_datetime(
+        agg.get("latest_submission"), end_of_day=True
+    )
 
     mean_age, _hiv_positive_pct = _build_pregnancy_kpis(filtered_qs)
 
@@ -916,35 +1152,25 @@ def _build_pregnancy_summary_cards(filtered_qs):
 
 
 def _build_pregnancy_trend_series(filtered_qs):
-    month_rows = (
-        filtered_qs.exclude(PE_09A__isnull=True)
-        .exclude(PE_09A="")
-        .filter(PE_09A__gte=PREGNANCY_TREND_HARD_START_DATE.strftime("%Y-%m-%d"))
-        .annotate(month_key=Substr("PE_09A", 1, 7))
-        .values("month_key")
-        .annotate(count=Count("pk"))
-        .order_by("month_key")
+    return _build_text_date_trend_series(
+        filtered_qs,
+        date_field="PE_09A",
+        hard_start_date=PREGNANCY_TREND_HARD_START_DATE,
     )
-    labels = []
-    counts = []
-    for row in month_rows:
-        month = row.get("month_key") or ""
-        try:
-            labels.append(datetime.strptime(month, "%Y-%m").strftime("%b %Y"))
-            counts.append(row["count"])
-        except ValueError:
-            continue
-    return labels, counts
 
 
 def _build_pregnancy_ga_anc_points(filtered_qs):
     max_anc_visits = 15
     points = []
-    for row in filtered_qs.values("PE_09A", "submissiondate", "today", "start", "PE_22").iterator():
+    for row in filtered_qs.values(
+        "PE_09A", "submissiondate", "today", "start", "PE_22"
+    ).iterator():
         lmp_dt = _parse_outcome_datetime(row.get("PE_09A"))
-        detection_dt = _parse_outcome_datetime(row.get("submissiondate")) or _parse_outcome_datetime(
-            row.get("today")
-        ) or _parse_outcome_datetime(row.get("start"))
+        detection_dt = (
+            _parse_outcome_datetime(row.get("submissiondate"))
+            or _parse_outcome_datetime(row.get("today"))
+            or _parse_outcome_datetime(row.get("start"))
+        )
         if lmp_dt is None or detection_dt is None or detection_dt <= lmp_dt:
             continue
         try:
@@ -975,14 +1201,16 @@ def _build_pregnancy_ga_detection_distribution(filtered_qs):
     # detection/registration date (submissiondate, fallback today/start).
     min_week = 1
     max_week = 40
-    bins = {week: 0 for week in range(min_week, max_week + 1)}
+    bins = dict.fromkeys(range(min_week, max_week + 1), 0)
 
     rows = filtered_qs.values("PE_09A", "submissiondate", "today", "start").iterator()
     for row in rows:
         lmp_dt = _parse_outcome_datetime(row.get("PE_09A"))
-        detection_dt = _parse_outcome_datetime(row.get("submissiondate")) or _parse_outcome_datetime(
-            row.get("today")
-        ) or _parse_outcome_datetime(row.get("start"))
+        detection_dt = (
+            _parse_outcome_datetime(row.get("submissiondate"))
+            or _parse_outcome_datetime(row.get("today"))
+            or _parse_outcome_datetime(row.get("start"))
+        )
         if lmp_dt is None or detection_dt is None:
             continue
         if detection_dt <= lmp_dt:
@@ -1005,7 +1233,9 @@ def _build_pregnancy_kpis(filtered_qs):
     # one float per row in memory for potentially large datasets.
     age_sum = 0.0
     age_count = 0
-    rows = filtered_qs.values("PE_07A", "PE_07", "submissiondate", "today", "start").iterator()
+    rows = filtered_qs.values(
+        "PE_07A", "PE_07", "submissiondate", "today", "start"
+    ).iterator()
     for row in rows:
         direct_age = row.get("PE_07A")
         if direct_age is not None:
@@ -1019,9 +1249,11 @@ def _build_pregnancy_kpis(filtered_qs):
                 continue
 
         dob_dt = _parse_outcome_datetime(row.get("PE_07"))
-        event_dt = _parse_outcome_datetime(row.get("submissiondate")) or _parse_outcome_datetime(
-            row.get("today")
-        ) or _parse_outcome_datetime(row.get("start"))
+        event_dt = (
+            _parse_outcome_datetime(row.get("submissiondate"))
+            or _parse_outcome_datetime(row.get("today"))
+            or _parse_outcome_datetime(row.get("start"))
+        )
         if dob_dt is None or event_dt is None or event_dt < dob_dt:
             continue
         age_sum += (event_dt - dob_dt).days / 365.25
@@ -1080,6 +1312,13 @@ class DashboardAPIView(APIView):
             compare_by=compare_by,
             filtered_qs=filtered_qs,
         )
+        _attach_gps_payload(
+            data,
+            request,
+            filtered_qs,
+            gps_field="geopoint",
+            event_type="verbal_autopsy",
+        )
         return Response(data)
 
 
@@ -1091,7 +1330,9 @@ class DashboardView(CustomAuthMixin, PermissionRequiredMixin, RedirectView):
     def get_redirect_url(self, *args, **kwargs):
         return f"{reverse('va_analytics:outcomes-dashboard')}?tab=pregnancies"
 
+
 dashboard_view = DashboardView.as_view()
+
 
 class DashboardMapView(CustomAuthMixin, PermissionRequiredMixin, RedirectView):
     permanent = False
@@ -1101,7 +1342,9 @@ class DashboardMapView(CustomAuthMixin, PermissionRequiredMixin, RedirectView):
     def get_redirect_url(self, *args, **kwargs):
         return f"{reverse('va_analytics:outcomes-dashboard')}?tab=pregnancies"
 
+
 dashboard_map_view = DashboardMapView.as_view()
+
 
 class OutcomesDashboardView(CustomAuthMixin, PermissionRequiredMixin, TemplateView):
     template_name = "va_analytics/outcomes_dashboard.html"
@@ -1148,15 +1391,21 @@ class OutcomesDashboardView(CustomAuthMixin, PermissionRequiredMixin, TemplateVi
         with timed_block("outcomes.page.summary_cards", request=request):
             summary_cards = _build_outcomes_summary_cards(filtered_qs)
         with timed_block("outcomes.page.trend_series", request=request):
-            trend_labels, trend_counts = _build_pregnancy_outcomes_trend_series(filtered_qs)
-        with timed_block("outcomes.page.birth_outcomes", request=request):
-            birth_labels, birth_count_data, birth_percentage_data = _build_birth_outcomes_bar_data(
+            trend_labels, trend_counts = _build_pregnancy_outcomes_trend_series(
                 filtered_qs
             )
+        with timed_block("outcomes.page.birth_outcomes", request=request):
+            birth_labels, birth_count_data, birth_percentage_data = (
+                _build_birth_outcomes_bar_data(filtered_qs)
+            )
         with timed_block("outcomes.page.gest_age_distribution", request=request):
-            gest_age_labels, gest_age_counts = _build_gestational_age_distribution(filtered_qs)
+            gest_age_labels, gest_age_counts = _build_gestational_age_distribution(
+                filtered_qs
+            )
         with timed_block("outcomes.page.anc_visits_distribution", request=request):
-            anc_visits_labels, anc_visits_counts = _build_anc_visits_distribution(filtered_qs)
+            anc_visits_labels, anc_visits_counts = _build_anc_visits_distribution(
+                filtered_qs
+            )
         with timed_block("outcomes.page.place_of_birth_distribution", request=request):
             (
                 place_of_birth_labels,
@@ -1231,7 +1480,9 @@ class PregnancyOutcomesTrendAPIView(_PregnancyOutcomesBaseAPIView):
 
 class PregnancyOutcomesBirthOutcomesAPIView(_PregnancyOutcomesBaseAPIView):
     def get(self, request, format=None):
-        labels, count_data, percentage_data = _build_birth_outcomes_bar_data(self._qs(request))
+        labels, count_data, percentage_data = _build_birth_outcomes_bar_data(
+            self._qs(request)
+        )
         return Response(
             {
                 "labels": labels,
@@ -1279,10 +1530,14 @@ class PregnancyOutcomesPlaceOfBirthAPIView(_PregnancyOutcomesBaseAPIView):
 
 
 class PregnancyOutcomesMapAPIView(_PregnancyOutcomesBaseAPIView):
+    gps_field = "gps"
+    gps_event_type = "pregnancy_outcome"
+
     def get(self, request, format=None):
         filter_state = get_pregnancy_outcomes_filter_state(request)
+        filtered_qs = self._qs(request)
         with timed_block("outcomes.api.map_hierarchy", request=request):
-            hierarchy = _build_map_hierarchy_counts(self._qs(request))
+            hierarchy = _build_map_hierarchy_counts(filtered_qs)
         province_counts = [
             {"name": row.get("province_name") or "", "count": row.get("count") or 0}
             for row in hierarchy["map_province_sums"]
@@ -1311,18 +1566,24 @@ class PregnancyOutcomesMapAPIView(_PregnancyOutcomesBaseAPIView):
             "EA": ea_counts,
         }
         counts = counts_by_view.get(filter_state["map_view"], province_counts)
-        return Response(
-            {
-                "map_view": filter_state["map_view"],
-                "counts": counts,
-                "province_counts": province_counts,
-                "district_counts": district_counts,
-                "constituency_counts": constituency_counts,
-                "ward_counts": ward_counts,
-                "ea_counts": ea_counts,
-                **hierarchy,
-            }
+        payload = {
+            "map_view": filter_state["map_view"],
+            "counts": counts,
+            "province_counts": province_counts,
+            "district_counts": district_counts,
+            "constituency_counts": constituency_counts,
+            "ward_counts": ward_counts,
+            "ea_counts": ea_counts,
+            **hierarchy,
+        }
+        _attach_gps_payload(
+            payload,
+            request,
+            filtered_qs,
+            gps_field=self.gps_field,
+            event_type=self.gps_event_type,
         )
+        return Response(payload)
 
 
 class PregnancyDashboardView(OutcomesDashboardView):
@@ -1391,9 +1652,13 @@ class PregnancyGestationalAgeAncAPIView(PregnancyOutcomesAncVisitsAPIView):
 
 
 class PregnancyMapAPIView(PregnancyOutcomesMapAPIView):
+    gps_field = "PE_25"
+    gps_event_type = "pregnancy"
+
     def get(self, request, format=None):
         filter_state = get_pregnancy_outcomes_filter_state(request)
-        hierarchy = _build_map_hierarchy_counts(build_pregnancy_qs(request))
+        filtered_qs = build_pregnancy_qs(request)
+        hierarchy = _build_map_hierarchy_counts(filtered_qs)
         province_counts = [
             {"name": row.get("province_name") or "", "count": row.get("count") or 0}
             for row in hierarchy["map_province_sums"]
@@ -1422,18 +1687,24 @@ class PregnancyMapAPIView(PregnancyOutcomesMapAPIView):
             "EA": ea_counts,
         }
         counts = counts_by_view.get(filter_state["map_view"], province_counts)
-        return Response(
-            {
-                "map_view": filter_state["map_view"],
-                "counts": counts,
-                "province_counts": province_counts,
-                "district_counts": district_counts,
-                "constituency_counts": constituency_counts,
-                "ward_counts": ward_counts,
-                "ea_counts": ea_counts,
-                **hierarchy,
-            }
+        payload = {
+            "map_view": filter_state["map_view"],
+            "counts": counts,
+            "province_counts": province_counts,
+            "district_counts": district_counts,
+            "constituency_counts": constituency_counts,
+            "ward_counts": ward_counts,
+            "ea_counts": ea_counts,
+            **hierarchy,
+        }
+        _attach_gps_payload(
+            payload,
+            request,
+            filtered_qs,
+            gps_field=self.gps_field,
+            event_type=self.gps_event_type,
         )
+        return Response(payload)
 
 
 class PregnancyEventsDashboardView(OutcomesDashboardView):
@@ -1503,6 +1774,9 @@ class DeathsSummaryAPIView(APIView):
 
 
 class DeathsMapAPIView(APIView):
+    gps_field = "DE_34"
+    gps_event_type = "death"
+
     def get(self, request, format=None):
         invalid_tab_response = _validate_deaths_tab(request)
         if invalid_tab_response is not None:
@@ -1512,8 +1786,9 @@ class DeathsMapAPIView(APIView):
             map_view = "Province"
         if map_view == "Ea":
             map_view = "EA"
+        filtered_qs = build_deaths_qs(request)
         with timed_block("outcomes.deaths.map_hierarchy", request=request):
-            hierarchy = _build_map_hierarchy_counts(build_deaths_qs(request))
+            hierarchy = _build_map_hierarchy_counts(filtered_qs)
         province_counts = [
             {"name": row.get("province_name") or "", "count": row.get("count") or 0}
             for row in hierarchy["map_province_sums"]
@@ -1542,18 +1817,24 @@ class DeathsMapAPIView(APIView):
             "EA": ea_counts,
         }
         counts = counts_by_view.get(map_view, province_counts)
-        return Response(
-            {
-                "map_view": map_view,
-                "counts": counts,
-                "province_counts": province_counts,
-                "district_counts": district_counts,
-                "constituency_counts": constituency_counts,
-                "ward_counts": ward_counts,
-                "ea_counts": ea_counts,
-                **hierarchy,
-            }
+        payload = {
+            "map_view": map_view,
+            "counts": counts,
+            "province_counts": province_counts,
+            "district_counts": district_counts,
+            "constituency_counts": constituency_counts,
+            "ward_counts": ward_counts,
+            "ea_counts": ea_counts,
+            **hierarchy,
+        }
+        _attach_gps_payload(
+            payload,
+            request,
+            filtered_qs,
+            gps_field=self.gps_field,
+            event_type=self.gps_event_type,
         )
+        return Response(payload)
 
 
 def _build_deaths_age_sex_profile(filtered_qs):
@@ -1573,7 +1854,9 @@ def _build_deaths_age_sex_profile(filtered_qs):
         return 2
 
     for row in filtered_qs.values("DE_04", "DE_06", "DE_05").iterator():
-        age_years, age_days = _compute_death_age_years(row.get("DE_04"), row.get("DE_06"))
+        age_years, age_days = _compute_death_age_years(
+            row.get("DE_04"), row.get("DE_06")
+        )
         if age_days is None:
             continue
         idx = _bucket(age_years, age_days)
@@ -1601,10 +1884,12 @@ class DeathsAgeSexAPIView(APIView):
 
 def _build_deaths_timeliness_distribution(filtered_qs):
     labels = ["0-1", "2-3", "4-7", "8-14", "15-30", ">30"]
-    bins = {label: 0 for label in labels}
+    bins = dict.fromkeys(labels, 0)
     delay_days = []
 
-    for row in filtered_qs.values("DE_06", "submissiondate", "today", "start").iterator():
+    for row in filtered_qs.values(
+        "DE_06", "submissiondate", "today", "start"
+    ).iterator():
         dod_dt = _parse_outcome_datetime(row.get("DE_06"), end_of_day=True)
         report_dt = (
             _parse_outcome_datetime(row.get("submissiondate"), end_of_day=True)
@@ -1634,7 +1919,9 @@ def _build_deaths_timeliness_distribution(filtered_qs):
     return {
         "labels": labels,
         "data": [bins[label] for label in labels],
-        "median_delay_days": round(float(median(delay_days)), 1) if delay_days else None,
+        "median_delay_days": (
+            round(float(median(delay_days)), 1) if delay_days else None
+        ),
     }
 
 
@@ -1648,7 +1935,7 @@ class DeathsTimelinessAPIView(APIView):
 
 def _build_deaths_place_distribution(filtered_qs):
     categories = ["Home", "Facility", "On route", "Other", "Unknown"]
-    counts = {category: 0 for category in categories}
+    counts = dict.fromkeys(categories, 0)
 
     for row in filtered_qs.values("DE_07").iterator():
         raw = (row.get("DE_07") or "").strip().lower()
@@ -1747,28 +2034,38 @@ def _build_deaths_cause_trend(filtered_qs):
     )
 
     monthly_rows = (
-        _with_valid_death_date(
-            coded_qs.filter(DE_15__in=top_causes),
-            source_field="DE_06",
-            alias="death_date",
-        )
-        .annotate(month=TruncMonth("death_date"))
-        .values("month", "DE_15")
+        coded_qs.filter(DE_15__in=top_causes)
+        .exclude(submissiondate__isnull=True)
+        .exclude(submissiondate="")
+        .exclude(submissiondate__iexact="nan")
+        .exclude(submissiondate__iexact="nat")
+        .exclude(submissiondate__iexact="none")
+        .exclude(submissiondate__iexact="null")
+        .filter(submissiondate__regex=r"^\d{4}-\d{2}-\d{2}")
+        .filter(submissiondate__gte=TREND_SUBMISSION_HARD_START_DATE)
+        .annotate(month_key=Substr("submissiondate", 1, 7))
+        .values("month_key", "DE_15")
         .annotate(count=Count("pk"))
-        .order_by("month")
+        .order_by("month_key")
     )
 
-    months = sorted({row["month"] for row in monthly_rows if row.get("month") is not None})
-    month_keys = [m.strftime("%Y-%m") for m in months]
-    month_labels = [m.strftime("%b %Y") for m in months]
+    month_keys = sorted(
+        {row["month_key"] for row in monthly_rows if row.get("month_key")}
+    )
+    month_labels = []
+    for mk in month_keys:
+        try:
+            month_labels.append(datetime.strptime(mk, "%Y-%m").strftime("%b %Y"))
+        except ValueError:
+            month_labels.append(mk)
 
-    cause_map = {cause: {key: 0 for key in month_keys} for cause in top_causes}
+    cause_map = {cause: dict.fromkeys(month_keys, 0) for cause in top_causes}
     for row in monthly_rows:
-        month = row.get("month")
+        mk = row.get("month_key")
         cause = row.get("DE_15")
-        if month is None or cause not in cause_map:
+        if mk is None or cause not in cause_map:
             continue
-        cause_map[cause][month.strftime("%Y-%m")] = row.get("count") or 0
+        cause_map[cause][mk] = row.get("count") or 0
 
     datasets = []
     for cause in top_causes:
@@ -1809,15 +2106,16 @@ def _build_deaths_signals(request, *, threshold_pct=20.0, baseline_min=5):
     def _window_qs(days, *, previous=False):
         end = today - timedelta(days=days) if previous else today
         start = end - timedelta(days=days)
-        return (
-            _with_valid_death_date(base_qs, source_field="DE_06", alias="death_date")
-            .filter(death_date__gt=start, death_date__lte=end)
-        )
+        return _with_valid_death_date(
+            base_qs, source_field="DE_06", alias="death_date"
+        ).filter(death_date__gt=start, death_date__lte=end)
 
     def _under5_count(qs):
         count = 0
         for row in qs.values("DE_04", "DE_06").iterator():
-            age_years, age_days = _compute_death_age_years(row.get("DE_04"), row.get("DE_06"))
+            age_years, age_days = _compute_death_age_years(
+                row.get("DE_04"), row.get("DE_06")
+            )
             if age_days is not None and age_years < 5:
                 count += 1
         return count
@@ -1826,9 +2124,7 @@ def _build_deaths_signals(request, *, threshold_pct=20.0, baseline_min=5):
         diff = current - baseline
         pct = round((diff / baseline) * 100, 1) if baseline > 0 else None
         flag = bool(
-            pct is not None
-            and pct > threshold_pct
-            and baseline >= baseline_min
+            pct is not None and pct > threshold_pct and baseline >= baseline_min
         )
         return {
             "current": current,

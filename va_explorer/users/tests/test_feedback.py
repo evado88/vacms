@@ -18,7 +18,9 @@ def test_user_can_submit_feedback(client):
             "subject": "Broken page",
             "report_type": Feedback.ReportType.BUG,
             "module": Feedback.Module.DATA_MANAGEMENT,
-            "feature": Feedback.feature_choices_for(Feedback.Module.DATA_MANAGEMENT)[0][0],
+            "feature": Feedback.feature_choices_for(Feedback.Module.DATA_MANAGEMENT)[0][
+                0
+            ],
             "severity": Feedback.Severity.HIGH,
             "description": "Steps to reproduce...",
         },
@@ -63,9 +65,7 @@ def test_admin_can_view_feedback_mailbox_and_detail(client):
     assert list_response.status_code == 200
     assert feedback.subject in list_response.content.decode()
 
-    detail_response = client.get(
-        reverse("users:feedback_detail", args=[feedback.pk])
-    )
+    detail_response = client.get(reverse("users:feedback_detail", args=[feedback.pk]))
     assert detail_response.status_code == 200
     assert "Issue" in detail_response.content.decode()
 
@@ -109,7 +109,9 @@ def test_feedback_attachment_and_filename(client, settings, tmp_path):
                 "subject": "Attachment test",
                 "report_type": Feedback.ReportType.FEATURE,
                 "module": Feedback.Module.DATA_MANAGEMENT,
-                "feature": Feedback.feature_choices_for(Feedback.Module.DATA_MANAGEMENT)[0][0],
+                "feature": Feedback.feature_choices_for(
+                    Feedback.Module.DATA_MANAGEMENT
+                )[0][0],
                 "severity": Feedback.Severity.MEDIUM,
                 "description": "With attachment",
                 "attachment": uploaded,
