@@ -458,7 +458,7 @@ class ODKPullService:
         if form_name and form_name in FORM_MODEL_MAP:
             return import_dataframe_records(form_name, df)
         with transaction.atomic():
-            results = load_records_from_dataframe(df)
+            results = load_records_from_dataframe(df, upsert_gps=True)
         return {
             "created": len(results["created"]),
             "ignored": len(results["ignored"]),
