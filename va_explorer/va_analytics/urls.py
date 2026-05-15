@@ -1,3 +1,4 @@
+from django.db import transaction
 from django.urls import path
 
 from va_explorer.home.views import (
@@ -37,6 +38,14 @@ from va_explorer.va_analytics.views import (
     PregnancyOutcomesTrendAPIView,
     PregnancySummaryAPIView,
     PregnancyTrendAPIView,
+    baseline_census_dashboard_view,
+    baseline_census_overview_filter_data_view,
+    baseline_census_overview_kpis_component_view,
+    baseline_census_overview_map_data_view,
+    baseline_census_regional_csa_component_view,
+    baseline_census_regional_filters_component_view,
+    baseline_census_trends_component_view,
+    baseline_census_trends_data_view,
     dashboard_map_view,
     dashboard_view,
     outcomes_dashboard_view,
@@ -48,6 +57,46 @@ from va_explorer.va_analytics.views import (
 app_name = "va_analytics"
 urlpatterns = [
     path("dashboard/", view=dashboard_view, name="dashboard"),
+    path(
+        "baseline-census-dashboard/",
+        view=baseline_census_dashboard_view,
+        name="baseline-census-dashboard",
+    ),
+    path(
+        "baseline-census/trends/",
+        view=transaction.non_atomic_requests(baseline_census_trends_data_view),
+        name="baseline-census-trends-data",
+    ),
+    path(
+        "baseline-census/overview/filter-data/",
+        view=transaction.non_atomic_requests(baseline_census_overview_filter_data_view),
+        name="baseline-census-overview-filter-data",
+    ),
+    path(
+        "baseline-census/overview/map-data/",
+        view=transaction.non_atomic_requests(baseline_census_overview_map_data_view),
+        name="baseline-census-overview-map-data",
+    ),
+    path(
+        "baseline-census/components/overview/kpis/",
+        view=baseline_census_overview_kpis_component_view,
+        name="baseline-census-overview-kpis-component",
+    ),
+    path(
+        "baseline-census/components/trends/",
+        view=baseline_census_trends_component_view,
+        name="baseline-census-trends-component",
+    ),
+    path(
+        "baseline-census/components/csa/filters/",
+        view=baseline_census_regional_filters_component_view,
+        name="baseline-census-regional-filters-component",
+    ),
+    path(
+        "baseline-census/components/csa/table/",
+        view=baseline_census_regional_csa_component_view,
+        name="baseline-census-regional-csa-component",
+    ),
     path(
         "pregnancy-dashboard/",
         view=pregnancy_dashboard_view,

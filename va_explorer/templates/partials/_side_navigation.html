@@ -38,6 +38,16 @@
             <span class="nav-label outcomes-dashboard-label">Outcomes Dashboards</span>
           </a>
         </li>
+        <li class="nav-item">
+          <a
+            class="nav-link {% if request.resolver_match.url_name == 'baseline-census-dashboard' %}active{% endif %}"
+            href="{% url 'va_analytics:baseline-census-dashboard' %}"
+            data-tooltip="Baseline Census Dashboard"
+          >
+            <i class="fas fa-table nav-icon"></i>
+            <span class="nav-label">Baseline Census Dashboard</span>
+          </a>
+        </li>
       {% endif %}
 
       {% if request.user|can_view_va_schedule %}

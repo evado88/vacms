@@ -26,7 +26,7 @@ class DateInput(forms.DateInput):
 
 
 # =============================================================
-# Shared base filter — province / district / ward / enumerator
+# Shared base filter — district / ward / enumerator
 # are declared on every list FilterSet.  Subclasses inherit
 # these fields and only need to declare model-specific extras.
 # =============================================================
@@ -34,15 +34,9 @@ class GeoEnumeratorFilterSet(FilterSet):
     """Abstract base providing shared geography + enumerator filters.
 
     Concrete subclasses must declare their own ``class Meta`` with ``model``
-    and ``fields``; they do NOT need to redeclare province/district/ward/enumerator.
+    and ``fields``; they do NOT need to redeclare district/ward/enumerator.
     """
 
-    province = CharFilter(
-        field_name="province",
-        lookup_expr="icontains",
-        label="Province",
-        widget=TextInput(attrs={"class": "form-text"}),
-    )
     district = CharFilter(
         field_name="district",
         lookup_expr="icontains",
@@ -75,12 +69,6 @@ class VAFilter(FilterSet):
         field_name="Id10010",
         lookup_expr="icontains",
         label="Interviewer",
-        widget=TextInput(attrs={"class": "form-text"}),
-    )
-    province = CharFilter(
-        field_name="province",
-        lookup_expr="icontains",
-        label="Province",
         widget=TextInput(attrs={"class": "form-text"}),
     )
     district = CharFilter(

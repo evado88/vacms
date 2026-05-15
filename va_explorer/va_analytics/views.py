@@ -29,6 +29,13 @@ from pandas import to_datetime as to_dt
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from va_explorer.home.views import (
+    HomeOverviewMapData,
+    NationalOperationalFilterData,
+    RegionalOperationsCsaComponent,
+    RegionalOperationsFiltersComponent,
+    Trends,
+)
 from va_explorer.users.models import User
 from va_explorer.utils.mixins import CustomAuthMixin
 from va_explorer.utils.profiling import timed_block
@@ -1344,6 +1351,73 @@ class DashboardMapView(CustomAuthMixin, PermissionRequiredMixin, RedirectView):
 
 
 dashboard_map_view = DashboardMapView.as_view()
+
+
+class BaselineCensusDashboardView(
+    CustomAuthMixin, PermissionRequiredMixin, TemplateView
+):
+    template_name = "va_analytics/baseline_census_dashboard.html"
+    permission_required = "va_analytics.view_dashboard"
+
+
+baseline_census_dashboard_view = BaselineCensusDashboardView.as_view()
+
+
+class BaselineCensusTrendsDataView(Trends):
+    """Baseline-census namespaced trends endpoint."""
+
+
+baseline_census_trends_data_view = BaselineCensusTrendsDataView.as_view()
+
+
+class BaselineCensusOverviewFilterDataView(NationalOperationalFilterData):
+    """Baseline-census namespaced overview filter data endpoint."""
+
+
+baseline_census_overview_filter_data_view = (
+    BaselineCensusOverviewFilterDataView.as_view()
+)
+
+
+class BaselineCensusOverviewMapDataView(HomeOverviewMapData):
+    """Baseline-census namespaced overview map data endpoint."""
+
+
+baseline_census_overview_map_data_view = BaselineCensusOverviewMapDataView.as_view()
+
+
+class BaselineCensusOverviewKpisComponent(CustomAuthMixin, TemplateView):
+    template_name = "va_analytics/components/_baseline_overview_kpis_component.html"
+
+
+baseline_census_overview_kpis_component_view = (
+    BaselineCensusOverviewKpisComponent.as_view()
+)
+
+
+class BaselineCensusTrendsComponent(CustomAuthMixin, TemplateView):
+    template_name = "va_analytics/components/_baseline_trends_component.html"
+
+
+baseline_census_trends_component_view = BaselineCensusTrendsComponent.as_view()
+
+
+class BaselineCensusRegionalFiltersComponent(RegionalOperationsFiltersComponent):
+    template_name = "va_analytics/components/_baseline_regional_filters.html"
+
+
+baseline_census_regional_filters_component_view = (
+    BaselineCensusRegionalFiltersComponent.as_view()
+)
+
+
+class BaselineCensusRegionalCsaComponent(RegionalOperationsCsaComponent):
+    template_name = "va_analytics/components/_baseline_regional_csa_table.html"
+
+
+baseline_census_regional_csa_component_view = (
+    BaselineCensusRegionalCsaComponent.as_view()
+)
 
 
 class OutcomesDashboardView(CustomAuthMixin, PermissionRequiredMixin, TemplateView):

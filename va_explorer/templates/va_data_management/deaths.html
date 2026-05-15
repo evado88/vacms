@@ -6,18 +6,12 @@
 {% block content %}
   {% include 'partials/_death_update_stats.html' %}
 
-  {% if download_url %}
-    <form id="deathsDownloadForm" action="{{ download_url }}" method="post" class="d-none">
-      {% csrf_token %}
-    </form>
-  {% endif %}
-
   <section class="ou-card ou-mb-3">
     <div class="ou-card-header">
       <h2 class="ou-card-title">Filters</h2>
     </div>
     <div class="ou-card-body">
-      <small class="ou-filter-note">Filter deaths by province, district, ward, enumerator, deceased name, or date of death range.</small>
+      <small class="ou-filter-note">Filter deaths by district, ward, enumerator, deceased name, or date of death range.</small>
       <form method="get" class="ou-filter-row ou-va-filter-row">
         {% for field in filter.form %}
           <div class="form-group mb-0">
@@ -31,11 +25,6 @@
             <button class="btn btn-primary" type="submit">Apply Filters</button>
             {% if filter.is_valid %}
               <a class="btn btn-secondary" href="{% url 'va_data_management:deaths' %}">Reset</a>
-            {% endif %}
-            {% if download_url == "" %}
-              <button class="btn btn-primary" disabled><i class="fas fa-download"></i> Data</button>
-            {% else %}
-              <button class="btn btn-primary" type="submit" form="deathsDownloadForm"><i class="fas fa-download"></i> Data</button>
             {% endif %}
           </div>
         </div>
