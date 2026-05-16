@@ -38,6 +38,7 @@ class TestBaselineCensusDashboardRoute:
         assert 'data-tab="overview"' in body
         assert 'data-tab="trends"' in body
         assert 'data-tab="csa_supervision"' in body
+        assert 'data-tab="table"' in body
         assert 'data-tab="va_statistics"' not in body
         assert 'data-tab="mso_supervision"' not in body
         assert 'data-tab="rumor_overview"' not in body

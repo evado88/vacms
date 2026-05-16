@@ -1470,6 +1470,9 @@ class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
         except (TypeError, ValueError):
             bc_page = 1
 
+        location_level = req.GET.get("location_level", "").strip().lower()
+        location_value = req.GET.get("location_value", "").strip()
+
         refusal_q = Q()
         for kw in self._REFUSAL_KEYWORDS:
             refusal_q |= Q(result_list__icontains=kw)
@@ -1477,7 +1480,21 @@ class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
         for kw in self._NON_CONTACT_KEYWORDS:
             nc_q |= Q(result_list__icontains=kw)
 
-        hh_qs = Household.objects.values("province", "district", "ward", "ea").annotate(
+        hh_qs = Household.objects.all()
+        if location_value:
+            field_map = {
+                "province": "province__icontains",
+                "district": "district__icontains",
+                "ward": "ward__icontains",
+                "ea": "ea__icontains",
+            }
+            lookup = field_map.get(location_level)
+            if lookup:
+                hh_qs = hh_qs.filter(**{lookup: location_value})
+        else:
+            hh_qs = hh_qs.filter(province__lower__in=self._DEFAULT_PROVINCES)
+
+        hh_qs = hh_qs.values("province", "district", "ward", "ea").annotate(
             hh_enumerated=Count("pk", distinct=True),
             pop_enumerated=Count("members", distinct=True),
             refusals=Count("pk", filter=refusal_q),
@@ -1519,12 +1536,7 @@ class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
                 }
             )
 
-        # Default scope: Copperbelt + Central; override when province filter typed
-        if not bc_province:
-            rows = [
-                r for r in rows if str(r["province"]).lower() in self._DEFAULT_PROVINCES
-            ]
-
+        # Apply search filters on top of location filter (if applicable)
         if bc_province:
             rows = [
                 r for r in rows if bc_province.lower() in str(r["province"]).lower()

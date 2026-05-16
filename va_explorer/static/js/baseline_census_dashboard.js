@@ -299,6 +299,14 @@ const bcSortDefaults = {
 };
 let bcSortState = Object.assign({}, bcSortDefaults);
 
+let bcTableFilterState = {
+  location_level: 'national',
+  location_value: '',
+  start: '',
+  end: '',
+  preset: '',
+};
+
 const BC_SEARCH_IDS = ["bcProvinceSearch", "bcDistrictSearch", "bcWardSearch", "bcEaSearch"];
 const BC_STATE_KEY_MAP = {
   bcProvinceSearch: "bc_province_search",
@@ -323,6 +331,14 @@ const refreshBcProvinceTable = () => {
   Object.entries(bcSortState).forEach(([key, val]) => {
     if (val) params.set(key, val);
   });
+
+  // Merge Table tab location/time filter params if provided
+  if (bcTableFilterState.location_level && bcTableFilterState.location_value) {
+    params.set('location_level', bcTableFilterState.location_level);
+    params.set('location_value', bcTableFilterState.location_value);
+  }
+  if (bcTableFilterState.start) params.set('start', bcTableFilterState.start);
+  if (bcTableFilterState.end) params.set('end', bcTableFilterState.end);
 
   fetch(`${url}?${params.toString()}`, {
     method: "GET",
@@ -493,6 +509,117 @@ const initNationalOperationalFilters = () => {
   });
 }
 
+const updateTableLocationValueOptions = (level) => {
+  const valueSelect = document.getElementById("tableLocationValue");
+  if (!valueSelect) return;
+
+  const options = NOV_LOCATION_OPTIONS[level] || [];
+  const disableValue = level === "national" || options.length === 0;
+
+  valueSelect.innerHTML = "";
+  if (disableValue) {
+    valueSelect.disabled = true;
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "All National";
+    valueSelect.appendChild(option);
+    return;
+  }
+
+  valueSelect.disabled = false;
+  options.forEach((item, index) => {
+    const option = document.createElement("option");
+    option.value = item;
+    option.textContent = item;
+    if (index === 0) option.selected = true;
+    valueSelect.appendChild(option);
+  });
+}
+
+const resetBcSortState = () => {
+  bcSortState = Object.assign({}, bcSortDefaults);
+}
+
+const initTableFilters = () => {
+  const levelSelect = document.getElementById("tableLocationLevel");
+  const valueSelect = document.getElementById("tableLocationValue");
+
+  if (levelSelect) {
+    updateTableLocationValueOptions("national");
+    levelSelect.addEventListener("change", function () {
+      updateTableLocationValueOptions(this.value);
+      bcTableFilterState.location_level = this.value;
+      bcTableFilterState.location_value = '';
+      resetBcSortState();
+      refreshBcProvinceTable();
+    });
+  }
+
+  if (valueSelect) {
+    valueSelect.addEventListener("change", function () {
+      bcTableFilterState.location_value = this.value;
+      resetBcSortState();
+      refreshBcProvinceTable();
+    });
+  }
+
+  ["tableTimeAll", "tableTime30", "tableTime7", "tableTime24"].forEach(id => {
+    const radio = document.getElementById(id);
+    if (!radio) return;
+    radio.addEventListener("change", function () {
+      if (!this.checked) return;
+      const presetMap = {
+        tableTimeAll: '',
+        tableTime30: '30',
+        tableTime7: '7',
+        tableTime24: '24',
+      };
+      const preset = presetMap[id] || '';
+      bcTableFilterState.preset = preset;
+
+      if (preset) {
+        const startInput = document.getElementById("tableStartDatetime");
+        const endInput = document.getElementById("tableEndDatetime");
+        if (startInput && endInput) {
+          const now = new Date();
+          const start = new Date(now);
+          if (preset === '30') start.setDate(start.getDate() - 30);
+          if (preset === '7') start.setDate(start.getDate() - 7);
+          if (preset === '24') start.setHours(start.getHours() - 24);
+          startInput.value = toDateString(start);
+          endInput.value = toDateString(now);
+          bcTableFilterState.start = startInput.value;
+          bcTableFilterState.end = endInput.value;
+        }
+      } else {
+        bcTableFilterState.start = '';
+        bcTableFilterState.end = '';
+      }
+      resetBcSortState();
+      refreshBcProvinceTable();
+    });
+  });
+
+  const startInput = document.getElementById("tableStartDatetime");
+  const endInput = document.getElementById("tableEndDatetime");
+
+  if (startInput) {
+    startInput.addEventListener("change", function () {
+      bcTableFilterState.start = this.value;
+      resetBcSortState();
+      refreshBcProvinceTable();
+    });
+  }
+
+  if (endInput) {
+    endInput.addEventListener("change", function () {
+      bcTableFilterState.end = this.value;
+      resetBcSortState();
+      refreshBcProvinceTable();
+    });
+  }
+}
+
 const setSingleMetricTrendsTableData = (prefix, trendTable) => {
   const row = (trendTable && trendTable.recorded) ? trendTable.recorded : {};
   const values = {
@@ -599,10 +726,7 @@ const resizeChartsForTab = (tab) => {
 }
 
 const initOverviewTab = async () => {
-  await Promise.allSettled([
-    loadSlotOnce("novKpisComponentSlot"),
-    initBcProvinceTable(),
-  ]);
+  await loadSlotOnce("novKpisComponentSlot");
 
   if (overviewInitialized) {
     requestNationalOperationalFilterData();
@@ -641,6 +765,15 @@ const initCsaSupervisionTab = async () => {
   ]);
 }
 
+let tableTabInitialized = false;
+
+const initTableTab = async () => {
+  if (tableTabInitialized) return;
+  tableTabInitialized = true;
+  await initBcProvinceTable();
+  initTableFilters();
+}
+
 const initBaselineCensusTab = async (tab) => {
   const normalizedTab = tab === "operations_supervision" ? "csa_supervision" : tab;
   const started = perfNow();
@@ -657,6 +790,11 @@ const initBaselineCensusTab = async (tab) => {
   if (normalizedTab === "csa_supervision") {
     await initCsaSupervisionTab();
     perfLog("tab.init.csa_supervision", started);
+    return;
+  }
+  if (normalizedTab === "table") {
+    await initTableTab();
+    perfLog("tab.init.table", started);
   }
 }
 

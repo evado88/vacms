@@ -32,6 +32,11 @@
           CSA Supervision
         </a>
       </li>
+      <li class="nav-item" role="presentation">
+        <a class="nav-link {% if baseline_active_tab == 'table' %}active{% endif %}" id="tab-table-tab" data-tab="table" href="?tab=table" role="tab" aria-controls="tab-table" aria-selected="{% if baseline_active_tab == 'table' %}true{% else %}false{% endif %}">
+          Table
+        </a>
+      </li>
     </ul>
 
     <!-- Tab panes -->
@@ -85,13 +90,11 @@
               <div class="nov-overview-left-col">
                 <div class="nov-overview-left-container">
                   <div class="home-overview-left-top-row">
+                    <h4 class="csa-section-title mb-2">Copperbelt and Central Province Baseline Census</h4>
+                  </div>
+                  <div class="home-overview-left-top-row">
                     <div id="novKpisComponentSlot" data-component-slot data-component="kpi-cards" data-scope="overview,overview-data" data-endpoint="{% url 'va_analytics:baseline-census-overview-kpis-component' %}" data-cache-key="baseline-census:overview:kpis">
                       <div class="home-panel home-panel-placeholder">Loading overview KPIs...</div>
-                    </div>
-                  </div>
-                  <div class="home-overview-left-top-row mt-3">
-                    <div id="baselineProvinceTableSlot" data-component-slot data-component="province-table" data-scope="overview" data-endpoint="{% url 'va_analytics:baseline-census-province-table-component' %}" data-cache="off">
-                      <div class="home-panel home-panel-placeholder">Loading census table...</div>
                     </div>
                   </div>
                 </div>
@@ -135,6 +138,57 @@
       <div class="tab-pane dashboard-tab-panel fade home-trends-tab {% if baseline_active_tab == 'trends' %}show active{% endif %}" id="tab-4" data-tab-panel="trends" role="tabpanel" aria-labelledby="tab-4-tab">
         <div id="homeTrendsComponentSlot" data-component-slot data-component="trends" data-scope="trends,trends-data" data-endpoint="{% url 'va_analytics:baseline-census-trends-component' %}" data-cache-key="baseline-census:trends">
           <div class="home-panel home-panel-placeholder">Loading trends...</div>
+        </div>
+      </div>
+      <div class="tab-pane dashboard-tab-panel fade {% if baseline_active_tab == 'table' %}show active{% endif %}" id="tab-table" data-tab-panel="table" role="tabpanel" aria-labelledby="tab-table-tab">
+        <div id="baseline-table-view">
+          <div class="national-operational-view-shell">
+            <div class="nov-filters-row mb-3" data-component="table-filters">
+              <div class="nov-filter-select-wrap">
+                <select id="tableLocationLevel" class="form-control form-control-sm form-select nov-filter-select" aria-label="Location level">
+                  <option value="national" selected>National</option>
+                  <option value="province">Province</option>
+                  <option value="district">District</option>
+                  <option value="constituency">Constituency</option>
+                  <option value="ward">Ward</option>
+                </select>
+              </div>
+              <div class="nov-filter-select-wrap">
+                <select id="tableLocationValue" class="form-control form-control-sm form-select nov-filter-select" aria-label="Location value" disabled>
+                  <option value="">All National</option>
+                </select>
+              </div>
+              <div class="nov-filter-radios" role="radiogroup" aria-label="Table time filters">
+                <div class="form-check">
+                  <input class="form-check-input" type="radio" name="tableGlobalTimeFilter" id="tableTimeAll" checked>
+                  <label class="form-check-label" for="tableTimeAll">All time</label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input" type="radio" name="tableGlobalTimeFilter" id="tableTime30">
+                  <label class="form-check-label" for="tableTime30">Last 30 days</label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input" type="radio" name="tableGlobalTimeFilter" id="tableTime7">
+                  <label class="form-check-label" for="tableTime7">Last 7 days</label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input" type="radio" name="tableGlobalTimeFilter" id="tableTime24">
+                  <label class="form-check-label" for="tableTime24">Last 24 hours</label>
+                </div>
+              </div>
+              <div class="nov-filter-datetime">
+                <label for="tableStartDatetime" class="mb-0">Start:</label>
+                <input id="tableStartDatetime" type="date" class="form-control form-control-sm nov-filter-input">
+              </div>
+              <div class="nov-filter-datetime">
+                <label for="tableEndDatetime" class="mb-0">End:</label>
+                <input id="tableEndDatetime" type="date" class="form-control form-control-sm nov-filter-input">
+              </div>
+            </div>
+            <div id="baselineProvinceTableSlot" data-component-slot data-component="province-table" data-scope="table" data-endpoint="{% url 'va_analytics:baseline-census-province-table-component' %}" data-cache="off">
+              <div class="home-panel home-panel-placeholder">Loading census table...</div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

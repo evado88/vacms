@@ -124,7 +124,8 @@
   grid-template-rows: auto;
 }
 
-#national-operational-view .nov-filters-row {
+#national-operational-view .nov-filters-row,
+#baseline-table-view .nov-filters-row {
   display: grid;
   grid-template-columns: minmax(130px, 0.6fr) minmax(130px, 0.8fr) minmax(0, 2fr) minmax(0, 0.75fr) minmax(0, 0.75fr);
   gap: 10px;
@@ -136,11 +137,13 @@
   padding: 10px 12px;
 }
 
-#national-operational-view .nov-filter-select-wrap {
+#national-operational-view .nov-filter-select-wrap,
+#baseline-table-view .nov-filter-select-wrap {
   min-width: 0;
 }
 
-#national-operational-view .nov-filter-select {
+#national-operational-view .nov-filter-select,
+#baseline-table-view .nov-filter-select {
   width: 100%;
   min-width: 0;
   font-size: 0.86rem;
@@ -149,7 +152,8 @@
   border-radius: 0.2rem;
 }
 
-#national-operational-view .nov-filter-radios {
+#national-operational-view .nov-filter-radios,
+#baseline-table-view .nov-filter-radios {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
@@ -157,7 +161,8 @@
   min-width: 0;
 }
 
-#national-operational-view .nov-filter-radios .form-check {
+#national-operational-view .nov-filter-radios .form-check,
+#baseline-table-view .nov-filter-radios .form-check {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -165,12 +170,14 @@
   min-width: 0;
 }
 
-#national-operational-view .nov-filter-radios .form-check-label {
+#national-operational-view .nov-filter-radios .form-check-label,
+#baseline-table-view .nov-filter-radios .form-check-label {
   white-space: nowrap;
   font-size: 0.86rem;
 }
 
-#national-operational-view .nov-filter-datetime {
+#national-operational-view .nov-filter-datetime,
+#baseline-table-view .nov-filter-datetime {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   gap: 6px;
@@ -178,12 +185,14 @@
   min-width: 0;
 }
 
-#national-operational-view .nov-filter-datetime label {
+#national-operational-view .nov-filter-datetime label,
+#baseline-table-view .nov-filter-datetime label {
   font-size: 0.86rem;
   white-space: nowrap;
 }
 
-#national-operational-view .nov-filter-input {
+#national-operational-view .nov-filter-input,
+#baseline-table-view .nov-filter-input {
   width: 100%;
   min-width: 0;
 }
@@ -360,7 +369,8 @@
     grid-column: auto;
   }
 
-  #national-operational-view .nov-filters-row {
+  #national-operational-view .nov-filters-row,
+  #baseline-table-view .nov-filters-row {
     grid-template-columns: minmax(120px, 0.8fr) minmax(120px, 1fr) minmax(0, 1.6fr) minmax(0, 0.9fr) minmax(0, 0.9fr);
   }
 
