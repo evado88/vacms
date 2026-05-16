@@ -9,7 +9,6 @@
   {{ block.super }}
   <link href="{% static 'css/baseline_census_dashboard.css' %}" rel="stylesheet">
   <link href="{% static 'css/baseline_census_regional_operations.css' %}" rel="stylesheet">
-  <link href="{% static 'vendor/leaflet-1.9.2/leaflet.css' %}" rel="stylesheet">
 {% endblock %}
 
 {% block content %}
@@ -90,23 +89,10 @@
                       <div class="home-panel home-panel-placeholder">Loading overview KPIs...</div>
                     </div>
                   </div>
-                  <div class="home-overview-left-bottom-row">
-                    <section
-                      id="homeOverviewMapPanel"
-                      class="home-panel home-overview-map-panel"
-                      data-component="overview-map"
-                      data-map-endpoint="{% url 'va_analytics:baseline-census-overview-map-data' %}"
-                      data-user-pii="{% if perms.va_analytics.view_pii %}true{% else %}false{% endif %}"
-                    >
-                      <h5 class="mb-2">Geographic Distribution</h5>
-                      <div id="homeOverviewMapBreadcrumb" class="home-map-breadcrumbs"></div>
-                      <div id="homeOverviewMapContainer">
-                        <div id="homeOverviewMapLegend" class="legend"></div>
-                      </div>
-                      <p id="homeOverviewMapEmpty" class="po-empty-state" hidden>
-                        No geographic data available for the selected filters.
-                      </p>
-                    </section>
+                  <div class="home-overview-left-top-row mt-3">
+                    <div id="baselineProvinceTableSlot" data-component-slot data-component="province-table" data-scope="overview" data-endpoint="{% url 'va_analytics:baseline-census-province-table-component' %}" data-cache="off">
+                      <div class="home-panel home-panel-placeholder">Loading census table...</div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -160,10 +146,6 @@
 {% block page_scripts %}
   <script src="{% static 'js/dashboard_loader.js' %}"></script>
   <script src="{% static 'js/dashboard_tabs.js' %}"></script>
-  <script src="{% static 'vendor/leaflet-1.9.2/leaflet.js' %}"></script>
-  <script src="{% static 'js/dashboard_gps_layer.js' %}?v=20260506a"></script>
-  <script src="{% static 'js/hierarchical_dashboard_map.js' %}?v=20260506a"></script>
-  <script src="{% static 'js/home_hierarchical_dashboard_map.js' %}?v=20260506a"></script>
   <script src="{% static 'js/baseline_census_regional_operations.js' %}"></script>
   <script src="{% static 'vendor/chartjs-3.7.1/chart.min.js' %}"></script>
   <script src="{% static 'js/baseline_census_dashboard.js' %}"></script>

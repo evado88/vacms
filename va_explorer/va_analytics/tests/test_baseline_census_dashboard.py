@@ -84,9 +84,11 @@ class TestBaselineCensusComponentEndpoints:
         assert 'id="nov-kpi-total-eas"' in body
         assert 'id="nov-kpi-total-households"' in body
         assert 'id="nov-kpi-total-people"' in body
-        # Right-side pregnancy / death / VA cards must not appear here.
-        assert 'id="nov-kpi-total-pregnancies"' not in body
-        assert 'id="nov-kpi-total-deaths"' not in body
+        # Pregnancy, pregnancy outcome, and death KPI cards are now included.
+        assert 'id="nov-kpi-total-pregnancies"' in body
+        assert 'id="nov-kpi-total-preg-outcomes"' in body
+        assert 'id="nov-kpi-total-deaths"' in body
+        # Verbal autopsy cards are not shown on the baseline census overview.
         assert 'id="nov-kpi-total-vas"' not in body
 
     def test_trends_component_returns_chart_canvases(self):
@@ -126,6 +128,26 @@ class TestBaselineCensusComponentEndpoints:
         assert response.status_code == 200
         body = response.content.decode()
         assert 'id="csaNameSearch"' in body
+
+    def test_province_table_component_renders_search_inputs_and_columns(self):
+        client = Client()
+        client.force_login(user=_dashboard_user())
+
+        response = client.get(
+            reverse("va_analytics:baseline-census-province-table-component")
+        )
+
+        assert response.status_code == 200
+        body = response.content.decode()
+        assert 'id="bcProvinceSearch"' in body
+        assert 'id="bcDistrictSearch"' in body
+        assert 'id="bcWardSearch"' in body
+        assert 'id="bcEaSearch"' in body
+        assert "Copperbelt and Central Province Baseline Census" in body
+        assert "HH Enumerated" in body
+        assert "Total Deaths" in body
+        assert "Total Pregnancies" in body
+        assert "Total Preg. Outcomes" in body
 
 
 class TestBaselineCensusDataEndpoints:

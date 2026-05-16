@@ -42,6 +42,7 @@ from va_explorer.va_analytics.views import (
     baseline_census_overview_filter_data_view,
     baseline_census_overview_kpis_component_view,
     baseline_census_overview_map_data_view,
+    baseline_census_province_table_component_view,
     baseline_census_regional_csa_component_view,
     baseline_census_regional_filters_component_view,
     baseline_census_trends_component_view,
@@ -96,6 +97,11 @@ urlpatterns = [
         "baseline-census/components/csa/table/",
         view=baseline_census_regional_csa_component_view,
         name="baseline-census-regional-csa-component",
+    ),
+    path(
+        "baseline-census/components/overview/province-table/",
+        view=baseline_census_province_table_component_view,
+        name="baseline-census-province-table-component",
     ),
     path(
         "pregnancy-dashboard/",

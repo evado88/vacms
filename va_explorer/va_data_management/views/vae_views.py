@@ -5,7 +5,7 @@ from django.contrib.auth.mixins import PermissionRequiredMixin
 from django.contrib.messages.views import SuccessMessageMixin
 from django.db.models import Count, OuterRef, Subquery, TextField
 from django.db.models import Value as V
-from django.db.models.functions import Coalesce, Concat
+from django.db.models.functions import Concat
 from django.shortcuts import redirect
 from django.urls import reverse, reverse_lazy
 from django.views.generic import (
@@ -24,12 +24,47 @@ from va_explorer.va_data_management.forms import VerbalAutopsyForm
 from va_explorer.va_data_management.models import (
     CauseCodingIssue,
     Location,
+    ODKFormChoice,
     VerbalAutopsy,
 )
 from va_explorer.va_data_management.tasks import run_coding_algorithms
 from va_explorer.va_data_management.utils.date_parsing import parse_date
 from va_explorer.va_data_management.utils.loading import get_va_summary_stats
 from va_explorer.va_data_management.utils.validate import validate_vas_for_dashboard
+
+_VA_GEOGRAPHY_FORM_NAME = "pregnancy"
+_VA_GEOGRAPHY_FIELDS = ("province", "district", "constituency", "ward")
+
+
+def _normalize_odk_code(value):
+    """Normalize ODK choice values so equivalent numeric codes map together."""
+    text = str(value or "").strip()
+    if re.fullmatch(r"\d+", text):
+        return str(int(text))
+    if re.fullmatch(r"\d+\.0+", text):
+        return str(int(text.split(".", 1)[0]))
+    return text
+
+
+def _build_odk_label_map(field_name, form_name=_VA_GEOGRAPHY_FORM_NAME):
+    lookup = {}
+    choice_rows = (
+        ODKFormChoice.objects.filter(form_name=form_name, field_name=field_name)
+        .order_by("id")
+        .values("value", "label")
+    )
+    for row in choice_rows:
+        key = _normalize_odk_code(row["value"])
+        if key and key not in lookup:
+            lookup[key] = (row["label"] or "").strip()
+    return lookup
+
+
+def _decode_odk_field(label_map, raw_value):
+    text = str(raw_value or "").strip()
+    if not text:
+        return text
+    return label_map.get(_normalize_odk_code(text), text)
 
 
 class Index(CustomAuthMixin, PermissionRequiredMixin, ListView):
@@ -54,12 +89,14 @@ class Index(CustomAuthMixin, PermissionRequiredMixin, ListView):
             .annotate(
                 deceased=Concat("Id10017", V(" "), "Id10018", output_field=TextField()),
                 errors=Subquery(errors_subq),
-                district_display=Coalesce("district", "area"),
             )
             .values(
                 "id",
                 "province",
-                "district_display",
+                "district",
+                "constituency",
+                "ward",
+                "area",
                 "causes__cause",
                 "Id10023",
                 "Id10010",
@@ -92,13 +129,12 @@ class Index(CustomAuthMixin, PermissionRequiredMixin, ListView):
 
         self.filterset = VAFilter(data=self.request.GET or None, queryset=queryset)
         if self.request.user.is_fieldworker():
-            del self.filterset.form.fields["interviewer"]
+            self.filterset.form.fields.pop("interviewer", None)
 
         # Don't allow search based on fields the user can't see anyway
         if not self.request.user.can_view_pii:
-            del self.filterset.form.fields["deceased"]
-            del self.filterset.form.fields["start_date"]
-            del self.filterset.form.fields["end_date"]
+            for field in ("deceased", "start_date", "end_date"):
+                self.filterset.form.fields.pop(field, None)
 
         return self.filterset.qs
 
@@ -119,6 +155,11 @@ class Index(CustomAuthMixin, PermissionRequiredMixin, ListView):
             # render button useless
             context["download_url"] = ""
 
+        geography_label_maps = {
+            field_name: _build_odk_label_map(field_name)
+            for field_name in _VA_GEOGRAPHY_FIELDS
+        }
+
         context["object_list"] = [
             {
                 "id": va["id"],
@@ -128,8 +169,17 @@ class Index(CustomAuthMixin, PermissionRequiredMixin, ListView):
                 "dod": (
                     parse_date(va["Id10023"]) if (va["Id10023"] != "dk") else "Unknown"
                 ),
-                "province": va["province"],
-                "district": va["district_display"],
+                "province": _decode_odk_field(
+                    geography_label_maps["province"], va["province"]
+                ),
+                "district": (
+                    _decode_odk_field(geography_label_maps["district"], va["district"])
+                    or va["area"]
+                ),
+                "constituency": _decode_odk_field(
+                    geography_label_maps["constituency"], va["constituency"]
+                ),
+                "ward": _decode_odk_field(geography_label_maps["ward"], va["ward"]),
                 "cause": va["causes__cause"],
                 "errors": va["errors"],
             }

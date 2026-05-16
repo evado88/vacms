@@ -1,0 +1,102 @@
+<div class="csa-section-header">
+  <h4 class="section-header csa-section-title">Copperbelt and Central Province Baseline Census</h4>
+  <div class="csa-search-group">
+    <div class="csa-search">
+      <input type="search" placeholder="Province" aria-label="Search province" id="bcProvinceSearch" value="{{ bc_province_search }}">
+    </div>
+    <div class="csa-search">
+      <input type="search" placeholder="District" aria-label="Search district" id="bcDistrictSearch" value="{{ bc_district_search }}">
+    </div>
+    <div class="csa-search">
+      <input type="search" placeholder="Ward" aria-label="Search ward" id="bcWardSearch" value="{{ bc_ward_search }}">
+    </div>
+    <div class="csa-search">
+      <input type="search" placeholder="EA" aria-label="Search enumeration area" id="bcEaSearch" value="{{ bc_ea_search }}">
+    </div>
+  </div>
+</div>
+<div class="section-body">
+  <div class="csa-table-container" role="region" aria-label="Province baseline census table">
+    <table class="csa-table">
+      <thead>
+        <tr>
+          <th style="width: 8%;">
+            <a href="?bc_sort=province&bc_dir={% if bc_sort == 'province' and bc_dir == 'desc' %}asc{% else %}desc{% endif %}&bc_page=1" class="bc-sort-link" data-table="bc-province">Province</a><span class="sort-icon">{% if bc_sort == 'province' %}{% if bc_dir == 'asc' %}▲{% else %}▼{% endif %}{% else %}▲{% endif %}</span>
+          </th>
+          <th style="width: 8%;">
+            <a href="?bc_sort=district&bc_dir={% if bc_sort == 'district' and bc_dir == 'desc' %}asc{% else %}desc{% endif %}&bc_page=1" class="bc-sort-link" data-table="bc-province">District</a><span class="sort-icon">{% if bc_sort == 'district' %}{% if bc_dir == 'asc' %}▲{% else %}▼{% endif %}{% else %}▲{% endif %}</span>
+          </th>
+          <th style="width: 8%;">
+            <a href="?bc_sort=ward&bc_dir={% if bc_sort == 'ward' and bc_dir == 'desc' %}asc{% else %}desc{% endif %}&bc_page=1" class="bc-sort-link" data-table="bc-province">Ward</a><span class="sort-icon">{% if bc_sort == 'ward' %}{% if bc_dir == 'asc' %}▲{% else %}▼{% endif %}{% else %}▲{% endif %}</span>
+          </th>
+          <th style="width: 7%;">
+            <a href="?bc_sort=ea&bc_dir={% if bc_sort == 'ea' and bc_dir == 'desc' %}asc{% else %}desc{% endif %}&bc_page=1" class="bc-sort-link" data-table="bc-province">EA</a><span class="sort-icon">{% if bc_sort == 'ea' %}{% if bc_dir == 'asc' %}▲{% else %}▼{% endif %}{% else %}▲{% endif %}</span>
+          </th>
+          <th class="numeric" style="width: 6%;">
+            <a href="?bc_sort=hh_estimate&bc_dir={% if bc_sort == 'hh_estimate' and bc_dir == 'desc' %}asc{% else %}desc{% endif %}&bc_page=1" class="bc-sort-link" data-table="bc-province">HH Estimate</a><span class="sort-icon">{% if bc_sort == 'hh_estimate' %}{% if bc_dir == 'asc' %}▲{% else %}▼{% endif %}{% else %}▲{% endif %}</span>
+          </th>
+          <th class="numeric" style="width: 7%;">
+            <a href="?bc_sort=hh_enumerated&bc_dir={% if bc_sort == 'hh_enumerated' and bc_dir == 'desc' %}asc{% else %}desc{% endif %}&bc_page=1" class="bc-sort-link" data-table="bc-province">HH Enumerated</a><span class="sort-icon">{% if bc_sort == 'hh_enumerated' %}{% if bc_dir == 'asc' %}▲{% else %}▼{% endif %}{% else %}▲{% endif %}</span>
+          </th>
+          <th class="numeric" style="width: 6%;">
+            <a href="?bc_sort=hh_coverage&bc_dir={% if bc_sort == 'hh_coverage' and bc_dir == 'desc' %}asc{% else %}desc{% endif %}&bc_page=1" class="bc-sort-link" data-table="bc-province">HH Coverage</a><span class="sort-icon">{% if bc_sort == 'hh_coverage' %}{% if bc_dir == 'asc' %}▲{% else %}▼{% endif %}{% else %}▲{% endif %}</span>
+          </th>
+          <th class="numeric" style="width: 6%;">
+            <a href="?bc_sort=pop_estimate&bc_dir={% if bc_sort == 'pop_estimate' and bc_dir == 'desc' %}asc{% else %}desc{% endif %}&bc_page=1" class="bc-sort-link" data-table="bc-province">Pop. Estimate</a><span class="sort-icon">{% if bc_sort == 'pop_estimate' %}{% if bc_dir == 'asc' %}▲{% else %}▼{% endif %}{% else %}▲{% endif %}</span>
+          </th>
+          <th class="numeric" style="width: 7%;">
+            <a href="?bc_sort=pop_enumerated&bc_dir={% if bc_sort == 'pop_enumerated' and bc_dir == 'desc' %}asc{% else %}desc{% endif %}&bc_page=1" class="bc-sort-link" data-table="bc-province">Pop. Enumerated</a><span class="sort-icon">{% if bc_sort == 'pop_enumerated' %}{% if bc_dir == 'asc' %}▲{% else %}▼{% endif %}{% else %}▲{% endif %}</span>
+          </th>
+          <th class="numeric" style="width: 6%;">
+            <a href="?bc_sort=pop_coverage&bc_dir={% if bc_sort == 'pop_coverage' and bc_dir == 'desc' %}asc{% else %}desc{% endif %}&bc_page=1" class="bc-sort-link" data-table="bc-province">Pop. Coverage</a><span class="sort-icon">{% if bc_sort == 'pop_coverage' %}{% if bc_dir == 'asc' %}▲{% else %}▼{% endif %}{% else %}▲{% endif %}</span>
+          </th>
+          <th class="numeric" style="width: 5%;">
+            <a href="?bc_sort=refusals&bc_dir={% if bc_sort == 'refusals' and bc_dir == 'desc' %}asc{% else %}desc{% endif %}&bc_page=1" class="bc-sort-link" data-table="bc-province">Refusals</a><span class="sort-icon">{% if bc_sort == 'refusals' %}{% if bc_dir == 'asc' %}▲{% else %}▼{% endif %}{% else %}▲{% endif %}</span>
+          </th>
+          <th class="numeric" style="width: 6%;">
+            <a href="?bc_sort=non_contact&bc_dir={% if bc_sort == 'non_contact' and bc_dir == 'desc' %}asc{% else %}desc{% endif %}&bc_page=1" class="bc-sort-link" data-table="bc-province">Non-Contact</a><span class="sort-icon">{% if bc_sort == 'non_contact' %}{% if bc_dir == 'asc' %}▲{% else %}▼{% endif %}{% else %}▲{% endif %}</span>
+          </th>
+          <th class="numeric" style="width: 6%;">
+            <a href="?bc_sort=total_deaths&bc_dir={% if bc_sort == 'total_deaths' and bc_dir == 'desc' %}asc{% else %}desc{% endif %}&bc_page=1" class="bc-sort-link" data-table="bc-province">Total Deaths</a><span class="sort-icon">{% if bc_sort == 'total_deaths' %}{% if bc_dir == 'asc' %}▲{% else %}▼{% endif %}{% else %}▲{% endif %}</span>
+          </th>
+          <th class="numeric" style="width: 7%;">
+            <a href="?bc_sort=total_pregnancies&bc_dir={% if bc_sort == 'total_pregnancies' and bc_dir == 'desc' %}asc{% else %}desc{% endif %}&bc_page=1" class="bc-sort-link" data-table="bc-province">Total Pregnancies</a><span class="sort-icon">{% if bc_sort == 'total_pregnancies' %}{% if bc_dir == 'asc' %}▲{% else %}▼{% endif %}{% else %}▲{% endif %}</span>
+          </th>
+          <th class="numeric" style="width: 7%;">
+            <a href="?bc_sort=total_preg_outcomes&bc_dir={% if bc_sort == 'total_preg_outcomes' and bc_dir == 'desc' %}asc{% else %}desc{% endif %}&bc_page=1" class="bc-sort-link" data-table="bc-province">Total Preg. Outcomes</a><span class="sort-icon">{% if bc_sort == 'total_preg_outcomes' %}{% if bc_dir == 'asc' %}▲{% else %}▼{% endif %}{% else %}▲{% endif %}</span>
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in bc_stats %}
+          <tr>
+            <td>{{ row.province }}</td>
+            <td>{{ row.district }}</td>
+            <td>{{ row.ward }}</td>
+            <td>{{ row.ea }}</td>
+            <td class="numeric">{% if row.hh_estimate is not None %}{{ row.hh_estimate }}{% else %}&mdash;{% endif %}</td>
+            <td class="numeric">{{ row.hh_enumerated }}</td>
+            <td class="numeric">{% if row.hh_coverage is not None %}{{ row.hh_coverage }}%{% else %}&mdash;{% endif %}</td>
+            <td class="numeric">{% if row.pop_estimate is not None %}{{ row.pop_estimate }}{% else %}&mdash;{% endif %}</td>
+            <td class="numeric">{{ row.pop_enumerated }}</td>
+            <td class="numeric">{% if row.pop_coverage is not None %}{{ row.pop_coverage }}%{% else %}&mdash;{% endif %}</td>
+            <td class="numeric">{{ row.refusals }}</td>
+            <td class="numeric">{{ row.non_contact }}</td>
+            <td class="numeric">{{ row.total_deaths }}</td>
+            <td class="numeric">{{ row.total_pregnancies }}</td>
+            <td class="numeric">{{ row.total_preg_outcomes }}</td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="15" class="text-center text-muted py-3">No census data found for the selected filters.</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="csa-pagination" aria-label="Province census table pagination">
+    <a href="?bc_page={{ bc_prev_page }}" class="bc-page-link regional-page-link {% if not bc_has_prev %}disabled{% endif %}" data-table="bc-province" aria-disabled="{% if bc_has_prev %}false{% else %}true{% endif %}">Prev</a>
+    <span>Page {{ bc_page }} of {{ bc_total_pages }} | Rows: {{ bc_visible_count }} of {{ bc_total_count }}</span>
+    <a href="?bc_page={{ bc_next_page }}" class="bc-page-link regional-page-link {% if not bc_has_next %}disabled{% endif %}" data-table="bc-province" aria-disabled="{% if bc_has_next %}false{% else %}true{% endif %}">Next</a>
+  </div>
+</div>

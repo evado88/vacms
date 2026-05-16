@@ -1420,6 +1420,200 @@ baseline_census_regional_csa_component_view = (
 )
 
 
+class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
+    template_name = "va_analytics/components/_baseline_census_province_table.html"
+
+    _VALID_SORT_FIELDS = {
+        "province",
+        "district",
+        "ward",
+        "ea",
+        "hh_estimate",
+        "hh_enumerated",
+        "hh_coverage",
+        "pop_estimate",
+        "pop_enumerated",
+        "pop_coverage",
+        "refusals",
+        "non_contact",
+        "total_deaths",
+        "total_pregnancies",
+        "total_preg_outcomes",
+    }
+    _REFUSAL_KEYWORDS = ("refus",)
+    _NON_CONTACT_KEYWORDS = ("no contact", "non-contact", "no_contact", "non_contact")
+    _DEFAULT_PROVINCES = ("copperbelt", "central")
+
+    def get_context_data(self, **kwargs):
+        from django.db.models import Count, Q
+
+        from va_explorer.va_data_management.models import (
+            Death,
+            Household,
+            Pregnancy,
+            PregnancyOutcome,
+        )
+
+        context = super().get_context_data(**kwargs)
+        req = self.request
+
+        bc_sort = self._pick(
+            req.GET.get("bc_sort", "province"), self._VALID_SORT_FIELDS, "province"
+        )
+        bc_dir = self._pick(req.GET.get("bc_dir", "asc"), {"asc", "desc"}, "asc")
+        bc_province = req.GET.get("bc_province_search", "").strip()
+        bc_district = req.GET.get("bc_district_search", "").strip()
+        bc_ward = req.GET.get("bc_ward_search", "").strip()
+        bc_ea = req.GET.get("bc_ea_search", "").strip()
+        try:
+            bc_page = max(1, int(req.GET.get("bc_page", 1) or 1))
+        except (TypeError, ValueError):
+            bc_page = 1
+
+        refusal_q = Q()
+        for kw in self._REFUSAL_KEYWORDS:
+            refusal_q |= Q(result_list__icontains=kw)
+        nc_q = Q()
+        for kw in self._NON_CONTACT_KEYWORDS:
+            nc_q |= Q(result_list__icontains=kw)
+
+        hh_qs = Household.objects.values("province", "district", "ward", "ea").annotate(
+            hh_enumerated=Count("pk", distinct=True),
+            pop_enumerated=Count("members", distinct=True),
+            refusals=Count("pk", filter=refusal_q),
+            non_contact=Count("pk", filter=nc_q),
+        )
+
+        def _geo_counts(model):
+            return {
+                (r["province"], r["district"], r["ward"], r["ea"]): r["cnt"]
+                for r in model.objects.values(
+                    "province", "district", "ward", "ea"
+                ).annotate(cnt=Count("pk"))
+            }
+
+        death_counts = _geo_counts(Death)
+        preg_counts = _geo_counts(Pregnancy)
+        preg_out_counts = _geo_counts(PregnancyOutcome)
+
+        rows = []
+        for row in hh_qs:
+            geo_key = (row["province"], row["district"], row["ward"], row["ea"])
+            rows.append(
+                {
+                    "province": row["province"] or "—",
+                    "district": row["district"] or "—",
+                    "ward": row["ward"] or "—",
+                    "ea": row["ea"] or "—",
+                    "hh_estimate": None,
+                    "hh_enumerated": row["hh_enumerated"],
+                    "hh_coverage": None,
+                    "pop_estimate": None,
+                    "pop_enumerated": row["pop_enumerated"],
+                    "pop_coverage": None,
+                    "refusals": row["refusals"],
+                    "non_contact": row["non_contact"],
+                    "total_deaths": death_counts.get(geo_key, 0),
+                    "total_pregnancies": preg_counts.get(geo_key, 0),
+                    "total_preg_outcomes": preg_out_counts.get(geo_key, 0),
+                }
+            )
+
+        # Default scope: Copperbelt + Central; override when province filter typed
+        if not bc_province:
+            rows = [
+                r for r in rows if str(r["province"]).lower() in self._DEFAULT_PROVINCES
+            ]
+
+        if bc_province:
+            rows = [
+                r for r in rows if bc_province.lower() in str(r["province"]).lower()
+            ]
+        if bc_district:
+            rows = [
+                r for r in rows if bc_district.lower() in str(r["district"]).lower()
+            ]
+        if bc_ward:
+            rows = [r for r in rows if bc_ward.lower() in str(r["ward"]).lower()]
+        if bc_ea:
+            rows = [r for r in rows if bc_ea.lower() in str(r["ea"]).lower()]
+
+        rows = self._sort_rows(rows, bc_sort, bc_dir)
+        pagination = self._paginate_rows(rows, bc_page, per_page=10)
+
+        context.update(
+            {
+                "bc_stats": pagination["rows"],
+                "bc_sort": bc_sort,
+                "bc_dir": bc_dir,
+                "bc_province_search": bc_province,
+                "bc_district_search": bc_district,
+                "bc_ward_search": bc_ward,
+                "bc_ea_search": bc_ea,
+                "bc_page": pagination["page"],
+                "bc_total_pages": pagination["total_pages"],
+                "bc_has_prev": pagination["has_prev"],
+                "bc_has_next": pagination["has_next"],
+                "bc_prev_page": pagination["prev_page"],
+                "bc_next_page": pagination["next_page"],
+                "bc_visible_count": pagination["visible_count"],
+                "bc_total_count": pagination["total_count"],
+            }
+        )
+        return context
+
+    @staticmethod
+    def _pick(value, valid_values, default):
+        return value if value in valid_values else default
+
+    @staticmethod
+    def _sort_rows(rows, sort_key, sort_dir):
+        reverse = sort_dir == "desc"
+        text_keys = {"province", "district", "ward", "ea"}
+        if sort_key in text_keys:
+            return sorted(
+                rows, key=lambda r: str(r.get(sort_key, "")).lower(), reverse=reverse
+            )
+
+        def numeric_key(row):
+            val = row.get(sort_key)
+            if val is None:
+                return -1 if reverse else float("inf")
+            try:
+                return float(val)
+            except (TypeError, ValueError):
+                return 0
+
+        return sorted(rows, key=numeric_key, reverse=reverse)
+
+    @staticmethod
+    def _paginate_rows(rows, page, per_page=10):
+        total = len(rows)
+        total_pages = max(1, (total + per_page - 1) // per_page)
+        current_page = min(max(1, page), total_pages)
+        start = (current_page - 1) * per_page
+        end = start + per_page
+        sliced = rows[start:end]
+        return {
+            "rows": sliced,
+            "page": current_page,
+            "total_pages": total_pages,
+            "has_prev": current_page > 1,
+            "has_next": current_page < total_pages,
+            "prev_page": current_page - 1 if current_page > 1 else 1,
+            "next_page": (
+                current_page + 1 if current_page < total_pages else total_pages
+            ),
+            "visible_count": len(sliced),
+            "total_count": total,
+        }
+
+
+baseline_census_province_table_component_view = (
+    BaselineCensusProvinceTableComponent.as_view()
+)
+
+
 class OutcomesDashboardView(CustomAuthMixin, PermissionRequiredMixin, TemplateView):
     template_name = "va_analytics/outcomes_dashboard.html"
     permission_required = "va_analytics.view_dashboard"

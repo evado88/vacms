@@ -71,6 +71,11 @@ class VAFilter(FilterSet):
         label="Interviewer",
         widget=TextInput(attrs={"class": "form-text"}),
     )
+    deceased = CharFilter(
+        method="filter_deceased",
+        label="Deceased",
+        widget=TextInput(attrs={"class": "form-text"}),
+    )
     district = CharFilter(
         field_name="district",
         lookup_expr="icontains",
@@ -119,7 +124,10 @@ class VAFilter(FilterSet):
                 va.get("id")
                 for va in vas
                 if fuzz.token_set_ratio(
-                    value, " ".join([va.get("Id10017"), va.get("Id10018")])
+                    value,
+                    " ".join(
+                        part for part in [va.get("Id10017"), va.get("Id10018")] if part
+                    ),
                 )
                 > threshold
             ]

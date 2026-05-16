@@ -13,7 +13,6 @@ let homeDataPromiseBySection = {};
 let homeDataCacheBySection = {};
 let firstRenderMeasured = false;
 const tabWarmCache = new Set();
-let homeOverviewMapController = null;
 let novFilterRequestId = 0;
 
 const SHELL_SELECTOR = ".dashboard-shell[data-shell='baseline-census']";
@@ -247,6 +246,9 @@ const updateNationalOperationalKpis = (kpis) => {
   const eas = kpis.eas || {};
   const households = kpis.households || {};
   const people = kpis.people || {};
+  const pregnancies = kpis.pregnancies || {};
+  const pregOutcomes = kpis.preg_outcomes || {};
+  const deaths = kpis.deaths || {};
 
   setElementTextById("nov-kpi-today-eas", eas.today);
   setElementTextById("nov-kpi-week-eas", eas.week);
@@ -262,9 +264,128 @@ const updateNationalOperationalKpis = (kpis) => {
   setElementTextById("nov-kpi-week-people", people.week);
   setElementTextById("nov-kpi-30d-people", people.last_30_days);
   setElementTextById("nov-kpi-total-people", people.total);
+
+  setElementTextById("nov-kpi-today-pregnancies", pregnancies.today);
+  setElementTextById("nov-kpi-week-pregnancies", pregnancies.week);
+  setElementTextById("nov-kpi-30d-pregnancies", pregnancies.last_30_days);
+  setElementTextById("nov-kpi-total-pregnancies", pregnancies.total);
+
+  setElementTextById("nov-kpi-today-preg-outcomes", pregOutcomes.today);
+  setElementTextById("nov-kpi-week-preg-outcomes", pregOutcomes.week);
+  setElementTextById("nov-kpi-30d-preg-outcomes", pregOutcomes.last_30_days);
+  setElementTextById("nov-kpi-total-preg-outcomes", pregOutcomes.total);
+
+  setElementTextById("nov-kpi-today-deaths", deaths.today);
+  setElementTextById("nov-kpi-week-deaths", deaths.week);
+  setElementTextById("nov-kpi-30d-deaths", deaths.last_30_days);
+  setElementTextById("nov-kpi-total-deaths", deaths.total);
 }
 
 let _novKpiInflight = null;
+
+// ---------------------------------------------------------------------------
+// Province census table (Overview tab)
+// ---------------------------------------------------------------------------
+let bcProvinceTableInitialized = false;
+let bcSearchTimer = null;
+const bcSortDefaults = {
+  bc_sort: "province",
+  bc_dir: "asc",
+  bc_province_search: "",
+  bc_district_search: "",
+  bc_ward_search: "",
+  bc_ea_search: "",
+  bc_page: "1",
+};
+let bcSortState = Object.assign({}, bcSortDefaults);
+
+const BC_SEARCH_IDS = ["bcProvinceSearch", "bcDistrictSearch", "bcWardSearch", "bcEaSearch"];
+const BC_STATE_KEY_MAP = {
+  bcProvinceSearch: "bc_province_search",
+  bcDistrictSearch: "bc_district_search",
+  bcWardSearch: "bc_ward_search",
+  bcEaSearch: "bc_ea_search",
+};
+
+const getBcProvinceTableUrl = () => {
+  const slot = document.getElementById("baselineProvinceTableSlot");
+  return slot ? (slot.dataset.endpoint || "") : "";
+};
+
+const refreshBcProvinceTable = () => {
+  const slot = document.getElementById("baselineProvinceTableSlot");
+  const url = getBcProvinceTableUrl();
+  if (!slot || !url) return;
+
+  const activeBcSearchId = BC_SEARCH_IDS.find((id) => document.activeElement?.id === id) || null;
+
+  const params = new URLSearchParams();
+  Object.entries(bcSortState).forEach(([key, val]) => {
+    if (val) params.set(key, val);
+  });
+
+  fetch(`${url}?${params.toString()}`, {
+    method: "GET",
+    headers: { "X-Requested-With": "XMLHttpRequest" },
+    credentials: "same-origin",
+  })
+    .then((res) => {
+      if (!res.ok) throw new Error(`Province table fetch failed: ${res.status}`);
+      return res.text();
+    })
+    .then((html) => {
+      slot.innerHTML = html;
+      slot.dataset.loaded = "1";
+      if (activeBcSearchId) {
+        const input = document.getElementById(activeBcSearchId);
+        if (input) {
+          input.focus();
+          const len = input.value.length;
+          input.setSelectionRange(len, len);
+        }
+      }
+    })
+    .catch((err) => console.error("[baseline-census] province table refresh failed", err));
+};
+
+const wireBcProvinceTableEvents = () => {
+  document.addEventListener("input", (event) => {
+    const target = event.target;
+    if (!target || !BC_SEARCH_IDS.includes(target.id)) return;
+    const stateKey = BC_STATE_KEY_MAP[target.id];
+    if (stateKey) bcSortState[stateKey] = (target.value || "").trim();
+    bcSortState.bc_page = "1";
+    if (bcSearchTimer) clearTimeout(bcSearchTimer);
+    bcSearchTimer = setTimeout(refreshBcProvinceTable, 1000);
+  });
+
+  document.addEventListener("click", (event) => {
+    const link = event.target.closest(".bc-sort-link, .bc-page-link");
+    if (!link) return;
+    if (link.classList.contains("disabled") || link.getAttribute("aria-disabled") === "true") return;
+    if (!link.closest("#baselineProvinceTableSlot")) return;
+
+    event.preventDefault();
+    const href = link.getAttribute("href") || "";
+    const params = new URLSearchParams(href.replace("?", ""));
+
+    if (link.classList.contains("bc-sort-link")) {
+      bcSortState.bc_sort = params.get("bc_sort") || bcSortState.bc_sort;
+      bcSortState.bc_dir = params.get("bc_dir") || bcSortState.bc_dir;
+      bcSortState.bc_page = "1";
+    } else {
+      bcSortState.bc_page = params.get("bc_page") || bcSortState.bc_page;
+    }
+    refreshBcProvinceTable();
+  });
+};
+
+const initBcProvinceTable = async () => {
+  await loadSlotOnce("baselineProvinceTableSlot");
+  if (bcProvinceTableInitialized) return;
+  bcProvinceTableInitialized = true;
+  wireBcProvinceTableEvents();
+};
 
 const requestNationalOperationalFilterData = (options = {}) => {
   const started = perfNow();
@@ -320,74 +441,11 @@ const requestNationalOperationalFilterData = (options = {}) => {
       });
   }
 
-  const mapPanel = document.getElementById("homeOverviewMapPanel");
-  const createMapFactory =
-    window.createHomeHierarchicalDashboardMap || window.createHierarchicalDashboardMap;
-  if (!mapPanel || typeof createMapFactory !== "function") return;
-
-  if (!homeOverviewMapController) {
-    const endpoint = mapPanel.dataset.mapEndpoint || "";
-    if (!endpoint) return;
-    const userCanViewPII = (mapPanel.dataset.userPii || "").toLowerCase() === "true";
-    homeOverviewMapController = createMapFactory({
-      containerId: "homeOverviewMapContainer",
-      legendId: "homeOverviewMapLegend",
-      breadcrumbId: "homeOverviewMapBreadcrumb",
-      emptyStateId: "homeOverviewMapEmpty",
-      endpoint,
-      buildParams: (filters = {}) => {
-        const params = new URLSearchParams();
-        if (filters.time_preset) params.set("time_preset", filters.time_preset);
-        if (filters.start_datetime) params.set("start_datetime", filters.start_datetime);
-        if (filters.end_datetime) params.set("end_datetime", filters.end_datetime);
-        if (filters.map_view) params.set("map_view", filters.map_view);
-        if (filters.geography_level && filters.geography_value) {
-          params.set("geography_level", filters.geography_level);
-          params.set("geography_value", filters.geography_value);
-        }
-        return params;
-      },
-      initialView: "Province",
-      fitToDataBounds: true,
-      styleVariant: "va",
-      noDataMessage: "No geographic data available for the selected filters.",
-      userCanViewPII,
-    });
-  }
-
-  const mapViewByLocationLevel = {
-    province: "Province",
-    district: "District",
-    constituency: "Constituency",
-    ward: "Ward",
-  };
-
-  const filters = {
-    time_preset: selectedPreset === "30"
-      ? "last_30_days"
-      : selectedPreset === "7"
-        ? "last_7_days"
-        : selectedPreset === "24"
-          ? "last_24_hours"
-          : "all_time",
-    start_datetime: startDatetime,
-    end_datetime: endDatetime,
-    map_view: mapViewByLocationLevel[locationLevel] || "Province",
-  };
-
-  if (locationLevel !== "national" && locationValue) {
-    filters.geography_level = locationLevel;
-    filters.geography_value = locationValue;
-  }
-
-  if (selectedPreset === "all" && (filters.start_datetime || filters.end_datetime)) {
-    filters.time_preset = "custom";
-  }
-
-  homeOverviewMapController
-    .refresh(filters)
-    .then(() => perfLog("render.overview.map", started, { mapView: filters.map_view }))
-    .catch((error) => console.error("[baseline-census] failed to refresh overview map", error));
+  perfLog("render.overview.kpis", started, {
+    locationLevel,
+    hasLocationValue: Boolean(locationValue),
+    selectedPreset,
+  });
 }
 
 const initNationalOperationalFilters = () => {
@@ -538,14 +596,12 @@ const resizeChartsForTab = (tab) => {
     const chart = chartInstances.get(canvas);
     if (chart) chart.resize();
   });
-  if (tab === "overview" && homeOverviewMapController && typeof homeOverviewMapController.resize === "function") {
-    homeOverviewMapController.resize();
-  }
 }
 
 const initOverviewTab = async () => {
   await Promise.allSettled([
     loadSlotOnce("novKpisComponentSlot"),
+    initBcProvinceTable(),
   ]);
 
   if (overviewInitialized) {
