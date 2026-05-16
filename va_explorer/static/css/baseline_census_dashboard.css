@@ -120,6 +120,10 @@
   font-size: 0.95rem;
 }
 
+#national-operational-view #novKpiCardsContainer .nov-kpi-cards-inline {
+  grid-template-rows: auto;
+}
+
 #national-operational-view .nov-filters-row {
   display: grid;
   grid-template-columns: minmax(130px, 0.6fr) minmax(130px, 0.8fr) minmax(0, 2fr) minmax(0, 0.75fr) minmax(0, 0.75fr);
@@ -274,7 +278,7 @@
 }
 
 #national-operational-view .nov-kpi-cards-inline {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   align-items: stretch;
 }
 
