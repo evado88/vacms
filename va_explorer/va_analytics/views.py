@@ -1492,7 +1492,10 @@ class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
             if lookup:
                 hh_qs = hh_qs.filter(**{lookup: location_value})
         else:
-            hh_qs = hh_qs.filter(province__lower__in=self._DEFAULT_PROVINCES)
+            default_q = Q()
+            for province_name in self._DEFAULT_PROVINCES:
+                default_q |= Q(province__iexact=province_name)
+            hh_qs = hh_qs.filter(default_q)
 
         hh_qs = hh_qs.values("province", "district", "ward", "ea").annotate(
             hh_enumerated=Count("pk", distinct=True),
