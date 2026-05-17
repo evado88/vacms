@@ -36,9 +36,9 @@ class TestBaselineCensusDashboardRoute:
         body = response.content.decode()
 
         assert 'data-tab="overview"' in body
-        assert 'data-tab="trends"' in body
-        assert 'data-tab="csa_supervision"' in body
         assert 'data-tab="table"' in body
+        assert 'data-tab="trends"' not in body
+        assert 'data-tab="csa_supervision"' not in body
         assert 'data-tab="va_statistics"' not in body
         assert 'data-tab="mso_supervision"' not in body
         assert 'data-tab="rumor_overview"' not in body
@@ -92,44 +92,6 @@ class TestBaselineCensusComponentEndpoints:
         # Verbal autopsy cards are not shown on the baseline census overview.
         assert 'id="nov-kpi-total-vas"' not in body
 
-    def test_trends_component_returns_chart_canvases(self):
-        client = Client()
-        client.force_login(user=_dashboard_user())
-
-        response = client.get(reverse("va_analytics:baseline-census-trends-component"))
-
-        assert response.status_code == 200
-        body = response.content.decode()
-        assert "Collection Trends" in body
-        assert 'id="householdsChart"' in body
-        assert 'id="pregnanciesChart"' in body
-        assert 'id="pregnancyOutcomesChart"' in body
-        assert 'id="deathsChart"' in body
-
-    def test_csa_filters_component_renders_search_controls(self):
-        client = Client()
-        client.force_login(user=_dashboard_user())
-
-        response = client.get(
-            reverse("va_analytics:baseline-census-regional-filters-component")
-        )
-
-        assert response.status_code == 200
-        body = response.content.decode()
-        assert 'id="geographyFilterSelect"' in body
-
-    def test_csa_table_component_renders_search_inputs(self):
-        client = Client()
-        client.force_login(user=_dashboard_user())
-
-        response = client.get(
-            reverse("va_analytics:baseline-census-regional-csa-component")
-        )
-
-        assert response.status_code == 200
-        body = response.content.decode()
-        assert 'id="csaNameSearch"' in body
-
     def test_province_table_component_renders_search_inputs_and_columns(self):
         client = Client()
         client.force_login(user=_dashboard_user())
@@ -152,17 +114,6 @@ class TestBaselineCensusComponentEndpoints:
 
 
 class TestBaselineCensusDataEndpoints:
-    def test_trends_data_endpoint_returns_json(self):
-        client = Client()
-        client.force_login(user=_dashboard_user())
-
-        response = client.get(
-            reverse("va_analytics:baseline-census-trends-data") + "?section=model"
-        )
-
-        assert response.status_code == 200
-        assert response["Content-Type"].startswith("application/json")
-
     def test_overview_filter_data_endpoint_returns_kpis(self):
         client = Client()
         client.force_login(user=_dashboard_user())

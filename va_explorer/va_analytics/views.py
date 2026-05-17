@@ -32,9 +32,6 @@ from rest_framework.views import APIView
 from va_explorer.home.views import (
     HomeOverviewMapData,
     NationalOperationalFilterData,
-    RegionalOperationsCsaComponent,
-    RegionalOperationsFiltersComponent,
-    Trends,
 )
 from va_explorer.users.models import User
 from va_explorer.utils.mixins import CustomAuthMixin
@@ -1359,15 +1356,16 @@ class BaselineCensusDashboardView(
     template_name = "va_analytics/baseline_census_dashboard.html"
     permission_required = "va_analytics.view_dashboard"
 
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        raw_tab = (self.request.GET.get("tab") or "overview").strip().lower()
+        context["baseline_active_tab"] = (
+            raw_tab if raw_tab in {"overview", "table"} else "overview"
+        )
+        return context
+
 
 baseline_census_dashboard_view = BaselineCensusDashboardView.as_view()
-
-
-class BaselineCensusTrendsDataView(Trends):
-    """Baseline-census namespaced trends endpoint."""
-
-
-baseline_census_trends_data_view = BaselineCensusTrendsDataView.as_view()
 
 
 class BaselineCensusOverviewFilterDataView(NationalOperationalFilterData):
@@ -1392,31 +1390,6 @@ class BaselineCensusOverviewKpisComponent(CustomAuthMixin, TemplateView):
 
 baseline_census_overview_kpis_component_view = (
     BaselineCensusOverviewKpisComponent.as_view()
-)
-
-
-class BaselineCensusTrendsComponent(CustomAuthMixin, TemplateView):
-    template_name = "va_analytics/components/_baseline_trends_component.html"
-
-
-baseline_census_trends_component_view = BaselineCensusTrendsComponent.as_view()
-
-
-class BaselineCensusRegionalFiltersComponent(RegionalOperationsFiltersComponent):
-    template_name = "va_analytics/components/_baseline_regional_filters.html"
-
-
-baseline_census_regional_filters_component_view = (
-    BaselineCensusRegionalFiltersComponent.as_view()
-)
-
-
-class BaselineCensusRegionalCsaComponent(RegionalOperationsCsaComponent):
-    template_name = "va_analytics/components/_baseline_regional_csa_table.html"
-
-
-baseline_census_regional_csa_component_view = (
-    BaselineCensusRegionalCsaComponent.as_view()
 )
 
 

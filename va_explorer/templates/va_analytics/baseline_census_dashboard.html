@@ -8,28 +8,17 @@
 {% block css %}
   {{ block.super }}
   <link href="{% static 'css/baseline_census_dashboard.css' %}" rel="stylesheet">
-  <link href="{% static 'css/baseline_census_regional_operations.css' %}" rel="stylesheet">
 {% endblock %}
 
 {% block content %}
-<div class="row dashboard-shell" data-shell="baseline-census" data-trends-endpoint="{% url 'va_analytics:baseline-census-trends-data' %}">
+<div class="row dashboard-shell" data-shell="baseline-census">
   <div class="col">
-    {% with baseline_active_tab=request.GET.tab|default:'overview' %}
+    {% with baseline_active_tab=baseline_active_tab|default:'overview' %}
     <!-- Nav tabs -->
     <ul class="nav nav-tabs" id="baselineCensusTabs" role="tablist">
       <li class="nav-item" role="presentation">
         <a class="nav-link {% if baseline_active_tab == 'overview' %}active{% endif %}" id="tab-1-tab" data-tab="overview" href="?tab=overview" role="tab" aria-controls="tab-1" aria-selected="{% if baseline_active_tab == 'overview' %}true{% else %}false{% endif %}">
           Overview
-        </a>
-      </li>
-      <li class="nav-item" role="presentation">
-        <a class="nav-link {% if baseline_active_tab == 'trends' %}active{% endif %}" id="tab-4-tab" data-tab="trends" href="?tab=trends" role="tab" aria-controls="tab-4" aria-selected="{% if baseline_active_tab == 'trends' %}true{% else %}false{% endif %}">
-          Trends
-        </a>
-      </li>
-      <li class="nav-item" role="presentation">
-        <a class="nav-link {% if baseline_active_tab == 'csa_supervision' or baseline_active_tab == 'operations_supervision' %}active{% endif %}" id="tab-2-tab" data-tab="csa_supervision" href="?tab=csa_supervision" role="tab" aria-controls="tab-2" aria-selected="{% if baseline_active_tab == 'csa_supervision' or baseline_active_tab == 'operations_supervision' %}true{% else %}false{% endif %}">
-          CSA Supervision
         </a>
       </li>
       <li class="nav-item" role="presentation">
@@ -103,43 +92,6 @@
           </div>
         </div>
       </div>
-      <div class="tab-pane dashboard-tab-panel fade {% if baseline_active_tab == 'csa_supervision' or baseline_active_tab == 'operations_supervision' %}show active{% endif %}" id="tab-2" data-tab-panel="csa_supervision" role="tabpanel" aria-labelledby="tab-2-tab">
-        <section class="regional-ops-layout">
-          <div class="regional-ops-divider" aria-hidden="true"></div>
-          <div class="regional-ops-panel right-panel">
-            <div
-              class="right-panel-sections"
-              data-component="regional-operations-layout"
-              id="regionalOperationsComponents"
-              data-filters-url="{% url 'va_analytics:baseline-census-regional-filters-component' %}"
-              data-csa-url="{% url 'va_analytics:baseline-census-regional-csa-component' %}"
-            >
-              <div class="right-panel-section filters-section">
-                <div class="filters-bar" id="regionalFiltersComponent" data-component-slot data-component="filters" data-scope="operations" data-endpoint="{% url 'va_analytics:baseline-census-regional-filters-component' %}" data-cache-key="baseline-census:operations:filters">
-                  <div class="home-panel home-panel-placeholder">Loading filters...</div>
-                </div>
-              </div>
-              <div class="right-panel-section csa-section">
-                <div
-                  id="regionalCsaComponent"
-                  data-component-slot
-                  data-component="csa-table"
-                  data-scope="operations"
-                  data-endpoint="{% url 'va_analytics:baseline-census-regional-csa-component' %}"
-                  data-cache="off"
-                >
-                  <div class="home-panel home-panel-placeholder">Loading CSA table...</div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-      </div>
-      <div class="tab-pane dashboard-tab-panel fade home-trends-tab {% if baseline_active_tab == 'trends' %}show active{% endif %}" id="tab-4" data-tab-panel="trends" role="tabpanel" aria-labelledby="tab-4-tab">
-        <div id="homeTrendsComponentSlot" data-component-slot data-component="trends" data-scope="trends,trends-data" data-endpoint="{% url 'va_analytics:baseline-census-trends-component' %}" data-cache-key="baseline-census:trends">
-          <div class="home-panel home-panel-placeholder">Loading trends...</div>
-        </div>
-      </div>
       <div class="tab-pane dashboard-tab-panel fade {% if baseline_active_tab == 'table' %}show active{% endif %}" id="tab-table" data-tab-panel="table" role="tabpanel" aria-labelledby="tab-table-tab">
         <div id="baseline-table-view">
           <div class="national-operational-view-shell">
@@ -187,7 +139,6 @@
 {% block page_scripts %}
   <script src="{% static 'js/dashboard_loader.js' %}"></script>
   <script src="{% static 'js/dashboard_tabs.js' %}"></script>
-  <script src="{% static 'js/baseline_census_regional_operations.js' %}"></script>
   <script src="{% static 'vendor/chartjs-3.7.1/chart.min.js' %}"></script>
   <script src="{% static 'js/baseline_census_dashboard.js' %}"></script>
   {{ block.super }}

@@ -1,16 +1,6 @@
-GRAPH_OPTIONS = {
-  responsive: true,
-  scales: { y: { beginAtZero: true } },
-  plugins: { legend: { display: false } }
-};
-
-BORDER_COLOR = "#037BFE"
 const chartInstances = new WeakMap();
 let novFiltersBound = false;
 let overviewInitialized = false;
-let trendsInitialized = false;
-let homeDataPromiseBySection = {};
-let homeDataCacheBySection = {};
 let firstRenderMeasured = false;
 const tabWarmCache = new Set();
 let novFilterRequestId = 0;
@@ -32,14 +22,6 @@ const perfLog = (name, startMs, meta) => {
 };
 
 const getDashboardLoader = () => window.DashboardLoader || null;
-const hasJqueryAjax = () => typeof window !== "undefined" && window.$ && typeof window.$.ajax === "function";
-const getTrendsEndpoint = (section = "model") => {
-  const shell = document.querySelector(SHELL_SELECTOR);
-  const endpoint = shell?.dataset?.trendsEndpoint || "";
-  const base = endpoint || "/trends/";
-  const separator = base.includes("?") ? "&" : "?";
-  return `${base}${separator}section=${encodeURIComponent(section)}`;
-};
 
 const fetchSlotHtmlFallback = async (slot) => {
   const endpoint = (slot && slot.dataset && slot.dataset.endpoint) ? slot.dataset.endpoint : "";
@@ -80,46 +62,6 @@ const invalidateScope = (scopeKey) => {
   const loader = getDashboardLoader();
   if (!loader || typeof loader.invalidateComponentsByScope !== "function") return;
   loader.invalidateComponentsByScope(scopeKey);
-}
-
-const clearTrendsCache = () => {
-  homeDataPromiseBySection = {};
-  homeDataCacheBySection = {};
-}
-
-const setSingleTrendChart = (canvas, x, y) => {
-  if (!canvas) return;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
-
-  const existingChart = chartInstances.get(canvas);
-  if (existingChart) {
-    existingChart.data.labels = x;
-    if (existingChart.data.datasets[0]) {
-      existingChart.data.datasets[0].data = y;
-      existingChart.data.datasets[0].borderColor = BORDER_COLOR;
-    } else {
-      existingChart.data.datasets = [{
-        data: y,
-        borderColor: BORDER_COLOR,
-      }];
-    }
-    existingChart.update("none");
-    return;
-  }
-
-  const chart = new Chart(ctx, {
-    type: "line",
-    data: {
-      labels: x,
-      datasets: [{
-        data: y,
-        borderColor: BORDER_COLOR,
-      }]
-    },
-    options: GRAPH_OPTIONS,
-  });
-  chartInstances.set(canvas, chart);
 }
 
 const destroyChartForCanvas = (canvas) => {
@@ -331,32 +273,6 @@ const renderEnumerationCoverageChart = (kpis = {}) => {
     plugins: [enumerationCoverageLabelsPlugin],
   });
   chartInstances.set(canvas, chart);
-}
-
-const toNumericSeries = (values) => {
-  if (!Array.isArray(values)) return [];
-  return values.map((value) => {
-    const numeric = Number(value);
-    return Number.isFinite(numeric) ? numeric : 0;
-  });
-}
-
-const ensureCumulativeNonDecreasing = (values) => {
-  const numericValues = toNumericSeries(values);
-  let hasDip = false;
-  for (let index = 1; index < numericValues.length; index += 1) {
-    if (numericValues[index] < numericValues[index - 1]) {
-      hasDip = true;
-      break;
-    }
-  }
-  if (!hasDip) return numericValues;
-
-  let runningTotal = 0;
-  return numericValues.map((value) => {
-    runningTotal += value;
-    return runningTotal;
-  });
 }
 
 const selectedNovPreset = () => {
@@ -833,103 +749,9 @@ const initTableFilters = () => {
   }
 }
 
-const setSingleMetricTrendsTableData = (prefix, trendTable) => {
-  const row = (trendTable && trendTable.recorded) ? trendTable.recorded : {};
-  const values = {
-    "24-hours": row["24"] || 0,
-    "week": row["1 week"] || 0,
-    "month": row["1 month"] || 0,
-    "overall": row["Overall"] || 0,
-  };
-
-  Object.entries(values).forEach(([suffix, value]) => {
-    const el = document.getElementById(`${prefix}-past-${suffix}`);
-    if (el) el.innerHTML = value;
-  });
-}
-
-const setSingleMetricTrendChart = (canvasId, trendGraphs) => {
-  const canvas = document.getElementById(canvasId);
-  if (!canvas || !trendGraphs || !trendGraphs.recorded) return;
-  const x = trendGraphs.recorded.x || [];
-  const y = ensureCumulativeNonDecreasing(trendGraphs.recorded.y || []);
-  setSingleTrendChart(canvas, x, y);
-}
-
-const setModelTrendVisualizations = (modelTrends) => {
-  if (!modelTrends) return;
-
-  const households = modelTrends.households || {};
-  setSingleMetricTrendsTableData("households", households.table);
-  setSingleMetricTrendChart("householdsChart", households.graphs);
-
-  const pregnancies = modelTrends.pregnancies || {};
-  setSingleMetricTrendsTableData("pregnancies", pregnancies.table);
-  setSingleMetricTrendChart("pregnanciesChart", pregnancies.graphs);
-
-  const pregnancyOutcomes = modelTrends.pregnancy_outcomes || {};
-  setSingleMetricTrendsTableData("pregnancy-outcomes", pregnancyOutcomes.table);
-  setSingleMetricTrendChart("pregnancyOutcomesChart", pregnancyOutcomes.graphs);
-
-  const deaths = modelTrends.deaths || {};
-  setSingleMetricTrendsTableData("deaths", deaths.table);
-  setSingleMetricTrendChart("deathsChart", deaths.graphs);
-}
-
-const applyTrendsPayload = (jsonResponse) => {
-  const started = perfNow();
-  if (!jsonResponse) return;
-  setModelTrendVisualizations(jsonResponse.modelTrends || {});
-  perfLog("render.trends.components", started);
-}
-
-const fetchTrendsPayload = (section = "model") => {
-  if (homeDataCacheBySection[section]) return Promise.resolve(homeDataCacheBySection[section]);
-  if (homeDataPromiseBySection[section]) return homeDataPromiseBySection[section];
-
-  if (hasJqueryAjax()) {
-    homeDataPromiseBySection[section] = new Promise((resolve, reject) => {
-      $.ajax({
-        url: getTrendsEndpoint(section),
-        type: "GET",
-        dataType: "json",
-        success: (jsonResponse) => {
-          homeDataCacheBySection[section] = jsonResponse;
-          resolve(jsonResponse);
-        },
-        error: () => {
-          homeDataPromiseBySection[section] = null;
-          reject(new Error("Failed to fetch chart data from trends endpoint"));
-        },
-      });
-    });
-    return homeDataPromiseBySection[section];
-  }
-
-  homeDataPromiseBySection[section] = fetch(getTrendsEndpoint(section), {
-    method: "GET",
-    headers: { "X-Requested-With": "XMLHttpRequest" },
-    credentials: "same-origin",
-  })
-    .then((response) => {
-      if (!response.ok) throw new Error(`Failed to fetch chart data: ${response.status}`);
-      return response.json();
-    })
-    .then((jsonResponse) => {
-      homeDataCacheBySection[section] = jsonResponse;
-      return jsonResponse;
-    })
-    .catch((error) => {
-      homeDataPromiseBySection[section] = null;
-      throw error;
-    });
-  return homeDataPromiseBySection[section];
-}
-
 const resizeChartsForTab = (tab) => {
   const mapByTab = {
     overview: ["enumerationCoverageChart"],
-    trends: ["householdsChart", "pregnanciesChart", "pregnancyOutcomesChart", "deathsChart"],
   };
   (mapByTab[tab] || []).forEach((id) => {
     const canvas = document.getElementById(id);
@@ -953,33 +775,6 @@ const initOverviewTab = async () => {
   requestNationalOperationalFilterData();
 }
 
-const initTrendsTab = async () => {
-  await loadSlotOnce("homeTrendsComponentSlot");
-
-  if (trendsInitialized) {
-    resizeChartsForTab("trends");
-    return;
-  }
-  trendsInitialized = true;
-  try {
-    const payload = await fetchTrendsPayload("model");
-    applyTrendsPayload(payload);
-    resizeChartsForTab("trends");
-  } catch (error) {
-    console.error(error);
-  }
-}
-
-const initCsaSupervisionTab = async () => {
-  const filtersSlot = document.getElementById("regionalFiltersComponent");
-  const csaSlot     = document.getElementById("regionalCsaComponent");
-  if (filtersSlot?.dataset?.loaded === "1" && csaSlot?.dataset?.loaded === "1") return;
-  await Promise.allSettled([
-    loadSlotOnce("regionalFiltersComponent"),
-    loadSlotOnce("regionalCsaComponent"),
-  ]);
-}
-
 let tableTabInitialized = false;
 
 const initTableTab = async () => {
@@ -990,21 +785,11 @@ const initTableTab = async () => {
 }
 
 const initBaselineCensusTab = async (tab) => {
-  const normalizedTab = tab === "operations_supervision" ? "csa_supervision" : tab;
+  const normalizedTab = tab === "table" ? "table" : "overview";
   const started = perfNow();
   if (normalizedTab === "overview") {
     await initOverviewTab();
     perfLog("tab.init.overview", started);
-    return;
-  }
-  if (normalizedTab === "trends") {
-    await initTrendsTab();
-    perfLog("tab.init.trends", started);
-    return;
-  }
-  if (normalizedTab === "csa_supervision") {
-    await initCsaSupervisionTab();
-    perfLog("tab.init.csa_supervision", started);
     return;
   }
   if (normalizedTab === "table") {
@@ -1025,10 +810,6 @@ document.addEventListener("click", (event) => {
   const trigger = event.target.closest("[data-action='refresh-component']");
   if (!trigger) return;
   const targetSelector = trigger.dataset.target || "";
-  if (targetSelector === "#homeTrendsComponentSlot") {
-    clearTrendsCache();
-    invalidateScope("trends-data");
-  }
   if (targetSelector === "#novKpisComponentSlot") {
     invalidateScope("overview-data");
   }
@@ -1037,16 +818,6 @@ document.addEventListener("click", (event) => {
 document.addEventListener("dashboard:component-loaded", (event) => {
   const slot = event.target;
   if (!slot || !slot.id) return;
-
-  if (slot.id === "homeTrendsComponentSlot" && trendsInitialized) {
-    fetchTrendsPayload("model")
-      .then((payload) => {
-        applyTrendsPayload(payload);
-        resizeChartsForTab("trends");
-      })
-      .catch((error) => console.error(error));
-    return;
-  }
 
   if (slot.id === "novKpisComponentSlot" && overviewInitialized) {
     renderEnumerationCoverageChart();
