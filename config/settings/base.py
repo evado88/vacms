@@ -290,6 +290,13 @@ STATICFILES_FINDERS = [
 MEDIA_ROOT = str(APPS_DIR / "media")
 MEDIA_URL = "/media/"
 
+# Directory where admin-panel CSV uploads are stored and command-input files are
+# resolved from. Kept on the release-independent shared volume so uploads survive
+# release swaps. Created on demand by va_admin.command_registry.data_dir().
+ADMIN_PANEL_UPLOAD_DIR = os.environ.get(
+    "ADMIN_PANEL_UPLOAD_DIR", "/srv/vacms/shared/media/uploads/manual"
+)
+
 # Templates
 
 TEMPLATES = [

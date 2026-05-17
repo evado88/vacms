@@ -186,7 +186,7 @@
         </button>
       </div>
       <div class="modal-body">
-        <div class="small text-muted mb-3">Files must be in <code>va_explorer/static/data/</code>. Enter filename only.</div>
+        <div class="small text-muted mb-3">Files must already be uploaded to the admin-panel upload directory. Enter filename only.</div>
         <form id="vacmsRunCommandForm">
           {% csrf_token %}
           <div id="vacmsRunModalInputs"></div>
@@ -217,7 +217,7 @@
       </div>
       <div class="modal-body">
         <p class="small text-muted mb-2">
-          Select one or more files to upload into <code>va_explorer/static/data/</code>.
+          Select one or more files to upload into the admin-panel upload directory.
           Existing files with the same names will be overwritten by default.
         </p>
         <form id="vacmsBulkUploadForm">

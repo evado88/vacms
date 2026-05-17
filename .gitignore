@@ -5,6 +5,7 @@ vaenv/
 
 user_list.csv
 va_explorer/media/
+.test-uploads/
 OpenVAFiles
 *.log
 

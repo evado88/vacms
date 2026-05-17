@@ -3,7 +3,7 @@ With these settings, tests run faster.
 """
 
 from .base import *  # noqa
-from .base import env
+from .base import ROOT_DIR, env
 
 # General
 
@@ -33,3 +33,9 @@ TEMPLATES[-1]["OPTIONS"]["loaders"] = [  # type: ignore[index] # noqa F405
 # Email
 
 EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
+
+# Media
+
+# Keep admin-panel upload writes inside the repo during tests rather than the
+# shared system volume used in production.
+ADMIN_PANEL_UPLOAD_DIR = str(ROOT_DIR / ".test-uploads")

@@ -101,7 +101,9 @@ class AdminPanelRegistryTests(TestCase):
         )
 
         assert response.status_code == 400
-        assert "File not found in static/data" in response.content.decode("utf-8")
+        assert "File not found in the upload directory" in response.content.decode(
+            "utf-8"
+        )
 
     def test_csrf_is_enforced_on_run_endpoint(self):
         admin = get_user_model().objects.create_user(

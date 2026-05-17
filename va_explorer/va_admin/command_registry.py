@@ -66,7 +66,12 @@ STANDARD_FILENAME_PLACEHOLDERS: dict[str, str] = {
 
 
 def data_dir() -> Path:
-    return Path(settings.BASE_DIR) / "va_explorer" / "static" / "data"
+    """Directory where admin-panel uploads are stored and command-input files are
+    resolved from. Lives on the release-independent shared volume (see
+    ``ADMIN_PANEL_UPLOAD_DIR``) and is created on demand."""
+    path = Path(settings.ADMIN_PANEL_UPLOAD_DIR)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def is_safe_filename(filename: str) -> bool:
@@ -85,7 +90,9 @@ def resolve_data_file(filename: str) -> Path:
     base = data_dir().resolve()
     resolved = (base / filename).resolve()
     if base not in resolved.parents and resolved != base:
-        raise ValueError("Filename must resolve inside va_explorer/static/data/")
+        raise ValueError(
+            "Filename must resolve inside the admin-panel upload directory."
+        )
     return resolved
 
 
@@ -106,7 +113,7 @@ def _command_specs() -> list[CommandRegistryItem]:
         type="file",
         name="csv_file",
         required=True,
-        help="CSV filename located in va_explorer/static/data/",
+        help="CSV filename located in the admin-panel upload directory.",
         filename_pattern="DATA_FILE.csv",
         allowed_pattern=r"^[A-Za-z0-9._-]+\.csv$",
         standardized_name="DATA_FILE.csv",
@@ -622,6 +629,32 @@ def _command_specs() -> list[CommandRegistryItem]:
                 ),
             ),
             safety="mutating",
+        ),
+        CommandRegistryItem(
+            key="load_srs_ea_population_targets",
+            management_command="load_srs_ea_population_targets",
+            category="Data Loading",
+            description=_description_for("load_srs_ea_population_targets"),
+            inputs=(
+                CommandInputSpec(
+                    type="file",
+                    name="csv_file",
+                    required=True,
+                    help="SRS EA population & household targets CSV.",
+                    filename_pattern="SRS_EA_POPULATION_TARGETS.csv",
+                    standardized_name="SRS_EA_POPULATION_TARGETS.csv",
+                    allowed_pattern=r"^[A-Za-z0-9._-]+\.csv$",
+                ),
+                CommandInputSpec(
+                    type="bool",
+                    name="dry_run",
+                    required=False,
+                    help="Preview the upsert plan without writing.",
+                    flag="--dry-run",
+                ),
+            ),
+            safety="mutating",
+            timeout_hint=120,
         ),
     ]
 

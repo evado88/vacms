@@ -223,7 +223,8 @@ def _sanitize_input_value(field, raw_value):
                         else standardized
                     )
                     raise ValueError(
-                        f"Standardized file not found in static/data: {expected}"
+                        "Standardized file not found in the upload directory: "
+                        f"{expected}"
                     )
 
         if not value:
@@ -231,7 +232,7 @@ def _sanitize_input_value(field, raw_value):
 
         resolved_file = resolve_data_file(value)
         if not resolved_file.exists():
-            raise ValueError(f"File not found in static/data: {value}")
+            raise ValueError(f"File not found in the upload directory: {value}")
         if field.allowed_pattern and not re.match(field.allowed_pattern, value):
             raise ValueError(
                 f"Filename does not match allowed pattern for {field.name}"
