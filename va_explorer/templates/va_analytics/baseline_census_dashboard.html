@@ -23,7 +23,7 @@
       </li>
       <li class="nav-item" role="presentation">
         <a class="nav-link {% if baseline_active_tab == 'table' %}active{% endif %}" id="tab-table-tab" data-tab="table" href="?tab=table" role="tab" aria-controls="tab-table" aria-selected="{% if baseline_active_tab == 'table' %}true{% else %}false{% endif %}">
-          Table
+          Census Table
         </a>
       </li>
     </ul>
@@ -78,9 +78,6 @@
             <div class="national-operational-grid">
               <div class="nov-overview-left-col">
                 <div class="nov-overview-left-container">
-                  <div class="home-overview-left-top-row">
-                    <h4 class="baseline-census-section-title mb-2">Copperbelt and Central Province Baseline Census</h4>
-                  </div>
                   <div class="home-overview-left-top-row home-overview-kpi-row">
                     <div id="novKpisComponentSlot" data-component-slot data-component="kpi-cards" data-scope="overview,overview-data" data-endpoint="{% url 'va_analytics:baseline-census-overview-kpis-component' %}" data-cache-key="baseline-census:overview:kpis">
                       <div class="home-panel home-panel-placeholder">Loading overview KPIs...</div>
@@ -95,7 +92,6 @@
       <div class="tab-pane dashboard-tab-panel fade {% if baseline_active_tab == 'table' %}show active{% endif %}" id="tab-table" data-tab-panel="table" role="tabpanel" aria-labelledby="tab-table-tab">
         <div id="baseline-table-view">
           <div class="national-operational-view-shell">
-            <h4 class="baseline-census-section-title mb-2">Copperbelt and Central Province Baseline Census</h4>
             <div class="baseline-table-filters-row mb-3" data-component="table-filters">
               <div class="baseline-table-current-census form-check">
                 <input class="form-check-input" type="checkbox" id="tableCurrentCensus" checked>
