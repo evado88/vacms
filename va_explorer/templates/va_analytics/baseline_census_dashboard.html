@@ -79,7 +79,7 @@
               <div class="nov-overview-left-col">
                 <div class="nov-overview-left-container">
                   <div class="home-overview-left-top-row">
-                    <h4 class="csa-section-title mb-2">Copperbelt and Central Province Baseline Census</h4>
+                    <h4 class="baseline-census-section-title mb-2">Copperbelt and Central Province Baseline Census</h4>
                   </div>
                   <div class="home-overview-left-top-row home-overview-kpi-row">
                     <div id="novKpisComponentSlot" data-component-slot data-component="kpi-cards" data-scope="overview,overview-data" data-endpoint="{% url 'va_analytics:baseline-census-overview-kpis-component' %}" data-cache-key="baseline-census:overview:kpis">
@@ -95,9 +95,23 @@
       <div class="tab-pane dashboard-tab-panel fade {% if baseline_active_tab == 'table' %}show active{% endif %}" id="tab-table" data-tab-panel="table" role="tabpanel" aria-labelledby="tab-table-tab">
         <div id="baseline-table-view">
           <div class="national-operational-view-shell">
-            <h4 class="csa-section-title mb-2">Copperbelt and Central Province Baseline Census</h4>
-            <div class="nov-filters-row mb-3" data-component="table-filters">
-              <div class="nov-filter-radios" role="radiogroup" aria-label="Table time filters">
+            <h4 class="baseline-census-section-title mb-2">Copperbelt and Central Province Baseline Census</h4>
+            <div class="baseline-table-filters-row mb-3" data-component="table-filters">
+              <div class="baseline-table-filter-select-wrap">
+                <select id="tableLocationLevel" class="form-control form-control-sm form-select baseline-table-filter-select" aria-label="Table location level">
+                  <option value="national" selected>National</option>
+                  <option value="province">Province</option>
+                  <option value="district">District</option>
+                  <option value="ward">Ward</option>
+                  <option value="ea">EA</option>
+                </select>
+              </div>
+              <div class="baseline-table-filter-select-wrap">
+                <select id="tableLocationValue" class="form-control form-control-sm form-select baseline-table-filter-select" aria-label="Table location value" disabled>
+                  <option value="">All National</option>
+                </select>
+              </div>
+              <div class="baseline-table-time-filters" role="radiogroup" aria-label="Table time filters">
                 <div class="form-check">
                   <input class="form-check-input" type="radio" name="tableGlobalTimeFilter" id="tableTimeAll" checked>
                   <label class="form-check-label" for="tableTimeAll">All time</label>
@@ -115,13 +129,13 @@
                   <label class="form-check-label" for="tableTime24">Last 24 hours</label>
                 </div>
               </div>
-              <div class="nov-filter-datetime">
+              <div class="baseline-table-date-filter">
                 <label for="tableStartDatetime" class="mb-0">Start:</label>
-                <input id="tableStartDatetime" type="date" class="form-control form-control-sm nov-filter-input">
+                <input id="tableStartDatetime" type="date" class="form-control form-control-sm baseline-table-filter-input">
               </div>
-              <div class="nov-filter-datetime">
+              <div class="baseline-table-date-filter">
                 <label for="tableEndDatetime" class="mb-0">End:</label>
-                <input id="tableEndDatetime" type="date" class="form-control form-control-sm nov-filter-input">
+                <input id="tableEndDatetime" type="date" class="form-control form-control-sm baseline-table-filter-input">
               </div>
             </div>
             <div id="baselineProvinceTableSlot" data-component-slot data-component="province-table" data-scope="table" data-endpoint="{% url 'va_analytics:baseline-census-province-table-component' %}" data-cache="off">

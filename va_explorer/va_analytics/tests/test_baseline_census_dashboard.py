@@ -43,6 +43,9 @@ class TestBaselineCensusDashboardRoute:
         assert 'data-tab="mso_supervision"' not in body
         assert 'data-tab="rumor_overview"' not in body
         assert 'data-tab="rumor_details"' not in body
+        assert 'id="tableLocationLevel"' in body
+        assert 'id="tableLocationValue"' in body
+        assert "baseline-table-filters-row" in body
 
     def test_shell_uses_baseline_census_data_shell(self):
         client = Client()
@@ -106,6 +109,9 @@ class TestBaselineCensusComponentEndpoints:
         assert 'id="bcDistrictSearch"' in body
         assert 'id="bcWardSearch"' in body
         assert 'id="bcEaSearch"' in body
+        assert "baseline-census-search-group" in body
+        assert "baseline-census-table" in body
+        assert "baseline-census-pagination" in body
         assert "Copperbelt and Central Province Baseline Census" in body
         assert "HH Enumerated" in body
         assert "Total Deaths" in body

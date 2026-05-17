@@ -1,22 +1,22 @@
-<div class="csa-section-header">
-  <div class="csa-search-group">
-    <div class="csa-search">
+<div class="baseline-census-table-header">
+  <div class="baseline-census-search-group">
+    <div class="baseline-census-search">
       <input type="search" placeholder="Province" aria-label="Search province" id="bcProvinceSearch" value="{{ bc_province_search }}">
     </div>
-    <div class="csa-search">
+    <div class="baseline-census-search">
       <input type="search" placeholder="District" aria-label="Search district" id="bcDistrictSearch" value="{{ bc_district_search }}">
     </div>
-    <div class="csa-search">
+    <div class="baseline-census-search">
       <input type="search" placeholder="Ward" aria-label="Search ward" id="bcWardSearch" value="{{ bc_ward_search }}">
     </div>
-    <div class="csa-search">
+    <div class="baseline-census-search">
       <input type="search" placeholder="EA" aria-label="Search enumeration area" id="bcEaSearch" value="{{ bc_ea_search }}">
     </div>
   </div>
 </div>
 <div class="section-body">
-  <div class="csa-table-container" role="region" aria-label="Province baseline census table">
-    <table class="csa-table">
+  <div class="baseline-census-table-container" role="region" aria-label="Province baseline census table">
+    <table class="baseline-census-table">
       <thead>
         <tr>
           <th style="width: 8%;">
@@ -93,9 +93,9 @@
       </tbody>
     </table>
   </div>
-  <div class="csa-pagination" aria-label="Province census table pagination">
-    <a href="?bc_page={{ bc_prev_page }}" class="bc-page-link regional-page-link {% if not bc_has_prev %}disabled{% endif %}" data-table="bc-province" aria-disabled="{% if bc_has_prev %}false{% else %}true{% endif %}">Prev</a>
+  <div class="baseline-census-pagination" aria-label="Province census table pagination">
+    <a href="?bc_page={{ bc_prev_page }}" class="bc-page-link baseline-census-page-link {% if not bc_has_prev %}disabled{% endif %}" data-table="bc-province" aria-disabled="{% if bc_has_prev %}false{% else %}true{% endif %}">Prev</a>
     <span>Page {{ bc_page }} of {{ bc_total_pages }} | Rows: {{ bc_visible_count }} of {{ bc_total_count }}</span>
-    <a href="?bc_page={{ bc_next_page }}" class="bc-page-link regional-page-link {% if not bc_has_next %}disabled{% endif %}" data-table="bc-province" aria-disabled="{% if bc_has_next %}false{% else %}true{% endif %}">Next</a>
+    <a href="?bc_page={{ bc_next_page }}" class="bc-page-link baseline-census-page-link {% if not bc_has_next %}disabled{% endif %}" data-table="bc-province" aria-disabled="{% if bc_has_next %}false{% else %}true{% endif %}">Next</a>
   </div>
 </div>
