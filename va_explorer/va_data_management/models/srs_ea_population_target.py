@@ -44,7 +44,6 @@ class SRSEAPopulationTarget(models.Model):
     updated = models.DateTimeField(auto_now=True)
 
     class Meta:
-        db_table = "srs_ea_population_targets"
         ordering = ["geoid"]
         verbose_name = "SRS EA population target"
         verbose_name_plural = "SRS EA population targets"
