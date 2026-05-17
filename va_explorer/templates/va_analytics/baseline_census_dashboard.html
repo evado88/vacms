@@ -92,7 +92,7 @@
                   <div class="home-overview-left-top-row">
                     <h4 class="csa-section-title mb-2">Copperbelt and Central Province Baseline Census</h4>
                   </div>
-                  <div class="home-overview-left-top-row">
+                  <div class="home-overview-left-top-row home-overview-kpi-row">
                     <div id="novKpisComponentSlot" data-component-slot data-component="kpi-cards" data-scope="overview,overview-data" data-endpoint="{% url 'va_analytics:baseline-census-overview-kpis-component' %}" data-cache-key="baseline-census:overview:kpis">
                       <div class="home-panel home-panel-placeholder">Loading overview KPIs...</div>
                     </div>
@@ -143,21 +143,8 @@
       <div class="tab-pane dashboard-tab-panel fade {% if baseline_active_tab == 'table' %}show active{% endif %}" id="tab-table" data-tab-panel="table" role="tabpanel" aria-labelledby="tab-table-tab">
         <div id="baseline-table-view">
           <div class="national-operational-view-shell">
+            <h4 class="csa-section-title mb-2">Copperbelt and Central Province Baseline Census</h4>
             <div class="nov-filters-row mb-3" data-component="table-filters">
-              <div class="nov-filter-select-wrap">
-                <select id="tableLocationLevel" class="form-control form-control-sm form-select nov-filter-select" aria-label="Location level">
-                  <option value="national" selected>National</option>
-                  <option value="province">Province</option>
-                  <option value="district">District</option>
-                  <option value="constituency">Constituency</option>
-                  <option value="ward">Ward</option>
-                </select>
-              </div>
-              <div class="nov-filter-select-wrap">
-                <select id="tableLocationValue" class="form-control form-control-sm form-select nov-filter-select" aria-label="Location value" disabled>
-                  <option value="">All National</option>
-                </select>
-              </div>
               <div class="nov-filter-radios" role="radiogroup" aria-label="Table time filters">
                 <div class="form-check">
                   <input class="form-check-input" type="radio" name="tableGlobalTimeFilter" id="tableTimeAll" checked>

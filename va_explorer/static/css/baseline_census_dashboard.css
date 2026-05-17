@@ -18,6 +18,15 @@
   background: #f3f4f6;
   border: 1px solid #e5e7eb;
   border-radius: 14px;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: calc(100vh - 180px);
+  height: calc(100dvh - 180px);
+  max-height: calc(100vh - 180px);
+  max-height: calc(100dvh - 180px);
+  min-height: 0;
+  overflow: hidden;
   padding: 20px;
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
 }
@@ -27,6 +36,8 @@
   grid-template-columns: 1fr;
   gap: 18px;
   align-items: stretch;
+  min-height: 0;
+  overflow: hidden;
 }
 
 #national-operational-view .events-chart-container,
@@ -50,13 +61,16 @@
   border-radius: 12px;
   padding: 10px;
   box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05);
-  min-height: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
 #national-operational-view .nov-overview-left-container {
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 12px;
+  min-height: 0;
 }
 
 #national-operational-view .home-overview-left-top-row,
@@ -66,6 +80,17 @@
 
 #national-operational-view .home-overview-left-bottom-row {
   display: flex;
+}
+
+#national-operational-view .home-overview-kpi-row,
+#national-operational-view #novKpisComponentSlot {
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+}
+
+#national-operational-view #novKpisComponentSlot {
+  width: 100%;
 }
 
 #national-operational-view .home-overview-left-bottom-row #homeOverviewMapPanel {
@@ -88,36 +113,111 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
+  width: 100%;
   height: 100%;
+}
+
+#national-operational-view #novKpiCardsContainer .nov-kpi-columns {
+  --nov-kpi-gap: clamp(10px, 1.8vh, 18px);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 25%);
+  gap: var(--nov-kpi-gap);
+  align-items: stretch;
+  flex: 1 1 auto;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+#national-operational-view #novKpiCardsContainer .nov-kpi-left-column {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: var(--nov-kpi-gap);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 #national-operational-view #novKpiCardsContainer .nov-kpi-cards {
   flex: 1 1 auto;
   min-height: 0;
-  grid-template-rows: repeat(4, minmax(0, 1fr));
-  gap: 18px;
+  grid-auto-rows: auto;
+  grid-template-rows: none;
+  gap: var(--nov-kpi-gap);
+  overflow: hidden;
+}
+
+#national-operational-view #novKpiCardsContainer .nov-kpi-cards-census {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+#national-operational-view #novKpiCardsContainer .nov-kpi-cards-events {
+  align-content: start;
+  grid-template-columns: 1fr;
+  grid-template-rows: repeat(3, auto);
+  height: 100%;
 }
 
 #national-operational-view #novKpiCardsContainer .nov-kpi-card {
+  align-self: start;
+  height: auto;
   min-height: 0;
-  padding: 10px 12px;
+  overflow: hidden;
+  padding: clamp(8px, 1.2vh, 10px) 12px;
+}
+
+#national-operational-view #novKpiCardsContainer .nov-coverage-chart-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  padding: 12px 14px;
+}
+
+#national-operational-view #novKpiCardsContainer .nov-coverage-chart-card h5 {
+  color: #1f2937;
+  font-size: 0.98rem;
+  font-weight: 600;
+  line-height: 1.25;
+  margin: 0 0 10px 0;
+}
+
+#national-operational-view #novKpiCardsContainer .nov-coverage-chart-wrap {
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  position: relative;
+}
+
+#national-operational-view #novKpiCardsContainer .nov-coverage-chart-wrap canvas {
+  display: block;
+  position: absolute;
+  inset: 0;
+  height: 100% !important;
+  width: 100% !important;
 }
 
 #national-operational-view #novKpiCardsContainer .nov-kpi-card h6 {
-  margin-bottom: 8px;
-  font-size: 0.94rem;
+  margin-bottom: clamp(4px, 0.8vh, 8px);
+  font-size: clamp(0.82rem, 1.5vh, 0.94rem);
 }
 
 #national-operational-view #novKpiCardsContainer .nov-kpi-metrics {
-  gap: 5px;
+  gap: clamp(2px, 0.7vh, 5px);
 }
 
 #national-operational-view #novKpiCardsContainer .nov-kpi-metrics span {
-  font-size: 0.8rem;
+  font-size: clamp(0.7rem, 1.3vh, 0.8rem);
 }
 
 #national-operational-view #novKpiCardsContainer .nov-kpi-metrics strong {
-  font-size: 0.95rem;
+  font-size: clamp(0.8rem, 1.5vh, 0.95rem);
 }
 
 #national-operational-view #novKpiCardsContainer .nov-kpi-cards-inline {
@@ -135,6 +235,26 @@
   border: 1px solid #e2e8f0;
   border-radius: 12px;
   padding: 10px 12px;
+}
+
+#baseline-table-view .national-operational-view-shell {
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 10px;
+}
+
+#baseline-table-view .nov-filters-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+#baseline-table-view .nov-filter-radios {
+  flex: 1 1 420px;
+}
+
+#baseline-table-view .nov-filter-datetime {
+  flex: 0 1 210px;
 }
 
 #national-operational-view .nov-filter-select-wrap,
@@ -359,9 +479,16 @@
 }
 
 @media (max-width: 991.98px) {
+  #national-operational-view .national-operational-view-shell {
+    height: auto;
+    max-height: none;
+    overflow: visible;
+  }
+
   #national-operational-view .national-operational-grid {
     grid-template-columns: 1fr;
     gap: 14px;
+    overflow: visible;
   }
 
   #national-operational-view .nov-overview-left-col,
@@ -369,18 +496,77 @@
     grid-column: auto;
   }
 
+  #national-operational-view .nov-overview-left-container,
+  #national-operational-view .nov-overview-right-container,
+  #national-operational-view .home-overview-kpi-row,
+  #national-operational-view #novKpisComponentSlot,
+  #national-operational-view #novKpiCardsContainer,
+  #national-operational-view #novKpiCardsContainer .nov-kpi-columns,
+  #national-operational-view #novKpiCardsContainer .nov-kpi-left-column,
+  #national-operational-view #novKpiCardsContainer .nov-kpi-cards {
+    height: auto;
+    overflow: visible;
+  }
+
   #national-operational-view .nov-filters-row,
   #baseline-table-view .nov-filters-row {
     grid-template-columns: minmax(120px, 0.8fr) minmax(120px, 1fr) minmax(0, 1.6fr) minmax(0, 0.9fr) minmax(0, 0.9fr);
   }
 
+  #baseline-table-view .nov-filters-row {
+    display: flex;
+  }
+
   #national-operational-view .nov-kpi-card {
-    min-height: 104px;
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  #national-operational-view #novKpiCardsContainer .nov-kpi-columns {
+    grid-template-columns: 1fr;
+  }
+
+  #national-operational-view #novKpiCardsContainer .nov-kpi-left-column {
+    grid-template-rows: auto auto;
+  }
+
+  #national-operational-view #novKpiCardsContainer .nov-coverage-chart-card {
+    height: auto;
+  }
+
+  #national-operational-view #novKpiCardsContainer .nov-coverage-chart-wrap {
+    height: 320px;
+    min-height: 260px;
+  }
+
+  #national-operational-view #novKpiCardsContainer .nov-kpi-cards-events {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 767.98px) {
   #national-operational-view .nov-kpi-cards-inline {
+    grid-template-columns: 1fr;
+  }
+
+  #national-operational-view #novKpiCardsContainer .nov-kpi-cards-census,
+  #national-operational-view #novKpiCardsContainer .nov-kpi-cards-events {
+    grid-template-columns: 1fr;
+  }
+
+  #baseline-table-view .nov-filter-radios,
+  #baseline-table-view .nov-filter-datetime {
+    flex-basis: 100%;
+  }
+
+  #baseline-table-view .nov-filter-radios {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 420px) {
+  #baseline-table-view .nov-filter-radios {
     grid-template-columns: 1fr;
   }
 }

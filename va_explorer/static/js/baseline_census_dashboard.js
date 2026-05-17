@@ -122,6 +122,217 @@ const setSingleTrendChart = (canvas, x, y) => {
   chartInstances.set(canvas, chart);
 }
 
+const destroyChartForCanvas = (canvas) => {
+  const existingChart = chartInstances.get(canvas);
+  if (!existingChart) return;
+  existingChart.destroy();
+  chartInstances.delete(canvas);
+}
+
+const formatCountValue = (value) => {
+  if (value === null || value === undefined) return "";
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return "";
+  return numeric.toLocaleString();
+}
+
+const formatCoverageValue = (value) => {
+  if (value === null || value === undefined) return "";
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return "";
+  return `${numeric}%`;
+}
+
+const parseNumericOrNull = (value) => {
+  if (value === null || value === undefined || value === "") return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+const buildEnumerationCoverageSeries = (kpis = {}) => {
+  const peopleTotal = parseNumericOrNull(kpis.people?.total);
+  const householdsTotal = parseNumericOrNull(kpis.households?.total);
+  const pregnanciesTotal = parseNumericOrNull(kpis.pregnancies?.total);
+  const pregOutcomesTotal = parseNumericOrNull(kpis.preg_outcomes?.total);
+  const deathsTotal = parseNumericOrNull(kpis.deaths?.total);
+
+  const labels = [
+    "Population",
+    "Household",
+    "Pregnancies",
+    "Pregnancy Outcomes",
+    "Deaths",
+  ];
+
+  const estimateData = [10000, 5000, null, null, null];
+  const enumeratedData = [
+    peopleTotal ?? 9000,
+    householdsTotal ?? 3500,
+    pregnanciesTotal ?? 0,
+    pregOutcomesTotal ?? 0,
+    deathsTotal ?? 0,
+  ];
+  const coverageData = [90, 70, null, null, null];
+
+  return { labels, estimateData, enumeratedData, coverageData };
+}
+
+const enumerationCoverageLabelsPlugin = {
+  id: "enumerationCoverageLabels",
+  afterDatasetsDraw(chart) {
+    const { ctx } = chart;
+    ctx.save();
+    ctx.font = "600 11px sans-serif";
+    ctx.textAlign = "center";
+
+    chart.data.datasets.forEach((dataset, datasetIndex) => {
+      const meta = chart.getDatasetMeta(datasetIndex);
+      if (meta.hidden) return;
+
+      meta.data.forEach((element, index) => {
+        const value = dataset.data[index];
+        if (value === null || value === undefined) return;
+
+        const isCoverage = dataset.yAxisID === "yCoverage";
+        const label = isCoverage ? formatCoverageValue(value) : formatCountValue(value);
+        if (!label) return;
+
+        ctx.fillStyle = isCoverage ? "#166534" : "#1f2937";
+        ctx.textBaseline = "bottom";
+        ctx.fillText(label, element.x, element.y - 6);
+      });
+    });
+
+    ctx.restore();
+  },
+}
+
+const renderEnumerationCoverageChart = (kpis = {}) => {
+  const canvas = document.getElementById("enumerationCoverageChart");
+  if (!canvas || typeof Chart === "undefined") return;
+
+  destroyChartForCanvas(canvas);
+
+  const {
+    labels,
+    estimateData,
+    enumeratedData,
+    coverageData,
+  } = buildEnumerationCoverageSeries(kpis);
+
+  const chart = new Chart(canvas.getContext("2d"), {
+    type: "bar",
+    data: {
+      labels,
+      datasets: [
+        {
+          type: "bar",
+          label: "Estimate",
+          data: estimateData,
+          backgroundColor: "#2563eb",
+          borderRadius: 4,
+          yAxisID: "y",
+        },
+        {
+          type: "bar",
+          label: "Enumerated",
+          data: enumeratedData,
+          backgroundColor: "#dc2626",
+          borderRadius: 4,
+          yAxisID: "y",
+        },
+        {
+          type: "line",
+          label: "Coverage",
+          data: coverageData,
+          borderColor: "#16a34a",
+          backgroundColor: "#16a34a",
+          borderWidth: 2,
+          pointBackgroundColor: "#16a34a",
+          pointBorderColor: "#ffffff",
+          pointBorderWidth: 2,
+          pointRadius: 4,
+          pointHoverRadius: 5,
+          spanGaps: false,
+          tension: 0.25,
+          yAxisID: "yCoverage",
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: {
+        intersect: false,
+        mode: "index",
+      },
+      layout: {
+        padding: {
+          top: 22,
+        },
+      },
+      plugins: {
+        legend: {
+          display: true,
+          position: "top",
+          labels: {
+            boxWidth: 12,
+            boxHeight: 12,
+          },
+        },
+        tooltip: {
+          callbacks: {
+            label(context) {
+              const value = context.raw;
+              if (value === null || value === undefined) return "";
+              const label = context.dataset.label || "";
+              const formatted = context.dataset.yAxisID === "yCoverage"
+                ? formatCoverageValue(value)
+                : formatCountValue(value);
+              return `${label}: ${formatted}`;
+            },
+          },
+        },
+      },
+      scales: {
+        x: {
+          grid: {
+            display: false,
+          },
+        },
+        y: {
+          beginAtZero: true,
+          position: "left",
+          title: {
+            display: true,
+            text: "Counts",
+          },
+          ticks: {
+            callback: (value) => formatCountValue(value),
+          },
+        },
+        yCoverage: {
+          beginAtZero: true,
+          max: 100,
+          position: "right",
+          title: {
+            display: true,
+            text: "Coverage",
+          },
+          grid: {
+            drawOnChartArea: false,
+          },
+          ticks: {
+            callback: (value) => formatCoverageValue(value),
+          },
+        },
+      },
+    },
+    plugins: [enumerationCoverageLabelsPlugin],
+  });
+  chartInstances.set(canvas, chart);
+}
+
 const toNumericSeries = (values) => {
   if (!Array.isArray(values)) return [];
   return values.map((value) => {
@@ -279,6 +490,8 @@ const updateNationalOperationalKpis = (kpis) => {
   setElementTextById("nov-kpi-week-deaths", deaths.week);
   setElementTextById("nov-kpi-30d-deaths", deaths.last_30_days);
   setElementTextById("nov-kpi-total-deaths", deaths.total);
+
+  renderEnumerationCoverageChart(kpis);
 }
 
 let _novKpiInflight = null;
@@ -715,6 +928,7 @@ const fetchTrendsPayload = (section = "model") => {
 
 const resizeChartsForTab = (tab) => {
   const mapByTab = {
+    overview: ["enumerationCoverageChart"],
     trends: ["householdsChart", "pregnanciesChart", "pregnancyOutcomesChart", "deathsChart"],
   };
   (mapByTab[tab] || []).forEach((id) => {
@@ -727,6 +941,7 @@ const resizeChartsForTab = (tab) => {
 
 const initOverviewTab = async () => {
   await loadSlotOnce("novKpisComponentSlot");
+  renderEnumerationCoverageChart();
 
   if (overviewInitialized) {
     requestNationalOperationalFilterData();
@@ -834,6 +1049,7 @@ document.addEventListener("dashboard:component-loaded", (event) => {
   }
 
   if (slot.id === "novKpisComponentSlot" && overviewInitialized) {
+    renderEnumerationCoverageChart();
     requestNationalOperationalFilterData();
   }
 });
