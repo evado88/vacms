@@ -320,6 +320,27 @@
   min-width: 96px;
 }
 
+#baseline-table-view .baseline-table-current-census {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  margin: 0;
+  padding-left: 0;
+  font-size: 0.86rem;
+}
+
+#baseline-table-view .baseline-table-current-census .form-check-input {
+  margin-top: 0;
+  margin-left: 0;
+  position: static;
+}
+
+#baseline-table-view .baseline-table-current-census .form-check-label {
+  margin-bottom: 0;
+}
+
 #baseline-table-view .baseline-table-filter-select {
   width: 100%;
   min-width: 0;
@@ -486,6 +507,41 @@
 
 #baseline-table-view .baseline-census-table .numeric {
   text-align: right;
+}
+
+/* Coverage % color coding — shares the CSA supervision table thresholds. */
+#baseline-table-view .baseline-census-table .coverage-cell {
+  font-weight: 700;
+}
+
+#baseline-table-view .baseline-census-table .coverage-cell--forest {
+  background: #1f5d33;
+  color: #f4fbf6;
+}
+
+#baseline-table-view .baseline-census-table .coverage-cell--light-green {
+  background: #cfeecf;
+  color: #173a1f;
+}
+
+#baseline-table-view .baseline-census-table .coverage-cell--yellow {
+  background: #f6e58d;
+  color: #3f3400;
+}
+
+#baseline-table-view .baseline-census-table .coverage-cell--amber {
+  background: #f6b26b;
+  color: #4f2400;
+}
+
+#baseline-table-view .baseline-census-table .coverage-cell--red {
+  background: #d94b4b;
+  color: #fff7f7;
+}
+
+#baseline-table-view .baseline-census-table .coverage-cell--empty {
+  background: #f7f9fc;
+  color: #6a7789;
 }
 
 #baseline-table-view .sort-icon {

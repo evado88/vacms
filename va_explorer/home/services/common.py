@@ -206,6 +206,30 @@ def shallow_downsample(labels, series_map, max_points):
     return sampled_labels, sampled_series
 
 
+def coverage_band(value):
+    """Map a coverage percentage to a color band name.
+
+    Shared by the CSA supervision table (Operational Dashboard) and the Baseline
+    Census table so both use one set of thresholds. ``None`` or unparseable values
+    fall back to ``empty``.
+    """
+    if value is None:
+        return "empty"
+    try:
+        pct = float(value)
+    except (TypeError, ValueError):
+        return "empty"
+    if pct > 100:
+        return "forest"
+    if pct >= 90:
+        return "light-green"
+    if pct >= 75:
+        return "yellow"
+    if pct >= 50:
+        return "amber"
+    return "red"
+
+
 def paginate_list(items, page, page_size):
     total = len(items)
     try:

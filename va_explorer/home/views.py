@@ -43,6 +43,9 @@ from va_explorer.home.services.cache import (
     get_cached_trends_bundle as _get_cached_trends_bundle,
 )
 from va_explorer.home.services.common import (
+    coverage_band as _coverage_band_helper,
+)
+from va_explorer.home.services.common import (
     fastpath_cache_key as _fastpath_cache_key,
 )
 from va_explorer.home.services.common import (
@@ -2232,21 +2235,7 @@ class RegionalOperationsComponentContextMixin:
 
     @staticmethod
     def _coverage_band(value):
-        if value is None:
-            return "empty"
-        try:
-            pct = float(value)
-        except (TypeError, ValueError):
-            return "empty"
-        if pct > 100:
-            return "forest"
-        if pct >= 90:
-            return "light-green"
-        if pct >= 75:
-            return "yellow"
-        if pct >= 50:
-            return "amber"
-        return "red"
+        return _coverage_band_helper(value)
 
     def _get_csa_target_supervisor_map(self):
         cache_attr = "_csa_target_supervisor_map_cache"

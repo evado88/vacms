@@ -434,6 +434,7 @@ let bcTableFilterState = {
   start: '',
   end: '',
   preset: '',
+  current: true,
 };
 
 const BC_SEARCH_IDS = ["bcProvinceSearch", "bcDistrictSearch", "bcWardSearch", "bcEaSearch"];
@@ -468,6 +469,8 @@ const refreshBcProvinceTable = () => {
   }
   if (bcTableFilterState.start) params.set('start', bcTableFilterState.start);
   if (bcTableFilterState.end) params.set('end', bcTableFilterState.end);
+  if (bcTableFilterState.preset) params.set('preset', bcTableFilterState.preset);
+  params.set('bc_current', bcTableFilterState.current ? '1' : '0');
 
   fetch(`${url}?${params.toString()}`, {
     method: "GET",
@@ -672,6 +675,16 @@ const resetBcSortState = () => {
 const initTableFilters = () => {
   const levelSelect = document.getElementById("tableLocationLevel");
   const valueSelect = document.getElementById("tableLocationValue");
+
+  const currentCensusCheckbox = document.getElementById("tableCurrentCensus");
+  if (currentCensusCheckbox) {
+    bcTableFilterState.current = currentCensusCheckbox.checked;
+    currentCensusCheckbox.addEventListener("change", function () {
+      bcTableFilterState.current = this.checked;
+      resetBcSortState();
+      refreshBcProvinceTable();
+    });
+  }
 
   if (levelSelect) {
     updateTableLocationValueOptions("national");

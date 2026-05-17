@@ -75,10 +75,10 @@
             <td>{{ row.ea }}</td>
             <td class="numeric">{% if row.hh_estimate is not None %}{{ row.hh_estimate }}{% else %}&mdash;{% endif %}</td>
             <td class="numeric">{{ row.hh_enumerated }}</td>
-            <td class="numeric">{% if row.hh_coverage is not None %}{{ row.hh_coverage }}%{% else %}&mdash;{% endif %}</td>
+            <td class="numeric coverage-cell coverage-cell--{{ row.hh_coverage_band|default:'empty' }}">{% if row.hh_coverage is not None %}{{ row.hh_coverage }}%{% else %}&mdash;{% endif %}</td>
             <td class="numeric">{% if row.pop_estimate is not None %}{{ row.pop_estimate }}{% else %}&mdash;{% endif %}</td>
             <td class="numeric">{{ row.pop_enumerated }}</td>
-            <td class="numeric">{% if row.pop_coverage is not None %}{{ row.pop_coverage }}%{% else %}&mdash;{% endif %}</td>
+            <td class="numeric coverage-cell coverage-cell--{{ row.pop_coverage_band|default:'empty' }}">{% if row.pop_coverage is not None %}{{ row.pop_coverage }}%{% else %}&mdash;{% endif %}</td>
             <td class="numeric">{{ row.refusals }}</td>
             <td class="numeric">{{ row.non_contact }}</td>
             <td class="numeric">{{ row.total_deaths }}</td>

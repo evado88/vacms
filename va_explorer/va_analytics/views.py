@@ -2,6 +2,7 @@ import hashlib
 import json
 import logging
 from datetime import datetime, time, timedelta
+from datetime import timezone as dt_timezone
 from statistics import median
 
 import pandas as pd
@@ -29,6 +30,10 @@ from pandas import to_datetime as to_dt
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from va_explorer.home.services.common import (
+    coverage_band,
+    parse_filter_range,
+)
 from va_explorer.home.views import (
     HomeOverviewMapData,
     NationalOperationalFilterData,
@@ -1393,8 +1398,29 @@ baseline_census_overview_kpis_component_view = (
 )
 
 
+def normalize_ea_to_geoid(raw):
+    """Resolve any model's EA reference to the canonical 11-digit geoid.
+
+    Census models store the enumeration area inconsistently: ``Household.ea`` and
+    ``SRSClusterLocation.name`` are bare digit strings (sometimes missing the
+    leading zero), while ``Pregnancy``/``Death``/``PregnancyOutcome`` use an
+    ``EA_`` prefix. ``SRSEAPopulationTarget.geoid`` is the canonical 11-digit,
+    zero-padded form. Normalize everything to that so counts can be joined.
+    """
+    if not raw:
+        return ""
+    text = str(raw).strip().upper()
+    if text.startswith("EA_"):
+        text = text[3:]
+    return text.zfill(11) if text.isdigit() else text
+
+
 class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
     template_name = "va_analytics/components/_baseline_census_province_table.html"
+
+    # Rolling window applied when "Current Baseline Census" is on and no explicit
+    # time filter is set.
+    _CURRENT_CENSUS_DAYS = 90
 
     _VALID_SORT_FIELDS = {
         "province",
@@ -1413,9 +1439,12 @@ class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
         "total_pregnancies",
         "total_preg_outcomes",
     }
-    _REFUSAL_KEYWORDS = ("refus",)
-    _NON_CONTACT_KEYWORDS = ("no contact", "non-contact", "no_contact", "non_contact")
-    _DEFAULT_PROVINCES = ("copperbelt", "central")
+    _LOCATION_FIELD_MAP = {
+        "province": "province_name",
+        "district": "district_name",
+        "ward": "ward_name",
+        "ea": "geoid",
+    }
 
     def get_context_data(self, **kwargs):
         from django.db.models import Count, Q
@@ -1423,8 +1452,10 @@ class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
         from va_explorer.va_data_management.models import (
             Death,
             Household,
+            HouseholdMember,
             Pregnancy,
             PregnancyOutcome,
+            SRSEAPopulationTarget,
         )
 
         context = super().get_context_data(**kwargs)
@@ -1446,85 +1477,157 @@ class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
         location_level = req.GET.get("location_level", "").strip().lower()
         location_value = req.GET.get("location_value", "").strip()
 
-        refusal_q = Q()
-        for kw in self._REFUSAL_KEYWORDS:
-            refusal_q |= Q(result_list__icontains=kw)
-        nc_q = Q()
-        for kw in self._NON_CONTACT_KEYWORDS:
-            nc_q |= Q(result_list__icontains=kw)
+        # "Current Baseline Census" checkbox — absent means on (the first bare
+        # component load gets the rolling window).
+        bc_current = req.GET.get("bc_current") not in ("0", "false", "False")
 
-        hh_qs = Household.objects.all()
-        if location_value:
-            field_map = {
-                "province": "province__icontains",
-                "district": "district__icontains",
-                "ward": "ward__icontains",
-                "ea": "ea__icontains",
-            }
-            lookup = field_map.get(location_level)
-            if lookup:
-                hh_qs = hh_qs.filter(**{lookup: location_value})
-        else:
-            default_q = Q()
-            for province_name in self._DEFAULT_PROVINCES:
-                default_q |= Q(province__iexact=province_name)
-            hh_qs = hh_qs.filter(default_q)
+        # Resolve the date window. An explicit preset or custom range always wins;
+        # otherwise the checkbox decides between the rolling window and no limit.
+        preset, start_dt, end_dt, has_custom = parse_filter_range(req)
+        explicit_time = has_custom or preset in {"30", "7", "24"}
+        if not explicit_time:
+            if bc_current:
+                start_dt = timezone.localtime(timezone.now()) - timedelta(
+                    days=self._CURRENT_CENSUS_DAYS
+                )
+                end_dt = None
+            else:
+                start_dt = None
+                end_dt = None
+        start_iso, end_iso = self._iso_bounds(start_dt, end_dt)
 
-        hh_qs = hh_qs.values("province", "district", "ward", "ea").annotate(
-            hh_enumerated=Count("pk", distinct=True),
-            pop_enumerated=Count("members", distinct=True),
-            refusals=Count("pk", filter=refusal_q),
-            non_contact=Count("pk", filter=nc_q),
+        # --- Enrichment counts, keyed by canonical geoid (one query per model) ---
+        hh_by_geoid = {}
+        hh_rows = (
+            self._date_filter(
+                Household.objects.exclude(cluster__isnull=True),
+                "submissiondate",
+                start_iso,
+                end_iso,
+            )
+            .values("cluster__name")
+            .annotate(
+                hh_enumerated=Count("pk"),
+                refusals=Count(
+                    "pk",
+                    filter=Q(consent__iexact="No") | Q(result_list__iexact="Refused"),
+                ),
+                non_contact=Count("pk", filter=Q(result_list__iexact="Non-contact")),
+            )
+        )
+        for row in hh_rows:
+            geoid = normalize_ea_to_geoid(row["cluster__name"])
+            if not geoid:
+                continue
+            acc = hh_by_geoid.setdefault(
+                geoid, {"hh_enumerated": 0, "refusals": 0, "non_contact": 0}
+            )
+            acc["hh_enumerated"] += row["hh_enumerated"]
+            acc["refusals"] += row["refusals"]
+            acc["non_contact"] += row["non_contact"]
+
+        pop_by_geoid = {}
+        member_rows = (
+            self._date_filter(
+                HouseholdMember.objects.exclude(household__cluster__isnull=True),
+                "household__submissiondate",
+                start_iso,
+                end_iso,
+            )
+            .values("household__cluster__name")
+            .annotate(cnt=Count("pk"))
+        )
+        for row in member_rows:
+            geoid = normalize_ea_to_geoid(row["household__cluster__name"])
+            if geoid:
+                pop_by_geoid[geoid] = pop_by_geoid.get(geoid, 0) + row["cnt"]
+
+        po_by_geoid = {}
+        po_rows = (
+            self._date_filter(
+                PregnancyOutcome.objects.exclude(cluster__isnull=True),
+                "submissiondate",
+                start_iso,
+                end_iso,
+            )
+            .values("cluster__name")
+            .annotate(cnt=Count("pk"))
+        )
+        for row in po_rows:
+            geoid = normalize_ea_to_geoid(row["cluster__name"])
+            if geoid:
+                po_by_geoid[geoid] = po_by_geoid.get(geoid, 0) + row["cnt"]
+
+        def _ea_text_counts(model):
+            counts = {}
+            qs = self._date_filter(
+                model.objects.exclude(ea__isnull=True).exclude(ea=""),
+                "submissiondate",
+                start_iso,
+                end_iso,
+            )
+            for row in qs.values("ea").annotate(cnt=Count("pk")):
+                geoid = normalize_ea_to_geoid(row["ea"])
+                if geoid:
+                    counts[geoid] = counts.get(geoid, 0) + row["cnt"]
+            return counts
+
+        preg_by_geoid = _ea_text_counts(Pregnancy)
+        death_by_geoid = _ea_text_counts(Death)
+
+        # --- Base rows: every EA in the target table (all 10 provinces) ---
+        targets = SRSEAPopulationTarget.objects.all()
+        lookup = self._LOCATION_FIELD_MAP.get(location_level)
+        if location_value and lookup:
+            targets = targets.filter(**{f"{lookup}__icontains": location_value})
+        if bc_province:
+            targets = targets.filter(province_name__icontains=bc_province)
+        if bc_district:
+            targets = targets.filter(district_name__icontains=bc_district)
+        if bc_ward:
+            targets = targets.filter(ward_name__icontains=bc_ward)
+        if bc_ea:
+            targets = targets.filter(geoid__icontains=bc_ea)
+        targets = targets.values(
+            "geoid",
+            "province_name",
+            "district_name",
+            "ward_name",
+            "household_target",
+            "population_target",
         )
 
-        def _geo_counts(model):
-            return {
-                (r["province"], r["district"], r["ward"], r["ea"]): r["cnt"]
-                for r in model.objects.values(
-                    "province", "district", "ward", "ea"
-                ).annotate(cnt=Count("pk"))
-            }
-
-        death_counts = _geo_counts(Death)
-        preg_counts = _geo_counts(Pregnancy)
-        preg_out_counts = _geo_counts(PregnancyOutcome)
-
         rows = []
-        for row in hh_qs:
-            geo_key = (row["province"], row["district"], row["ward"], row["ea"])
+        for target in targets:
+            geoid = target["geoid"]
+            hh = hh_by_geoid.get(geoid, {})
+            hh_enumerated = hh.get("hh_enumerated", 0)
+            pop_enumerated = pop_by_geoid.get(geoid, 0)
+            hh_estimate = target["household_target"]
+            pop_estimate = target["population_target"]
+            hh_coverage = self._coverage_pct(hh_enumerated, hh_estimate)
+            pop_coverage = self._coverage_pct(pop_enumerated, pop_estimate)
             rows.append(
                 {
-                    "province": row["province"] or "—",
-                    "district": row["district"] or "—",
-                    "ward": row["ward"] or "—",
-                    "ea": row["ea"] or "—",
-                    "hh_estimate": None,
-                    "hh_enumerated": row["hh_enumerated"],
-                    "hh_coverage": None,
-                    "pop_estimate": None,
-                    "pop_enumerated": row["pop_enumerated"],
-                    "pop_coverage": None,
-                    "refusals": row["refusals"],
-                    "non_contact": row["non_contact"],
-                    "total_deaths": death_counts.get(geo_key, 0),
-                    "total_pregnancies": preg_counts.get(geo_key, 0),
-                    "total_preg_outcomes": preg_out_counts.get(geo_key, 0),
+                    "province": target["province_name"] or "—",
+                    "district": target["district_name"] or "—",
+                    "ward": target["ward_name"] or "—",
+                    "ea": geoid,
+                    "hh_estimate": hh_estimate,
+                    "hh_enumerated": hh_enumerated,
+                    "hh_coverage": hh_coverage,
+                    "hh_coverage_band": coverage_band(hh_coverage),
+                    "pop_estimate": pop_estimate,
+                    "pop_enumerated": pop_enumerated,
+                    "pop_coverage": pop_coverage,
+                    "pop_coverage_band": coverage_band(pop_coverage),
+                    "refusals": hh.get("refusals", 0),
+                    "non_contact": hh.get("non_contact", 0),
+                    "total_deaths": death_by_geoid.get(geoid, 0),
+                    "total_pregnancies": preg_by_geoid.get(geoid, 0),
+                    "total_preg_outcomes": po_by_geoid.get(geoid, 0),
                 }
             )
-
-        # Apply search filters on top of location filter (if applicable)
-        if bc_province:
-            rows = [
-                r for r in rows if bc_province.lower() in str(r["province"]).lower()
-            ]
-        if bc_district:
-            rows = [
-                r for r in rows if bc_district.lower() in str(r["district"]).lower()
-            ]
-        if bc_ward:
-            rows = [r for r in rows if bc_ward.lower() in str(r["ward"]).lower()]
-        if bc_ea:
-            rows = [r for r in rows if bc_ea.lower() in str(r["ea"]).lower()]
 
         rows = self._sort_rows(rows, bc_sort, bc_dir)
         pagination = self._paginate_rows(rows, bc_page, per_page=10)
@@ -1538,6 +1641,7 @@ class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
                 "bc_district_search": bc_district,
                 "bc_ward_search": bc_ward,
                 "bc_ea_search": bc_ea,
+                "bc_current": bc_current,
                 "bc_page": pagination["page"],
                 "bc_total_pages": pagination["total_pages"],
                 "bc_has_prev": pagination["has_prev"],
@@ -1549,6 +1653,35 @@ class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
             }
         )
         return context
+
+    @staticmethod
+    def _iso_bounds(start_dt, end_dt):
+        """UTC ISO-8601 text bounds for lexical comparison against the ISO
+        ``submissiondate`` text fields. Returns ``None`` where unbounded."""
+        start_iso = end_iso = None
+        if start_dt is not None:
+            start_iso = start_dt.astimezone(dt_timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%S"
+            )
+        if end_dt is not None:
+            end_iso = end_dt.astimezone(dt_timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+        return start_iso, end_iso
+
+    @staticmethod
+    def _date_filter(queryset, field, start_iso, end_iso):
+        if start_iso:
+            queryset = queryset.filter(**{f"{field}__gte": start_iso})
+        if end_iso:
+            queryset = queryset.filter(**{f"{field}__lte": end_iso})
+        return queryset
+
+    @staticmethod
+    def _coverage_pct(numerator, denominator):
+        """Coverage percentage, or ``None`` when the target estimate is missing
+        or zero (avoids division by zero)."""
+        if not denominator:
+            return None
+        return float(f"{numerator / denominator * 100:.1f}")
 
     @staticmethod
     def _pick(value, valid_values, default):
