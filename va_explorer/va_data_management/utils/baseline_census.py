@@ -1,9 +1,21 @@
 """Helpers for the baseline-census province configuration."""
 
+from django.db.models import Sum
+
 from va_explorer.va_data_management.models import (
     BaselineCensusProvince,
     SRSEAPopulationTarget,
 )
+
+# location_level -> SRSEAPopulationTarget field, mirroring
+# BaselineCensusProvinceTableComponent._LOCATION_FIELD_MAP so the coverage
+# summary chart's estimate bars agree with the Census Table totals.
+_TARGET_LOCATION_FIELDS = {
+    "province": "province_name",
+    "district": "district_name",
+    "ward": "ward_name",
+    "ea": "geoid",
+}
 
 
 def _distinct_province_names():
@@ -95,6 +107,32 @@ def get_baseline_census_province_config():
         }
         for name in _distinct_province_names()
     ]
+
+
+def get_baseline_census_target_totals(
+    *, excluded_provinces=None, location_level=None, location_value=None
+):
+    """Summed population/household targets for the coverage summary chart.
+
+    Applies the same province exclusion and location filter the Census Table
+    uses on ``SRSEAPopulationTarget`` so the chart's estimate bars agree with
+    the table totals. Returns
+    ``{"population_target": int, "household_target": int}``.
+    """
+    qs = SRSEAPopulationTarget.objects.all()
+    if excluded_provinces:
+        qs = qs.exclude(province_name__in=excluded_provinces)
+    field = _TARGET_LOCATION_FIELDS.get((location_level or "").strip().lower())
+    if field and location_value:
+        qs = qs.filter(**{f"{field}__icontains": location_value})
+    totals = qs.aggregate(
+        population_target=Sum("population_target"),
+        household_target=Sum("household_target"),
+    )
+    return {
+        "population_target": totals["population_target"] or 0,
+        "household_target": totals["household_target"] or 0,
+    }
 
 
 def save_baseline_census_province_config(

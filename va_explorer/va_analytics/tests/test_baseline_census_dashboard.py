@@ -21,6 +21,7 @@ from va_explorer.va_data_management.models import (
 from va_explorer.va_data_management.utils.baseline_census import (
     get_active_census_provinces,
     get_baseline_census_province_config,
+    get_baseline_census_target_totals,
     get_current_census_provinces,
     get_excluded_census_provinces,
     get_inactive_census_provinces,
@@ -1062,3 +1063,68 @@ class TestBaselineCensusOverviewKpiGating:
 
         off_payload = client.get(url, {"kpis_only": "1", "bc_current": "0"}).json()
         assert off_payload["kpis"]["households"]["total"] == 1
+
+
+class TestBaselineCensusOverviewTargets:
+    """The Enumeration Coverage Summary chart's population/household estimates
+    are summed from the SRS EA population target table."""
+
+    def test_overview_filter_data_includes_summed_targets(self):
+        # _seed_two_province_targets: 2 CENTRAL EAs + 1 COPPERBELT EA, each with
+        # population_target=1 and household_target=1.
+        _seed_two_province_targets()
+
+        url = reverse("va_analytics:baseline-census-overview-filter-data")
+        payload = _client().get(url, {"kpis_only": "1"}).json()
+
+        assert payload["kpis"]["targets"] == {
+            "population_target": 3,
+            "household_target": 3,
+        }
+
+    def test_targets_drop_non_current_province_when_bc_current_on(self):
+        _seed_two_province_targets()
+        BaselineCensusProvince.objects.create(
+            province_name="COPPERBELT", is_current=False
+        )
+        client = _client()
+        url = reverse("va_analytics:baseline-census-overview-filter-data")
+
+        # bc_current off -> every activated province's target counts.
+        off = client.get(url, {"kpis_only": "1"}).json()
+        assert off["kpis"]["targets"]["population_target"] == 3
+
+        # bc_current on -> COPPERBELT's EA target is excluded.
+        on = client.get(url, {"kpis_only": "1", "bc_current": "1"}).json()
+        assert on["kpis"]["targets"] == {
+            "population_target": 2,
+            "household_target": 2,
+        }
+
+    def test_targets_always_drop_inactive_province(self):
+        _seed_two_province_targets()
+        BaselineCensusProvince.objects.create(
+            province_name="COPPERBELT", is_current=True, is_active=False
+        )
+        client = _client()
+        url = reverse("va_analytics:baseline-census-overview-filter-data")
+
+        # An inactive province is excluded regardless of the bc_current flag.
+        for params in ({"kpis_only": "1"}, {"kpis_only": "1", "bc_current": "1"}):
+            payload = client.get(url, params).json()
+            assert payload["kpis"]["targets"]["population_target"] == 2
+
+    def test_helper_respects_location_filter(self):
+        _seed_two_province_targets()
+
+        central_only = get_baseline_census_target_totals(
+            location_level="province", location_value="CENTRAL"
+        )
+
+        assert central_only == {"population_target": 2, "household_target": 2}
+
+    def test_helper_returns_zero_totals_without_targets(self):
+        assert get_baseline_census_target_totals() == {
+            "population_target": 0,
+            "household_target": 0,
+        }

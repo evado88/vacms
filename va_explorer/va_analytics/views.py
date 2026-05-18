@@ -1389,6 +1389,7 @@ class BaselineCensusOverviewFilterDataView(NationalOperationalFilterData):
             get_national_operational_view_data,
         )
         from va_explorer.va_data_management.utils.baseline_census import (
+            get_baseline_census_target_totals,
             get_dashboard_excluded_census_provinces,
         )
 
@@ -1407,6 +1408,7 @@ class BaselineCensusOverviewFilterDataView(NationalOperationalFilterData):
 
         preset, start_dt, end_dt, _has_custom = parse_filter_range(request)
         location_level, location_value = parse_location_filter(request)
+        excluded = get_dashboard_excluded_census_provinces(include_current=bc_current)
         data = get_national_operational_view_data(
             start_dt=start_dt,
             end_dt=end_dt,
@@ -1414,11 +1416,17 @@ class BaselineCensusOverviewFilterDataView(NationalOperationalFilterData):
             location_level=location_level,
             location_value=location_value,
             include_chart_series=False,
-            census_province_exclude=get_dashboard_excluded_census_provinces(
-                include_current=bc_current
-            ),
+            census_province_exclude=excluded,
         )
-        return JsonResponse({"kpis": data.get("kpis", {})})
+        kpis = data.get("kpis", {})
+        # Real population/household estimates for the Enumeration Coverage
+        # Summary chart, scoped the same way as the Census Table.
+        kpis["targets"] = get_baseline_census_target_totals(
+            excluded_provinces=excluded,
+            location_level=location_level,
+            location_value=location_value,
+        )
+        return JsonResponse({"kpis": kpis})
 
 
 baseline_census_overview_filter_data_view = (

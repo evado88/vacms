@@ -98,6 +98,11 @@ const buildEnumerationCoverageSeries = (kpis = {}) => {
   const pregOutcomesTotal = parseNumericOrNull(kpis.preg_outcomes?.total);
   const deathsTotal = parseNumericOrNull(kpis.deaths?.total);
 
+  // Population/household estimates come from the SRS EA population target
+  // table (summed server-side). Pregnancies/outcomes/deaths have no target.
+  const populationTarget = parseNumericOrNull(kpis.targets?.population_target);
+  const householdTarget = parseNumericOrNull(kpis.targets?.household_target);
+
   const labels = [
     "Population",
     "Household",
@@ -106,15 +111,28 @@ const buildEnumerationCoverageSeries = (kpis = {}) => {
     "Deaths",
   ];
 
-  const estimateData = [10000, 5000, null, null, null];
+  const estimateData = [populationTarget, householdTarget, null, null, null];
   const enumeratedData = [
-    peopleTotal ?? 9000,
-    householdsTotal ?? 3500,
+    peopleTotal ?? 0,
+    householdsTotal ?? 0,
     pregnanciesTotal ?? 0,
     pregOutcomesTotal ?? 0,
     deathsTotal ?? 0,
   ];
-  const coverageData = [90, 70, null, null, null];
+
+  // Coverage = enumerated / estimate, as a whole percent — matching how the
+  // Census Table derives its coverage columns.
+  const coveragePct = (enumerated, estimate) => {
+    if (estimate === null || estimate <= 0 || enumerated === null) return null;
+    return Math.round((enumerated / estimate) * 100);
+  };
+  const coverageData = [
+    coveragePct(peopleTotal, populationTarget),
+    coveragePct(householdsTotal, householdTarget),
+    null,
+    null,
+    null,
+  ];
 
   return { labels, estimateData, enumeratedData, coverageData };
 }
