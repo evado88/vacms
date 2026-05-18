@@ -632,7 +632,7 @@
   border-radius: 14px;
   box-sizing: border-box;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto minmax(0, 1fr);
   gap: 4px;
   height: calc(100vh - 180px);
   height: calc(100dvh - 180px);
@@ -712,7 +712,38 @@
   font-style: normal;
 }
 
-#baseline-chart-view .baseline-chart-card {
+/* Sub-tab nav inside the Census Chart tab — one focused chart per indicator. */
+#baseline-chart-view .census-chart-subtabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+#baseline-chart-view .census-chart-subtab {
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  color: #6a7789;
+  font-size: 0.84rem;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+#baseline-chart-view .census-chart-subtab:hover {
+  background: #f3f4f6;
+}
+
+#baseline-chart-view .census-chart-subtab--active {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #ffffff;
+}
+
+/* The sub-panels container is the chart card surface; only the active panel
+   is in flow, so it fills the single grid row. Overlays cover the card. */
+#baseline-chart-view .census-chart-subpanels {
   position: relative;
   background: #ffffff;
   border: 1px solid #e2e8f0;
@@ -722,8 +753,26 @@
   grid-template-rows: minmax(0, 1fr);
   min-height: 0;
   min-width: 0;
-  padding: 12px 14px;
   overflow: hidden;
+}
+
+#baseline-chart-view .census-chart-subpanel {
+  display: none;
+  min-height: 0;
+  min-width: 0;
+}
+
+#baseline-chart-view .census-chart-subpanel--active {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  padding: 12px 14px;
+}
+
+#baseline-chart-view .census-chart-note {
+  margin: 0 0 8px 0;
+  font-size: 0.8rem;
+  font-style: italic;
+  color: #6a7789;
 }
 
 #baseline-chart-view .baseline-chart-wrap {
@@ -1013,7 +1062,7 @@
     overflow: visible;
   }
 
-  #baseline-chart-view .baseline-chart-card {
+  #baseline-chart-view .census-chart-subpanels {
     min-height: 420px;
   }
 

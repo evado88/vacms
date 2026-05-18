@@ -773,9 +773,17 @@ const initTableFilters = () => {
 }
 
 const resizeChartsForTab = (tab) => {
+  if (tab === "chart") {
+    // Only the active Census Chart sub-tab canvas is visible and worth sizing.
+    const canvas = document.getElementById(
+      censusIndicatorByKey(bcChartActiveIndicator).canvasId
+    );
+    const chart = canvas && chartInstances.get(canvas);
+    if (chart) chart.resize();
+    return;
+  }
   const mapByTab = {
     overview: ["enumerationCoverageChart"],
-    chart: ["baselineCensusChart"],
   };
   (mapByTab[tab] || []).forEach((id) => {
     const canvas = document.getElementById(id);
@@ -809,13 +817,28 @@ const initTableTab = async () => {
 }
 
 // ---------------------------------------------------------------------------
-// Census Chart (drill-down combined bar + line chart)
+// Census Chart (drill-down bar + line charts, one focused sub-tab per indicator)
 // ---------------------------------------------------------------------------
+// Each indicator has its own sub-tab and canvas. ``hasEstimate`` is true only
+// where SRSEAPopulationTarget carries a target — Deaths, Pregnancies and
+// Pregnancy Outcomes have none, so those charts show enumerated counts only.
 const CENSUS_INDICATORS = [
-  { key: "population", label: "Population" },
-  { key: "household", label: "Households" },
-  { key: "death", label: "Deaths" },
+  { key: "population", label: "Population", canvasId: "censusPopulationChart", hasEstimate: true },
+  { key: "household", label: "Households", canvasId: "censusHouseholdsChart", hasEstimate: true },
+  { key: "death", label: "Deaths", canvasId: "censusDeathsChart", hasEstimate: false },
+  { key: "pregnancy", label: "Pregnancies", canvasId: "censusPregnanciesChart", hasEstimate: false },
+  {
+    key: "pregnancy_outcome",
+    label: "Pregnancy Outcomes",
+    canvasId: "censusPregnancyOutcomesChart",
+    hasEstimate: false,
+  },
 ];
+
+const censusIndicatorByKey = (key) =>
+  CENSUS_INDICATORS.find((indicator) => indicator.key === key) || CENSUS_INDICATORS[0];
+
+let bcChartActiveIndicator = "population";
 
 // Drill-down hint copy per level: which geography the bars represent and what
 // the next level down is called.
@@ -964,126 +987,123 @@ const drillIntoCensus = (row) => {
   fetchCensusChartData();
 };
 
-// Widen the canvas box so grouped bars stay legible when a level has many
-// geographies; the wrap then scrolls horizontally. Narrow datasets keep the
-// box at 100% so the chart simply fills the tab.
-const sizeCensusCanvasBox = (categoryCount) => {
-  const wrap = document.querySelector("#baseline-chart-view .baseline-chart-wrap");
-  const box = document.querySelector("#baseline-chart-view .baseline-chart-canvas-box");
-  if (!wrap || !box) return;
-  const minPerCategory = 46;
-  const needed = categoryCount * minPerCategory;
+// Widen the canvas box so bars stay legible when a level has many geographies;
+// the wrap then scrolls horizontally. Narrow datasets keep the box at 100% so
+// the chart simply fills the sub-tab.
+const sizeCensusCanvasBox = (box, geographyCount) => {
+  if (!box) return;
+  const wrap = box.closest(".baseline-chart-wrap");
+  if (!wrap) return;
+  const minPerGeography = 64;
+  const needed = geographyCount * minPerGeography;
   box.style.width = needed > wrap.clientWidth ? `${needed}px` : "100%";
 };
 
-const renderCensusChart = (payload) => {
-  const canvas = document.getElementById("baselineCensusChart");
-  if (!canvas || typeof Chart === "undefined") return;
+// Render one indicator's chart: estimate + enumerated bars and a coverage line
+// for indicators with a target; enumerated bars only for the rest. Each
+// geography is a single x-axis category, so a bar click drills straight in.
+const renderIndicatorChart = (indicatorKey) => {
+  const indicator = censusIndicatorByKey(indicatorKey);
+  const canvas = document.getElementById(indicator.canvasId);
+  if (!canvas || typeof Chart === "undefined" || !lastChartPayload) return;
 
   destroyChartForCanvas(canvas);
 
-  const results = payload.results || [];
-  const labels = [];
-  const estimateData = [];
-  const enumeratedData = [];
-  const coverageData = [];
+  const results = lastChartPayload.results || [];
+  const labels = results.map((row) => row.label || "—");
 
-  // Each geography contributes three x-axis categories — one per indicator.
-  // The geography name sits on the middle (Households) tick so it reads as a
-  // centred group label.
-  results.forEach((row) => {
-    CENSUS_INDICATORS.forEach((indicator, indicatorIndex) => {
-      labels.push([
-        indicatorIndex === 1 ? row.label || "—" : "",
-        indicator.label,
-      ]);
-      estimateData.push(row[`${indicator.key}_estimate`]);
-      enumeratedData.push(row[`${indicator.key}_enumerated`]);
-      coverageData.push(row[`${indicator.key}_coverage`]);
+  const datasets = [];
+  if (indicator.hasEstimate) {
+    datasets.push({
+      type: "bar",
+      label: "Estimate",
+      data: results.map((row) => row[`${indicator.key}_estimate`]),
+      backgroundColor: "#2563eb",
+      borderRadius: 4,
+      yAxisID: "y",
     });
+  }
+  datasets.push({
+    type: "bar",
+    label: "Enumerated",
+    data: results.map((row) => row[`${indicator.key}_enumerated`]),
+    backgroundColor: "#dc2626",
+    borderRadius: 4,
+    yAxisID: "y",
   });
+  if (indicator.hasEstimate) {
+    datasets.push({
+      type: "line",
+      label: "Coverage",
+      data: results.map((row) => row[`${indicator.key}_coverage`]),
+      borderColor: "#16a34a",
+      backgroundColor: "#16a34a",
+      borderWidth: 2,
+      pointBackgroundColor: "#16a34a",
+      pointBorderColor: "#ffffff",
+      pointBorderWidth: 2,
+      pointRadius: 4,
+      pointHoverRadius: 5,
+      spanGaps: false,
+      tension: 0.25,
+      yAxisID: "yCoverage",
+    });
+  }
 
-  const resolveRow = (dataIndex) => results[Math.floor(dataIndex / CENSUS_INDICATORS.length)];
+  const scales = {
+    x: {
+      grid: { display: false },
+      ticks: { autoSkip: false, maxRotation: 45, minRotation: 0 },
+    },
+    y: {
+      beginAtZero: true,
+      position: "left",
+      title: { display: true, text: "Counts" },
+      ticks: { callback: (value) => formatCountValue(value) },
+    },
+  };
+  if (indicator.hasEstimate) {
+    scales.yCoverage = {
+      beginAtZero: true,
+      suggestedMax: 100,
+      position: "right",
+      title: { display: true, text: "Coverage" },
+      grid: { drawOnChartArea: false },
+      ticks: { callback: (value) => formatCoverageValue(value) },
+    };
+  }
 
-  sizeCensusCanvasBox(labels.length);
+  sizeCensusCanvasBox(canvas.closest(".baseline-chart-canvas-box"), results.length);
 
   const chart = new Chart(canvas.getContext("2d"), {
     type: "bar",
-    data: {
-      labels,
-      datasets: [
-        {
-          type: "bar",
-          label: "Estimate",
-          data: estimateData,
-          backgroundColor: "#2563eb",
-          borderRadius: 4,
-          yAxisID: "y",
-        },
-        {
-          type: "bar",
-          label: "Enumerated",
-          data: enumeratedData,
-          backgroundColor: "#dc2626",
-          borderRadius: 4,
-          yAxisID: "y",
-        },
-        {
-          type: "line",
-          label: "Coverage",
-          data: coverageData,
-          borderColor: "#16a34a",
-          backgroundColor: "#16a34a",
-          borderWidth: 2,
-          pointBackgroundColor: "#16a34a",
-          pointBorderColor: "#ffffff",
-          pointBorderWidth: 2,
-          pointRadius: 4,
-          pointHoverRadius: 5,
-          spanGaps: false,
-          tension: 0.25,
-          yAxisID: "yCoverage",
-        },
-      ],
-    },
+    data: { labels, datasets },
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      interaction: {
-        intersect: false,
-        mode: "index",
-      },
-      layout: {
-        padding: {
-          top: 22,
-        },
-      },
+      interaction: { intersect: false, mode: "index" },
+      layout: { padding: { top: 22 } },
       onClick: (evt, elements) => {
         if (!elements || !elements.length) return;
-        drillIntoCensus(resolveRow(elements[0].index));
+        drillIntoCensus(results[elements[0].index]);
       },
       onHover: (evt, elements) => {
         const target = evt && evt.native && evt.native.target;
         if (!target) return;
-        const row = elements && elements.length ? resolveRow(elements[0].index) : null;
+        const row = elements && elements.length ? results[elements[0].index] : null;
         target.style.cursor = row && row.has_children ? "pointer" : "default";
       },
       plugins: {
         legend: {
           display: true,
           position: "top",
-          labels: {
-            boxWidth: 12,
-            boxHeight: 12,
-          },
+          labels: { boxWidth: 12, boxHeight: 12 },
         },
         tooltip: {
           callbacks: {
             title(items) {
               if (!items.length) return "";
-              const dataIndex = items[0].dataIndex;
-              const row = resolveRow(dataIndex) || {};
-              const indicator = CENSUS_INDICATORS[dataIndex % CENSUS_INDICATORS.length];
+              const row = results[items[0].dataIndex] || {};
               return `${row.label || "—"} — ${indicator.label}`;
             },
             label(context) {
@@ -1098,47 +1118,23 @@ const renderCensusChart = (payload) => {
           },
         },
       },
-      scales: {
-        x: {
-          grid: {
-            display: false,
-          },
-          ticks: {
-            autoSkip: false,
-            maxRotation: 0,
-          },
-        },
-        y: {
-          beginAtZero: true,
-          position: "left",
-          title: {
-            display: true,
-            text: "Counts",
-          },
-          ticks: {
-            callback: (value) => formatCountValue(value),
-          },
-        },
-        yCoverage: {
-          beginAtZero: true,
-          suggestedMax: 100,
-          position: "right",
-          title: {
-            display: true,
-            text: "Coverage",
-          },
-          grid: {
-            drawOnChartArea: false,
-          },
-          ticks: {
-            callback: (value) => formatCoverageValue(value),
-          },
-        },
-      },
+      scales,
     },
     plugins: [enumerationCoverageLabelsPlugin],
   });
   chartInstances.set(canvas, chart);
+};
+
+// Render whichever sub-tab is currently active from the cached payload.
+const renderActiveIndicatorChart = () => {
+  if (
+    !lastChartPayload ||
+    !lastChartPayload.results ||
+    lastChartPayload.results.length === 0
+  ) {
+    return;
+  }
+  renderIndicatorChart(bcChartActiveIndicator);
 };
 
 const fetchCensusChartData = () => {
@@ -1179,12 +1175,16 @@ const fetchCensusChartData = () => {
       renderCensusBreadcrumb(payload);
       renderCensusChartHint(payload);
       if (!payload.results || payload.results.length === 0) {
-        destroyChartForCanvas(document.getElementById("baselineCensusChart"));
+        CENSUS_INDICATORS.forEach((indicator) => {
+          destroyChartForCanvas(document.getElementById(indicator.canvasId));
+        });
         setCensusChartOverlay("empty");
         return;
       }
       setCensusChartOverlay(null);
-      renderCensusChart(payload);
+      // One fetch feeds every sub-tab; only the visible one is drawn now,
+      // the rest re-render from this payload when their sub-tab is shown.
+      renderActiveIndicatorChart();
     })
     .catch((err) => {
       if (requestId !== chartFetchRequestId) return;
@@ -1294,6 +1294,45 @@ const wireChartBreadcrumbEvents = () => {
   });
 };
 
+let censusSubtabsBound = false;
+
+// Switch the active Census Chart sub-tab. Filters and drill-down state are
+// shared, so this only swaps the visible panel and redraws that indicator's
+// chart from the cached payload — no refetch, no page reload.
+const setActiveCensusSubtab = (indicatorKey) => {
+  const indicator = censusIndicatorByKey(indicatorKey);
+  bcChartActiveIndicator = indicator.key;
+
+  document.querySelectorAll("#censusChartTabs .census-chart-subtab").forEach((btn) => {
+    const isActive = btn.dataset.censusIndicator === indicator.key;
+    btn.classList.toggle("census-chart-subtab--active", isActive);
+    btn.setAttribute("aria-selected", isActive ? "true" : "false");
+  });
+  document
+    .querySelectorAll("#censusChartSubpanels .census-chart-subpanel")
+    .forEach((panel) => {
+      panel.classList.toggle(
+        "census-chart-subpanel--active",
+        panel.dataset.indicator === indicator.key
+      );
+    });
+
+  // The panel is now visible, so the canvas has real dimensions to draw into.
+  renderActiveIndicatorChart();
+};
+
+const initCensusChartSubtabs = () => {
+  if (censusSubtabsBound) return;
+  censusSubtabsBound = true;
+  const tabs = document.getElementById("censusChartTabs");
+  if (!tabs) return;
+  tabs.addEventListener("click", (event) => {
+    const btn = event.target.closest(".census-chart-subtab");
+    if (!btn || !btn.dataset.censusIndicator) return;
+    setActiveCensusSubtab(btn.dataset.censusIndicator);
+  });
+};
+
 const initChartTab = async () => {
   if (chartTabInitialized) {
     resizeChartsForTab("chart");
@@ -1301,6 +1340,7 @@ const initChartTab = async () => {
   }
   chartTabInitialized = true;
   initChartFilters();
+  initCensusChartSubtabs();
   wireChartBreadcrumbEvents();
   await fetchCensusChartData();
   resizeChartsForTab("chart");

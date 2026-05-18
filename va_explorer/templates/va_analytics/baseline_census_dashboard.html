@@ -209,10 +209,50 @@
                 Tip: click a province bar to drill down into its districts.
               </span>
             </div>
-            <div class="baseline-chart-card">
-              <div class="baseline-chart-wrap">
-                <div class="baseline-chart-canvas-box">
-                  <canvas id="baselineCensusChart"></canvas>
+            <div class="census-chart-subtabs" id="censusChartTabs" role="tablist" aria-label="Census chart indicators">
+              <button type="button" class="census-chart-subtab census-chart-subtab--active" data-census-indicator="population" role="tab" aria-selected="true">Population</button>
+              <button type="button" class="census-chart-subtab" data-census-indicator="household" role="tab" aria-selected="false">Households</button>
+              <button type="button" class="census-chart-subtab" data-census-indicator="death" role="tab" aria-selected="false">Deaths</button>
+              <button type="button" class="census-chart-subtab" data-census-indicator="pregnancy" role="tab" aria-selected="false">Pregnancies</button>
+              <button type="button" class="census-chart-subtab" data-census-indicator="pregnancy_outcome" role="tab" aria-selected="false">Pregnancy Outcomes</button>
+            </div>
+            <div class="census-chart-subpanels" id="censusChartSubpanels">
+              <div class="census-chart-subpanel census-chart-subpanel--active" data-indicator="population" role="tabpanel">
+                <div class="baseline-chart-wrap">
+                  <div class="baseline-chart-canvas-box">
+                    <canvas id="censusPopulationChart"></canvas>
+                  </div>
+                </div>
+              </div>
+              <div class="census-chart-subpanel" data-indicator="household" role="tabpanel">
+                <div class="baseline-chart-wrap">
+                  <div class="baseline-chart-canvas-box">
+                    <canvas id="censusHouseholdsChart"></canvas>
+                  </div>
+                </div>
+              </div>
+              <div class="census-chart-subpanel" data-indicator="death" role="tabpanel">
+                <p class="census-chart-note">No enumeration target available — showing enumerated counts only.</p>
+                <div class="baseline-chart-wrap">
+                  <div class="baseline-chart-canvas-box">
+                    <canvas id="censusDeathsChart"></canvas>
+                  </div>
+                </div>
+              </div>
+              <div class="census-chart-subpanel" data-indicator="pregnancy" role="tabpanel">
+                <p class="census-chart-note">No enumeration target available — showing enumerated counts only.</p>
+                <div class="baseline-chart-wrap">
+                  <div class="baseline-chart-canvas-box">
+                    <canvas id="censusPregnanciesChart"></canvas>
+                  </div>
+                </div>
+              </div>
+              <div class="census-chart-subpanel" data-indicator="pregnancy_outcome" role="tabpanel">
+                <p class="census-chart-note">No enumeration target available — showing enumerated counts only.</p>
+                <div class="baseline-chart-wrap">
+                  <div class="baseline-chart-canvas-box">
+                    <canvas id="censusPregnancyOutcomesChart"></canvas>
+                  </div>
                 </div>
               </div>
               <div class="baseline-chart-overlay" id="baselineChartLoading">Loading census chart&hellip;</div>

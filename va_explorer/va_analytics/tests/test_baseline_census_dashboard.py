@@ -600,7 +600,32 @@ class TestBaselineCensusChartTab:
 
         assert 'data-tab="chart"' in body
         assert 'id="tab-chart"' in body
-        assert 'id="baselineCensusChart"' in body
+
+    def test_census_chart_tab_renders_five_indicator_subtabs(self):
+        response = _client().get(reverse("va_analytics:baseline-census-dashboard"))
+        body = response.content.decode()
+
+        assert 'id="censusChartTabs"' in body
+        for canvas_id in (
+            "censusPopulationChart",
+            "censusHouseholdsChart",
+            "censusDeathsChart",
+            "censusPregnanciesChart",
+            "censusPregnancyOutcomesChart",
+        ):
+            assert f'id="{canvas_id}"' in body
+        for label in (
+            "Population",
+            "Households",
+            "Deaths",
+            "Pregnancies",
+            "Pregnancy Outcomes",
+        ):
+            assert label in body
+        # Population is the default active sub-tab.
+        assert (
+            'data-census-indicator="population" role="tab" aria-selected="true"' in body
+        )
 
     def test_chart_tab_query_param_marks_active(self):
         response = _client().get(
@@ -664,6 +689,36 @@ class TestBaselineCensusChartData:
         assert copperbelt["household_estimate"] == 0
         assert copperbelt["household_coverage"] is None
         assert copperbelt["population_coverage"] == 0.0
+
+    def test_pregnancy_and_outcome_enumerated_rolled_up(self):
+        _build_baseline_census_fixture()
+
+        central = _chart_row(_chart_payload(_client()), "CENTRAL")
+
+        # Fixture: two pregnancies and one pregnancy outcome under CENTRAL.
+        assert central["pregnancy_enumerated"] == 2
+        assert central["pregnancy_outcome_enumerated"] == 1
+        # No targets exist for these indicators -> estimate/coverage are null.
+        assert central["pregnancy_estimate"] is None
+        assert central["pregnancy_coverage"] is None
+        assert central["pregnancy_outcome_estimate"] is None
+        assert central["pregnancy_outcome_coverage"] is None
+
+    def test_indicator_param_accepts_supported_values(self):
+        _build_baseline_census_fixture()
+
+        payload = _chart_payload(_client(), indicator="pregnancies")
+
+        assert payload["indicator"] == "pregnancies"
+        assert len(payload["results"]) > 0
+
+    def test_indicator_param_rejects_unsupported_value(self):
+        _build_baseline_census_fixture()
+
+        response = _client().get(reverse(CHART_URL), {"indicator": "bogus"})
+
+        assert response.status_code == 400
+        assert "error" in response.json()
 
     def test_district_level_filters_to_parent_province(self):
         _build_baseline_census_fixture()

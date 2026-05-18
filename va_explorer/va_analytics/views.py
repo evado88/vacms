@@ -1898,6 +1898,8 @@ def aggregate_census_by_level(
         Death,
         Household,
         HouseholdMember,
+        Pregnancy,
+        PregnancyOutcome,
         SRSEAPopulationTarget,
     )
 
@@ -1946,6 +1948,8 @@ def aggregate_census_by_level(
                 "population_enumerated": 0,
                 "household_enumerated": 0,
                 "death_enumerated": 0,
+                "pregnancy_enumerated": 0,
+                "pregnancy_outcome_enumerated": 0,
             }
             groups[group_key] = acc
             order.append(group_key)
@@ -1981,6 +1985,18 @@ def aggregate_census_by_level(
         "submissiondate",
         "ea",
     )
+    # Pregnancies key off the EA text field; pregnancy outcomes off the cluster
+    # FK — matching the Census Table tab's aggregation.
+    pregnancy_by_geoid = _counts_by_geoid(
+        Pregnancy.objects.exclude(ea__isnull=True).exclude(ea=""),
+        "submissiondate",
+        "ea",
+    )
+    pregnancy_outcome_by_geoid = _counts_by_geoid(
+        PregnancyOutcome.objects.exclude(cluster__isnull=True),
+        "submissiondate",
+        "cluster__name",
+    )
 
     # --- Roll EA-level counts up to the requested level ---
     for geoid, group_key in geoid_to_group.items():
@@ -1988,6 +2004,8 @@ def aggregate_census_by_level(
         acc["household_enumerated"] += hh_by_geoid.get(geoid, 0)
         acc["population_enumerated"] += pop_by_geoid.get(geoid, 0)
         acc["death_enumerated"] += death_by_geoid.get(geoid, 0)
+        acc["pregnancy_enumerated"] += pregnancy_by_geoid.get(geoid, 0)
+        acc["pregnancy_outcome_enumerated"] += pregnancy_outcome_by_geoid.get(geoid, 0)
 
     child_index = _CENSUS_LEVEL_ORDER.index(level) + 1
     child_level = (
@@ -2014,12 +2032,21 @@ def aggregate_census_by_level(
                 "household_coverage": coverage(
                     acc["household_enumerated"], acc["household_estimate"]
                 ),
-                # SRSEAPopulationTarget has no death-target column, so there is
-                # no death estimate. None keeps coverage division-safe —
-                # _coverage_pct treats a falsy denominator as "no coverage".
+                # Deaths, pregnancies and pregnancy outcomes have no target in
+                # SRSEAPopulationTarget, so their estimate is None. None keeps
+                # coverage division-safe — _coverage_pct treats a falsy
+                # denominator as "no coverage".
                 "death_estimate": None,
                 "death_enumerated": acc["death_enumerated"],
                 "death_coverage": coverage(acc["death_enumerated"], None),
+                "pregnancy_estimate": None,
+                "pregnancy_enumerated": acc["pregnancy_enumerated"],
+                "pregnancy_coverage": coverage(acc["pregnancy_enumerated"], None),
+                "pregnancy_outcome_estimate": None,
+                "pregnancy_outcome_enumerated": acc["pregnancy_outcome_enumerated"],
+                "pregnancy_outcome_coverage": coverage(
+                    acc["pregnancy_outcome_enumerated"], None
+                ),
                 "has_children": child_level is not None,
             }
         )
@@ -2032,8 +2059,13 @@ def aggregate_census_by_level(
 class BaselineCensusChartDataView(CustomAuthMixin, PermissionRequiredMixin, View):
     """JSON endpoint backing the Census Chart tab of the Baseline Census
     Dashboard. Returns estimate/enumerated/coverage metrics for Population,
-    Households and Deaths aggregated to the requested administrative level,
-    plus drill-down breadcrumbs."""
+    Households, Deaths, Pregnancies and Pregnancy Outcomes aggregated to the
+    requested administrative level, plus drill-down breadcrumbs.
+
+    The response always carries every indicator; the optional ``indicator``
+    query param only validates the caller's request (unsupported values are
+    rejected) — the Census Chart sub-tabs render client-side from one payload.
+    """
 
     permission_required = "va_analytics.view_dashboard"
     _PARENT_LEVELS = ("province", "district", "constituency", "ward")
@@ -2043,6 +2075,13 @@ class BaselineCensusChartDataView(CustomAuthMixin, PermissionRequiredMixin, View
         "constituency": "ward",
         "ward": "ea",
     }
+    _SUPPORTED_INDICATORS = (
+        "population",
+        "households",
+        "deaths",
+        "pregnancies",
+        "pregnancy_outcomes",
+    )
 
     def get(self, request, *args, **kwargs):
         try:
@@ -2057,6 +2096,14 @@ class BaselineCensusChartDataView(CustomAuthMixin, PermissionRequiredMixin, View
         from va_explorer.va_data_management.utils.baseline_census import (
             get_excluded_census_provinces,
         )
+
+        # Optional indicator filter — validate but do not narrow the payload,
+        # which always carries every indicator for instant sub-tab switching.
+        indicator = (request.GET.get("indicator", "") or "").strip().lower()
+        if indicator and indicator not in self._SUPPORTED_INDICATORS:
+            return JsonResponse(
+                {"error": f"Unsupported indicator '{indicator}'."}, status=400
+            )
 
         level = BaselineCensusProvinceTableComponent._pick(
             (request.GET.get("level", "province") or "province").strip().lower(),
@@ -2099,6 +2146,7 @@ class BaselineCensusChartDataView(CustomAuthMixin, PermissionRequiredMixin, View
             {
                 "level": level,
                 "child_level": child_level,
+                "indicator": indicator or None,
                 "breadcrumbs": self._build_breadcrumbs(parent_filters),
                 "results": results,
             }
