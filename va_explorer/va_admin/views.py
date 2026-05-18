@@ -208,9 +208,9 @@ def admin_panel_view(request):
 def baseline_census_config_view(request):
     """Persist which provinces are part of the current baseline census.
 
-    Driven by the admin panel's "Baseline Census Config" section. Checked
-    provinces are part of the current census; unchecked provinces are excluded
-    from the dashboard's "Current Baseline Census" filter.
+    Driven by the admin panel's "Baseline Census Config" section. The dashboard
+    always filters to active provinces; the "Current Census" checkbox narrows
+    further to the provinces marked current.
     """
     if not user_can_run_admin_commands(request.user):
         _record_alert(
@@ -223,7 +223,10 @@ def baseline_census_config_view(request):
         )
         return HttpResponseForbidden("You are not allowed to access this page.")
 
-    save_baseline_census_province_config(request.POST.getlist("provinces"))
+    save_baseline_census_province_config(
+        request.POST.getlist("current_provinces"),
+        request.POST.getlist("active_provinces"),
+    )
     messages.success(
         request, "Baseline census province configuration saved successfully."
     )

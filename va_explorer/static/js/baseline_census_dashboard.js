@@ -434,7 +434,7 @@ let bcTableFilterState = {
   start: '',
   end: '',
   preset: '',
-  current: true,
+  current: false,
 };
 
 const BC_SEARCH_IDS = ["bcProvinceSearch", "bcDistrictSearch", "bcWardSearch", "bcEaSearch"];
@@ -552,7 +552,7 @@ const requestNationalOperationalFilterData = (options = {}) => {
   const startDatetime = document.getElementById("novStartDatetime")?.value || "";
   const endDatetime = document.getElementById("novEndDatetime")?.value || "";
   const currentCensusCheckbox = document.getElementById("novCurrentCensus");
-  const bcCurrent = currentCensusCheckbox ? currentCensusCheckbox.checked : true;
+  const bcCurrent = currentCensusCheckbox ? currentCensusCheckbox.checked : false;
 
   const kpiEndpoint = root.dataset.filterUrl || "";
   if (kpiEndpoint) {
@@ -776,7 +776,7 @@ const resizeChartsForTab = (tab) => {
   if (tab === "chart") {
     // Only the active Census Chart sub-tab canvas is visible and worth sizing.
     const canvas = document.getElementById(
-      censusIndicatorByKey(bcChartActiveIndicator).canvasId
+      censusSubtabByKey(bcChartActiveSubtab).canvasId
     );
     const chart = canvas && chartInstances.get(canvas);
     if (chart) chart.resize();
@@ -817,28 +817,45 @@ const initTableTab = async () => {
 }
 
 // ---------------------------------------------------------------------------
-// Census Chart (drill-down bar + line charts, one focused sub-tab per indicator)
+// Census Chart (drill-down bar + line charts, one focused sub-tab per theme)
 // ---------------------------------------------------------------------------
-// Each indicator has its own sub-tab and canvas. ``hasEstimate`` is true only
-// where SRSEAPopulationTarget carries a target — Deaths, Pregnancies and
-// Pregnancy Outcomes have none, so those charts show enumerated counts only.
-const CENSUS_INDICATORS = [
-  { key: "population", label: "Population", canvasId: "censusPopulationChart", hasEstimate: true },
-  { key: "household", label: "Households", canvasId: "censusHouseholdsChart", hasEstimate: true },
-  { key: "death", label: "Deaths", canvasId: "censusDeathsChart", hasEstimate: false },
-  { key: "pregnancy", label: "Pregnancies", canvasId: "censusPregnanciesChart", hasEstimate: false },
+// Population and Households each have an enumeration target, so their sub-tabs
+// chart estimate + enumerated bars with a coverage line ("coverage" mode).
+// Deaths, Pregnancies and Pregnancy Outcomes have no target, so they share one
+// "Vital Events" sub-tab that charts their enumerated counts side by side
+// ("counts" mode).
+const CENSUS_SUBTABS = [
   {
-    key: "pregnancy_outcome",
-    label: "Pregnancy Outcomes",
-    canvasId: "censusPregnancyOutcomesChart",
-    hasEstimate: false,
+    key: "population",
+    label: "Population",
+    canvasId: "censusPopulationChart",
+    mode: "coverage",
+    indicatorKey: "population",
+  },
+  {
+    key: "household",
+    label: "Households",
+    canvasId: "censusHouseholdsChart",
+    mode: "coverage",
+    indicatorKey: "household",
+  },
+  {
+    key: "vital_events",
+    label: "Vital Events",
+    canvasId: "censusVitalEventsChart",
+    mode: "counts",
+    series: [
+      { key: "death", label: "Deaths", color: "#dc2626" },
+      { key: "pregnancy", label: "Pregnancies", color: "#7c3aed" },
+      { key: "pregnancy_outcome", label: "Pregnancy Outcomes", color: "#0891b2" },
+    ],
   },
 ];
 
-const censusIndicatorByKey = (key) =>
-  CENSUS_INDICATORS.find((indicator) => indicator.key === key) || CENSUS_INDICATORS[0];
+const censusSubtabByKey = (key) =>
+  CENSUS_SUBTABS.find((subtab) => subtab.key === key) || CENSUS_SUBTABS[0];
 
-let bcChartActiveIndicator = "population";
+let bcChartActiveSubtab = "population";
 
 // Drill-down hint copy per level: which geography the bars represent and what
 // the next level down is called.
@@ -861,7 +878,7 @@ let bcChartFilterState = {
   start: "",
   end: "",
   preset: "",
-  current: true,
+  current: false,
 };
 // Drill-down position: the level currently shown plus the accumulated
 // ancestor filters (province/district/constituency/ward) that produced it.
@@ -999,43 +1016,43 @@ const sizeCensusCanvasBox = (box, geographyCount) => {
   box.style.width = needed > wrap.clientWidth ? `${needed}px` : "100%";
 };
 
-// Render one indicator's chart: estimate + enumerated bars and a coverage line
-// for indicators with a target; enumerated bars only for the rest. Each
-// geography is a single x-axis category, so a bar click drills straight in.
-const renderIndicatorChart = (indicatorKey) => {
-  const indicator = censusIndicatorByKey(indicatorKey);
-  const canvas = document.getElementById(indicator.canvasId);
+// Render the chart for one sub-tab. "coverage" sub-tabs (Population,
+// Households) chart estimate + enumerated bars with a coverage line; "counts"
+// sub-tabs (Vital Events) chart each series' enumerated count as its own bar,
+// drawn alongside each other. Each geography is a single x-axis category, so a
+// bar click drills straight in.
+const renderSubtabChart = (subtab) => {
+  const canvas = document.getElementById(subtab.canvasId);
   if (!canvas || typeof Chart === "undefined" || !lastChartPayload) return;
 
   destroyChartForCanvas(canvas);
 
   const results = lastChartPayload.results || [];
   const labels = results.map((row) => row.label || "—");
-
+  const hasCoverage = subtab.mode === "coverage";
   const datasets = [];
-  if (indicator.hasEstimate) {
+
+  if (hasCoverage) {
     datasets.push({
       type: "bar",
       label: "Estimate",
-      data: results.map((row) => row[`${indicator.key}_estimate`]),
+      data: results.map((row) => row[`${subtab.indicatorKey}_estimate`]),
       backgroundColor: "#2563eb",
       borderRadius: 4,
       yAxisID: "y",
     });
-  }
-  datasets.push({
-    type: "bar",
-    label: "Enumerated",
-    data: results.map((row) => row[`${indicator.key}_enumerated`]),
-    backgroundColor: "#dc2626",
-    borderRadius: 4,
-    yAxisID: "y",
-  });
-  if (indicator.hasEstimate) {
+    datasets.push({
+      type: "bar",
+      label: "Enumerated",
+      data: results.map((row) => row[`${subtab.indicatorKey}_enumerated`]),
+      backgroundColor: "#dc2626",
+      borderRadius: 4,
+      yAxisID: "y",
+    });
     datasets.push({
       type: "line",
       label: "Coverage",
-      data: results.map((row) => row[`${indicator.key}_coverage`]),
+      data: results.map((row) => row[`${subtab.indicatorKey}_coverage`]),
       borderColor: "#16a34a",
       backgroundColor: "#16a34a",
       borderWidth: 2,
@@ -1047,6 +1064,17 @@ const renderIndicatorChart = (indicatorKey) => {
       spanGaps: false,
       tension: 0.25,
       yAxisID: "yCoverage",
+    });
+  } else {
+    subtab.series.forEach((series) => {
+      datasets.push({
+        type: "bar",
+        label: series.label,
+        data: results.map((row) => row[`${series.key}_enumerated`]),
+        backgroundColor: series.color,
+        borderRadius: 4,
+        yAxisID: "y",
+      });
     });
   }
 
@@ -1062,7 +1090,7 @@ const renderIndicatorChart = (indicatorKey) => {
       ticks: { callback: (value) => formatCountValue(value) },
     },
   };
-  if (indicator.hasEstimate) {
+  if (hasCoverage) {
     scales.yCoverage = {
       beginAtZero: true,
       suggestedMax: 100,
@@ -1104,7 +1132,7 @@ const renderIndicatorChart = (indicatorKey) => {
             title(items) {
               if (!items.length) return "";
               const row = results[items[0].dataIndex] || {};
-              return `${row.label || "—"} — ${indicator.label}`;
+              return `${row.label || "—"} — ${subtab.label}`;
             },
             label(context) {
               const value = context.raw;
@@ -1126,7 +1154,7 @@ const renderIndicatorChart = (indicatorKey) => {
 };
 
 // Render whichever sub-tab is currently active from the cached payload.
-const renderActiveIndicatorChart = () => {
+const renderActiveSubtabChart = () => {
   if (
     !lastChartPayload ||
     !lastChartPayload.results ||
@@ -1134,7 +1162,7 @@ const renderActiveIndicatorChart = () => {
   ) {
     return;
   }
-  renderIndicatorChart(bcChartActiveIndicator);
+  renderSubtabChart(censusSubtabByKey(bcChartActiveSubtab));
 };
 
 const fetchCensusChartData = () => {
@@ -1175,8 +1203,8 @@ const fetchCensusChartData = () => {
       renderCensusBreadcrumb(payload);
       renderCensusChartHint(payload);
       if (!payload.results || payload.results.length === 0) {
-        CENSUS_INDICATORS.forEach((indicator) => {
-          destroyChartForCanvas(document.getElementById(indicator.canvasId));
+        CENSUS_SUBTABS.forEach((subtab) => {
+          destroyChartForCanvas(document.getElementById(subtab.canvasId));
         });
         setCensusChartOverlay("empty");
         return;
@@ -1184,7 +1212,7 @@ const fetchCensusChartData = () => {
       setCensusChartOverlay(null);
       // One fetch feeds every sub-tab; only the visible one is drawn now,
       // the rest re-render from this payload when their sub-tab is shown.
-      renderActiveIndicatorChart();
+      renderActiveSubtabChart();
     })
     .catch((err) => {
       if (requestId !== chartFetchRequestId) return;
@@ -1297,14 +1325,14 @@ const wireChartBreadcrumbEvents = () => {
 let censusSubtabsBound = false;
 
 // Switch the active Census Chart sub-tab. Filters and drill-down state are
-// shared, so this only swaps the visible panel and redraws that indicator's
+// shared, so this only swaps the visible panel and redraws that sub-tab's
 // chart from the cached payload — no refetch, no page reload.
-const setActiveCensusSubtab = (indicatorKey) => {
-  const indicator = censusIndicatorByKey(indicatorKey);
-  bcChartActiveIndicator = indicator.key;
+const setActiveCensusSubtab = (subtabKey) => {
+  const subtab = censusSubtabByKey(subtabKey);
+  bcChartActiveSubtab = subtab.key;
 
   document.querySelectorAll("#censusChartTabs .census-chart-subtab").forEach((btn) => {
-    const isActive = btn.dataset.censusIndicator === indicator.key;
+    const isActive = btn.dataset.censusSubtab === subtab.key;
     btn.classList.toggle("census-chart-subtab--active", isActive);
     btn.setAttribute("aria-selected", isActive ? "true" : "false");
   });
@@ -1313,12 +1341,12 @@ const setActiveCensusSubtab = (indicatorKey) => {
     .forEach((panel) => {
       panel.classList.toggle(
         "census-chart-subpanel--active",
-        panel.dataset.indicator === indicator.key
+        panel.dataset.subtab === subtab.key
       );
     });
 
   // The panel is now visible, so the canvas has real dimensions to draw into.
-  renderActiveIndicatorChart();
+  renderActiveSubtabChart();
 };
 
 const initCensusChartSubtabs = () => {
@@ -1328,8 +1356,8 @@ const initCensusChartSubtabs = () => {
   if (!tabs) return;
   tabs.addEventListener("click", (event) => {
     const btn = event.target.closest(".census-chart-subtab");
-    if (!btn || !btn.dataset.censusIndicator) return;
-    setActiveCensusSubtab(btn.dataset.censusIndicator);
+    if (!btn || !btn.dataset.censusSubtab) return;
+    setActiveCensusSubtab(btn.dataset.censusSubtab);
   });
 };
 

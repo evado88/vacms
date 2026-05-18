@@ -40,7 +40,7 @@
           <div class="national-operational-view-shell">
             <div class="nov-filters-row mb-3" data-component="filters">
               <div class="nov-filter-current-census form-check">
-                <input class="form-check-input" type="checkbox" id="novCurrentCensus" checked>
+                <input class="form-check-input" type="checkbox" id="novCurrentCensus">
                 <label class="form-check-label" for="novCurrentCensus">Current Census</label>
               </div>
               <div class="nov-filter-select-wrap">
@@ -103,7 +103,7 @@
           <div class="national-operational-view-shell">
             <div class="baseline-table-filters-row mb-3" data-component="table-filters">
               <div class="baseline-table-current-census form-check">
-                <input class="form-check-input" type="checkbox" id="tableCurrentCensus" checked>
+                <input class="form-check-input" type="checkbox" id="tableCurrentCensus">
                 <label class="form-check-label" for="tableCurrentCensus">Current Census</label>
               </div>
               <div class="baseline-table-filter-select-wrap">
@@ -158,7 +158,7 @@
           <div class="national-operational-view-shell">
             <div class="baseline-chart-filters-row mb-3" data-component="chart-filters">
               <div class="baseline-table-current-census form-check">
-                <input class="form-check-input" type="checkbox" id="chartCurrentCensus" checked>
+                <input class="form-check-input" type="checkbox" id="chartCurrentCensus">
                 <label class="form-check-label" for="chartCurrentCensus">Current Census</label>
               </div>
               <div class="baseline-table-filter-select-wrap">
@@ -210,48 +210,30 @@
               </span>
             </div>
             <div class="census-chart-subtabs" id="censusChartTabs" role="tablist" aria-label="Census chart indicators">
-              <button type="button" class="census-chart-subtab census-chart-subtab--active" data-census-indicator="population" role="tab" aria-selected="true">Population</button>
-              <button type="button" class="census-chart-subtab" data-census-indicator="household" role="tab" aria-selected="false">Households</button>
-              <button type="button" class="census-chart-subtab" data-census-indicator="death" role="tab" aria-selected="false">Deaths</button>
-              <button type="button" class="census-chart-subtab" data-census-indicator="pregnancy" role="tab" aria-selected="false">Pregnancies</button>
-              <button type="button" class="census-chart-subtab" data-census-indicator="pregnancy_outcome" role="tab" aria-selected="false">Pregnancy Outcomes</button>
+              <button type="button" class="census-chart-subtab census-chart-subtab--active" data-census-subtab="population" role="tab" aria-selected="true">Population</button>
+              <button type="button" class="census-chart-subtab" data-census-subtab="household" role="tab" aria-selected="false">Households</button>
+              <button type="button" class="census-chart-subtab" data-census-subtab="vital_events" role="tab" aria-selected="false">Vital Events</button>
             </div>
             <div class="census-chart-subpanels" id="censusChartSubpanels">
-              <div class="census-chart-subpanel census-chart-subpanel--active" data-indicator="population" role="tabpanel">
+              <div class="census-chart-subpanel census-chart-subpanel--active" data-subtab="population" role="tabpanel">
                 <div class="baseline-chart-wrap">
                   <div class="baseline-chart-canvas-box">
                     <canvas id="censusPopulationChart"></canvas>
                   </div>
                 </div>
               </div>
-              <div class="census-chart-subpanel" data-indicator="household" role="tabpanel">
+              <div class="census-chart-subpanel" data-subtab="household" role="tabpanel">
                 <div class="baseline-chart-wrap">
                   <div class="baseline-chart-canvas-box">
                     <canvas id="censusHouseholdsChart"></canvas>
                   </div>
                 </div>
               </div>
-              <div class="census-chart-subpanel" data-indicator="death" role="tabpanel">
-                <p class="census-chart-note">No enumeration target available — showing enumerated counts only.</p>
+              <div class="census-chart-subpanel" data-subtab="vital_events" role="tabpanel">
+                <p class="census-chart-note">Deaths, pregnancies and pregnancy outcomes have no enumeration target — showing enumerated counts only.</p>
                 <div class="baseline-chart-wrap">
                   <div class="baseline-chart-canvas-box">
-                    <canvas id="censusDeathsChart"></canvas>
-                  </div>
-                </div>
-              </div>
-              <div class="census-chart-subpanel" data-indicator="pregnancy" role="tabpanel">
-                <p class="census-chart-note">No enumeration target available — showing enumerated counts only.</p>
-                <div class="baseline-chart-wrap">
-                  <div class="baseline-chart-canvas-box">
-                    <canvas id="censusPregnanciesChart"></canvas>
-                  </div>
-                </div>
-              </div>
-              <div class="census-chart-subpanel" data-indicator="pregnancy_outcome" role="tabpanel">
-                <p class="census-chart-note">No enumeration target available — showing enumerated counts only.</p>
-                <div class="baseline-chart-wrap">
-                  <div class="baseline-chart-canvas-box">
-                    <canvas id="censusPregnancyOutcomesChart"></canvas>
+                    <canvas id="censusVitalEventsChart"></canvas>
                   </div>
                 </div>
               </div>

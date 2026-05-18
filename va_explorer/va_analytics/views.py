@@ -1378,11 +1378,10 @@ baseline_census_dashboard_view = BaselineCensusDashboardView.as_view()
 class BaselineCensusOverviewFilterDataView(NationalOperationalFilterData):
     """Baseline-census overview filter data.
 
-    When the "Current Baseline Census" filter is on, the overview KPI cards are
-    gated by the province configuration (admin panel -> Baseline Census Config)
-    so the overview agrees with the Census Table and Census Chart tabs.
-    Otherwise this delegates to the shared national-operational endpoint
-    unchanged, keeping the home dashboard's cached fast path intact.
+    When the "Current Census" filter is on, the overview KPI cards are gated by
+    the current-census province configuration on top of the always-on activated
+    province filter, so the overview agrees with the Census Table and Census
+    Chart tabs.
     """
 
     def get(self, request, *args, **kwargs):
@@ -1390,7 +1389,7 @@ class BaselineCensusOverviewFilterDataView(NationalOperationalFilterData):
             get_national_operational_view_data,
         )
         from va_explorer.va_data_management.utils.baseline_census import (
-            get_excluded_census_provinces,
+            get_dashboard_excluded_census_provinces,
         )
 
         kpis_only = str(request.GET.get("kpis_only", "")).strip() in {
@@ -1398,8 +1397,12 @@ class BaselineCensusOverviewFilterDataView(NationalOperationalFilterData):
             "true",
             "True",
         }
-        bc_current = request.GET.get("bc_current") not in ("0", "false", "False")
-        if not (kpis_only and bc_current):
+        bc_current = str(request.GET.get("bc_current", "")).strip() in (
+            "1",
+            "true",
+            "True",
+        )
+        if not kpis_only:
             return super().get(request, *args, **kwargs)
 
         preset, start_dt, end_dt, _has_custom = parse_filter_range(request)
@@ -1411,7 +1414,9 @@ class BaselineCensusOverviewFilterDataView(NationalOperationalFilterData):
             location_level=location_level,
             location_value=location_value,
             include_chart_series=False,
-            census_province_exclude=get_excluded_census_provinces(),
+            census_province_exclude=get_dashboard_excluded_census_provinces(
+                include_current=bc_current
+            ),
         )
         return JsonResponse({"kpis": data.get("kpis", {})})
 
@@ -1506,7 +1511,7 @@ class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
             SRSEAPopulationTarget,
         )
         from va_explorer.va_data_management.utils.baseline_census import (
-            get_excluded_census_provinces,
+            get_dashboard_excluded_census_provinces,
         )
 
         context = super().get_context_data(**kwargs)
@@ -1528,10 +1533,14 @@ class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
         location_level = req.GET.get("location_level", "").strip().lower()
         location_value = req.GET.get("location_value", "").strip()
 
-        # "Current Baseline Census" checkbox — absent means on. When on, the
-        # data is restricted to the provinces configured as part of the current
-        # baseline census (admin panel -> Baseline Census Config).
-        bc_current = req.GET.get("bc_current") not in ("0", "false", "False")
+        # The dashboard always filters to activated provinces. The "Current
+        # Census" checkbox narrows further to the provinces marked current in
+        # the admin panel config.
+        bc_current = str(req.GET.get("bc_current", "")).strip() in (
+            "1",
+            "true",
+            "True",
+        )
 
         # Resolve the date window. Only an explicit preset or custom range adds
         # a time bound; the checkbox no longer applies a rolling window.
@@ -1623,10 +1632,11 @@ class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
 
         # --- Base rows: every EA in the target table (all 10 provinces) ---
         targets = SRSEAPopulationTarget.objects.all()
-        if bc_current:
-            excluded_provinces = get_excluded_census_provinces()
-            if excluded_provinces:
-                targets = targets.exclude(province_name__in=excluded_provinces)
+        excluded_provinces = get_dashboard_excluded_census_provinces(
+            include_current=bc_current
+        )
+        if excluded_provinces:
+            targets = targets.exclude(province_name__in=excluded_provinces)
         lookup = self._LOCATION_FIELD_MAP.get(location_level)
         if location_value and lookup:
             targets = targets.filter(**{f"{lookup}__icontains": location_value})
@@ -2094,7 +2104,7 @@ class BaselineCensusChartDataView(CustomAuthMixin, PermissionRequiredMixin, View
 
     def _build_response(self, request):
         from va_explorer.va_data_management.utils.baseline_census import (
-            get_excluded_census_provinces,
+            get_dashboard_excluded_census_provinces,
         )
 
         # Optional indicator filter — validate but do not narrow the payload,
@@ -2118,10 +2128,14 @@ class BaselineCensusChartDataView(CustomAuthMixin, PermissionRequiredMixin, View
         location_value = request.GET.get("location_value", "").strip()
 
         # Date/province resolution mirrors the Census Table tab so the two tabs
-        # always agree. Only an explicit preset/custom range adds a time bound;
-        # the "Current Baseline Census" checkbox restricts to the provinces
-        # configured as part of the current baseline census.
-        bc_current = request.GET.get("bc_current") not in ("0", "false", "False")
+        # always agree. Only an explicit preset/custom range adds a time bound.
+        # The dashboard always filters to activated provinces, and the "Current
+        # Census" checkbox narrows further to provinces marked current.
+        bc_current = str(request.GET.get("bc_current", "")).strip() in (
+            "1",
+            "true",
+            "True",
+        )
         preset, start_dt, end_dt, has_custom = parse_filter_range(request)
         explicit_time = has_custom or preset in {"30", "7", "24"}
         if not explicit_time:
@@ -2131,7 +2145,9 @@ class BaselineCensusChartDataView(CustomAuthMixin, PermissionRequiredMixin, View
             start_dt, end_dt
         )
 
-        excluded_provinces = get_excluded_census_provinces() if bc_current else []
+        excluded_provinces = get_dashboard_excluded_census_provinces(
+            include_current=bc_current
+        )
         results, child_level = aggregate_census_by_level(
             level,
             parent_filters,

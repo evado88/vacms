@@ -19,8 +19,11 @@ from va_explorer.va_data_management.models import (
     SRSEAPopulationTarget,
 )
 from va_explorer.va_data_management.utils.baseline_census import (
+    get_active_census_provinces,
     get_baseline_census_province_config,
+    get_current_census_provinces,
     get_excluded_census_provinces,
+    get_inactive_census_provinces,
     save_baseline_census_province_config,
 )
 
@@ -347,13 +350,27 @@ class TestBaselineCensusTableData:
         client = Client()
         client.force_login(user=_dashboard_user())
 
-        # bc_current on by default -> COPPERBELT is dropped from the table.
+        # bc_current off by default -> both activated provinces are shown.
+        all_rows = _all_table_rows(client)
+        assert set(all_rows) == {GEOID_A, GEOID_B}
+
+        # bc_current on -> COPPERBELT is dropped from the table.
+        current_rows = _all_table_rows(client, bc_current="1")
+        assert set(current_rows) == {GEOID_A}
+
+    def test_inactive_province_is_always_excluded(self):
+        _build_baseline_census_fixture()
+        BaselineCensusProvince.objects.create(
+            province_name="COPPERBELT", is_current=True, is_active=False
+        )
+        client = Client()
+        client.force_login(user=_dashboard_user())
+
         current_rows = _all_table_rows(client)
         assert set(current_rows) == {GEOID_A}
 
-        # bc_current off -> the province config is ignored, COPPERBELT returns.
         all_rows = _all_table_rows(client, bc_current="0")
-        assert set(all_rows) == {GEOID_A, GEOID_B}
+        assert set(all_rows) == {GEOID_A}
 
     def test_explicit_preset_applies_time_window(self):
         _build_baseline_census_fixture()
@@ -435,6 +452,7 @@ class TestBaselineCensusCheckboxRendering:
 
         # The overview tab now carries its own Current Baseline Census checkbox.
         assert 'id="novCurrentCensus"' in body
+        assert 'id="novCurrentCensus" checked' not in body
 
 
 # --- Ward-grouped pagination + ward/grand total summary rows -------------------
@@ -601,31 +619,29 @@ class TestBaselineCensusChartTab:
         assert 'data-tab="chart"' in body
         assert 'id="tab-chart"' in body
 
-    def test_census_chart_tab_renders_five_indicator_subtabs(self):
+    def test_census_chart_tab_renders_three_indicator_subtabs(self):
         response = _client().get(reverse("va_analytics:baseline-census-dashboard"))
         body = response.content.decode()
 
         assert 'id="censusChartTabs"' in body
+        # Deaths, pregnancies and pregnancy outcomes are merged into one
+        # "Vital Events" sub-tab and chart.
         for canvas_id in (
             "censusPopulationChart",
             "censusHouseholdsChart",
+            "censusVitalEventsChart",
+        ):
+            assert f'id="{canvas_id}"' in body
+        for stale_canvas_id in (
             "censusDeathsChart",
             "censusPregnanciesChart",
             "censusPregnancyOutcomesChart",
         ):
-            assert f'id="{canvas_id}"' in body
-        for label in (
-            "Population",
-            "Households",
-            "Deaths",
-            "Pregnancies",
-            "Pregnancy Outcomes",
-        ):
-            assert label in body
+            assert f'id="{stale_canvas_id}"' not in body
+        assert 'data-census-subtab="vital_events"' in body
+        assert "Vital Events" in body
         # Population is the default active sub-tab.
-        assert (
-            'data-census-indicator="population" role="tab" aria-selected="true"' in body
-        )
+        assert 'data-census-subtab="population" role="tab" aria-selected="true"' in body
 
     def test_chart_tab_query_param_marks_active(self):
         response = _client().get(
@@ -783,16 +799,29 @@ class TestBaselineCensusChartData:
         )
         client = _client()
 
-        # bc_current on by default -> only CENTRAL is charted.
-        payload = _chart_payload(client)
-        assert {row["value"] for row in payload["results"]} == {"CENTRAL"}
-
-        # bc_current off -> the province config is ignored, COPPERBELT returns.
-        payload_all = _chart_payload(client, bc_current="0")
+        # bc_current off by default -> both activated provinces are charted.
+        payload_all = _chart_payload(client)
         assert {row["value"] for row in payload_all["results"]} == {
             "CENTRAL",
             "COPPERBELT",
         }
+
+        # bc_current on -> only CENTRAL is charted.
+        payload = _chart_payload(client, bc_current="1")
+        assert {row["value"] for row in payload["results"]} == {"CENTRAL"}
+
+    def test_inactive_province_is_always_excluded(self):
+        _build_baseline_census_fixture()
+        BaselineCensusProvince.objects.create(
+            province_name="COPPERBELT", is_current=True, is_active=False
+        )
+        client = _client()
+
+        payload = _chart_payload(client)
+        assert {row["value"] for row in payload["results"]} == {"CENTRAL"}
+
+        payload_all = _chart_payload(client, bc_current="0")
+        assert {row["value"] for row in payload_all["results"]} == {"CENTRAL"}
 
     def test_explicit_preset_applies_time_window(self):
         _build_baseline_census_fixture()
@@ -874,32 +903,51 @@ class TestBaselineCensusProvinceConfigHelpers:
         config = get_baseline_census_province_config()
 
         assert config == [
-            {"province_name": "CENTRAL", "is_current": True},
-            {"province_name": "COPPERBELT", "is_current": True},
+            {"province_name": "CENTRAL", "is_current": True, "is_active": True},
+            {"province_name": "COPPERBELT", "is_current": True, "is_active": True},
         ]
+        assert get_current_census_provinces() == []
+        assert get_active_census_provinces() == []
         assert get_excluded_census_provinces() == []
+        assert get_inactive_census_provinces() == []
 
-    def test_save_marks_unchecked_provinces_excluded(self):
+    def test_save_marks_unchecked_current_provinces_excluded(self):
         _seed_two_province_targets()
 
         # Only CENTRAL stays checked.
-        save_baseline_census_province_config(["CENTRAL"])
+        save_baseline_census_province_config(["CENTRAL"], ["CENTRAL", "COPPERBELT"])
 
         assert get_excluded_census_provinces() == ["COPPERBELT"]
+        assert get_inactive_census_provinces() == []
         config = {
-            row["province_name"]: row["is_current"]
+            row["province_name"]: (row["is_current"], row["is_active"])
             for row in get_baseline_census_province_config()
         }
-        assert config == {"CENTRAL": True, "COPPERBELT": False}
+        assert config == {"CENTRAL": (True, True), "COPPERBELT": (False, True)}
+
+    def test_save_marks_unchecked_active_provinces_inactive(self):
+        _seed_two_province_targets()
+        save_baseline_census_province_config(["CENTRAL", "COPPERBELT"], ["CENTRAL"])
+
+        assert get_excluded_census_provinces() == []
+        assert get_inactive_census_provinces() == ["COPPERBELT"]
+        config = {
+            row["province_name"]: (row["is_current"], row["is_active"])
+            for row in get_baseline_census_province_config()
+        }
+        assert config == {"CENTRAL": (True, True), "COPPERBELT": (True, False)}
 
     def test_save_is_idempotent_and_can_re_include(self):
         _seed_two_province_targets()
-        save_baseline_census_province_config(["CENTRAL"])
+        save_baseline_census_province_config(["CENTRAL"], ["CENTRAL"])
 
-        # Re-checking COPPERBELT flips it back to current.
-        save_baseline_census_province_config(["CENTRAL", "COPPERBELT"])
+        # Re-checking COPPERBELT flips it back to current and active.
+        save_baseline_census_province_config(
+            ["CENTRAL", "COPPERBELT"], ["CENTRAL", "COPPERBELT"]
+        )
 
         assert get_excluded_census_provinces() == []
+        assert get_inactive_census_provinces() == []
         assert BaselineCensusProvince.objects.count() == 2
 
 
@@ -913,19 +961,42 @@ class TestBaselineCensusConfigAdminPanel:
         assert response.status_code == 200
         assert "Baseline Census Config" in body
         assert 'id="baselineCensusConfigSection"' in body
+        assert "Current Baseline Census" in body
+        assert "Activated Provinces" in body
         assert 'value="CENTRAL"' in body
         assert 'value="COPPERBELT"' in body
+        assert 'name="current_provinces"' in body
+        assert 'name="active_provinces"' in body
 
     def test_save_endpoint_persists_unchecked_provinces(self):
         _seed_two_province_targets()
 
         response = _admin_client().post(
             reverse("va_admin:baseline-census-config"),
-            {"provinces": ["CENTRAL"]},
+            {
+                "current_provinces": ["CENTRAL"],
+                "active_provinces": ["CENTRAL", "COPPERBELT"],
+            },
         )
 
         assert response.status_code == 302
         assert get_excluded_census_provinces() == ["COPPERBELT"]
+        assert get_inactive_census_provinces() == []
+
+    def test_save_endpoint_persists_inactive_provinces(self):
+        _seed_two_province_targets()
+
+        response = _admin_client().post(
+            reverse("va_admin:baseline-census-config"),
+            {
+                "current_provinces": ["CENTRAL", "COPPERBELT"],
+                "active_provinces": ["CENTRAL"],
+            },
+        )
+
+        assert response.status_code == 302
+        assert get_excluded_census_provinces() == []
+        assert get_inactive_census_provinces() == ["COPPERBELT"]
 
     def test_save_endpoint_rejects_non_superuser(self):
         _seed_two_province_targets()
@@ -934,7 +1005,10 @@ class TestBaselineCensusConfigAdminPanel:
 
         response = client.post(
             reverse("va_admin:baseline-census-config"),
-            {"provinces": ["CENTRAL"]},
+            {
+                "current_provinces": ["CENTRAL"],
+                "active_provinces": ["CENTRAL", "COPPERBELT"],
+            },
         )
 
         assert response.status_code == 403
@@ -959,10 +1033,32 @@ class TestBaselineCensusOverviewKpiGating:
         client = _client()
         url = reverse("va_analytics:baseline-census-overview-filter-data")
 
+        # bc_current off by default -> both activated provinces are counted.
+        off_payload = client.get(url, {"kpis_only": "1"}).json()
+        assert off_payload["kpis"]["households"]["total"] == 2
+
         # bc_current on -> the COPPERBELT household is excluded.
         on_payload = client.get(url, {"kpis_only": "1", "bc_current": "1"}).json()
         assert on_payload["kpis"]["households"]["total"] == 1
 
-        # bc_current off -> the province config is ignored, both are counted.
+    def test_overview_kpis_always_exclude_inactive_provinces(self):
+        _seed_two_province_targets()
+        recent = _iso(timezone.now() - timedelta(days=2))
+        Household.objects.create(
+            key="hh-central", province="CENTRAL", submissiondate=recent
+        )
+        Household.objects.create(
+            key="hh-copperbelt", province="COPPERBELT", submissiondate=recent
+        )
+        BaselineCensusProvince.objects.create(
+            province_name="COPPERBELT", is_current=True, is_active=False
+        )
+
+        client = _client()
+        url = reverse("va_analytics:baseline-census-overview-filter-data")
+
+        on_payload = client.get(url, {"kpis_only": "1", "bc_current": "1"}).json()
+        assert on_payload["kpis"]["households"]["total"] == 1
+
         off_payload = client.get(url, {"kpis_only": "1", "bc_current": "0"}).json()
-        assert off_payload["kpis"]["households"]["total"] == 2
+        assert off_payload["kpis"]["households"]["total"] == 1
