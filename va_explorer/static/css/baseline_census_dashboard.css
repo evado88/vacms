@@ -364,7 +364,8 @@
   border-radius: 0.2rem;
 }
 
-#baseline-table-view .baseline-table-time-filters {
+#baseline-table-view .baseline-table-time-filters,
+#baseline-chart-view .baseline-table-time-filters {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -376,7 +377,8 @@
   overflow: hidden;
 }
 
-#baseline-table-view .baseline-table-time-filters .form-check {
+#baseline-table-view .baseline-table-time-filters .form-check,
+#baseline-chart-view .baseline-table-time-filters .form-check {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -384,13 +386,15 @@
   min-width: 0;
 }
 
-#baseline-table-view .baseline-table-time-filters .form-check-label {
+#baseline-table-view .baseline-table-time-filters .form-check-label,
+#baseline-chart-view .baseline-table-time-filters .form-check-label {
   white-space: nowrap;
   font-size: 0.8rem;
   color: #3a4a5e;
 }
 
-#baseline-table-view .baseline-table-date-filter {
+#baseline-table-view .baseline-table-date-filter,
+#baseline-chart-view .baseline-table-date-filter {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -398,12 +402,14 @@
   min-width: 0;
 }
 
-#baseline-table-view .baseline-table-date-filter label {
+#baseline-table-view .baseline-table-date-filter label,
+#baseline-chart-view .baseline-table-date-filter label {
   font-size: 0.86rem;
   white-space: nowrap;
 }
 
-#baseline-table-view .baseline-table-filter-input {
+#baseline-table-view .baseline-table-filter-input,
+#baseline-chart-view .baseline-table-filter-input {
   width: 100%;
   min-width: 0;
   flex: 1 1 0;

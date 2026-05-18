@@ -13,6 +13,21 @@ from va_explorer.va_data_management.models import (
 )
 
 
+def _distinct_province_names():
+    """Distinct, sorted province names from the EA target table.
+
+    ``.order_by("province_name")`` is required: ``SRSEAPopulationTarget`` has a
+    default ``geoid`` ordering, and without overriding it Django adds ``geoid``
+    to the ``SELECT DISTINCT`` and the de-duplication silently breaks.
+    """
+    return list(
+        SRSEAPopulationTarget.objects.exclude(province_name="")
+        .order_by("province_name")
+        .values_list("province_name", flat=True)
+        .distinct()
+    )
+
+
 def get_excluded_census_provinces():
     """Province names explicitly excluded from the current baseline census.
 
@@ -32,15 +47,10 @@ def get_baseline_census_province_config():
     Returns a list of ``{"province_name", "is_current"}`` dicts ordered by
     name. A province with no explicit config row defaults to included.
     """
-    provinces = (
-        SRSEAPopulationTarget.objects.exclude(province_name="")
-        .values_list("province_name", flat=True)
-        .distinct()
-    )
     excluded = set(get_excluded_census_provinces())
     return [
         {"province_name": name, "is_current": name not in excluded}
-        for name in sorted(provinces)
+        for name in _distinct_province_names()
     ]
 
 
@@ -52,12 +62,7 @@ def save_baseline_census_province_config(checked_province_names):
     table is upserted so the configuration is always complete.
     """
     checked = {str(name).strip() for name in checked_province_names}
-    all_provinces = (
-        SRSEAPopulationTarget.objects.exclude(province_name="")
-        .values_list("province_name", flat=True)
-        .distinct()
-    )
-    for name in all_provinces:
+    for name in _distinct_province_names():
         BaselineCensusProvince.objects.update_or_create(
             province_name=name,
             defaults={"is_current": name in checked},

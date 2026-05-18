@@ -790,8 +790,16 @@ def _admin_client():
 
 
 def _seed_two_province_targets():
+    # Two CENTRAL EAs (distinct geoids) plus one COPPERBELT EA — a province
+    # must collapse to a single config entry regardless of EA count.
     SRSEAPopulationTarget.objects.create(
         geoid=GEOID_A,
+        province_name="CENTRAL",
+        household_target=1,
+        population_target=1,
+    )
+    SRSEAPopulationTarget.objects.create(
+        geoid="01021011099",
         province_name="CENTRAL",
         household_target=1,
         population_target=1,
