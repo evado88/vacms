@@ -38,6 +38,7 @@ from va_explorer.va_analytics.views import (
     PregnancyOutcomesTrendAPIView,
     PregnancySummaryAPIView,
     PregnancyTrendAPIView,
+    baseline_census_chart_data_view,
     baseline_census_dashboard_view,
     baseline_census_overview_filter_data_view,
     baseline_census_overview_kpis_component_view,
@@ -78,6 +79,11 @@ urlpatterns = [
         "baseline-census/components/overview/province-table/",
         view=baseline_census_province_table_component_view,
         name="baseline-census-province-table-component",
+    ),
+    path(
+        "baseline-census/components/chart/census-chart-data/",
+        view=baseline_census_chart_data_view,
+        name="baseline-census-chart-data",
     ),
     path(
         "pregnancy-dashboard/",

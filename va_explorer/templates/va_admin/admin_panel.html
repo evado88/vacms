@@ -173,6 +173,45 @@
         </section>
       </div>
     </div>
+
+    <section class="card mb-4" id="baselineCensusConfigSection">
+      <div class="card-header">
+        <strong>Baseline Census Config</strong>
+      </div>
+      <div class="card-body">
+        <p class="small text-muted">
+          Check the provinces that are part of the <strong>current baseline census</strong>.
+          Unchecked provinces are excluded when the &ldquo;Current Baseline Census&rdquo;
+          filter is on in the Baseline Census Dashboard (table, charts and KPI cards).
+        </p>
+        <form method="post" action="{% url 'va_admin:baseline-census-config' %}" id="baselineCensusConfigForm">
+          {% csrf_token %}
+          <div class="row">
+            {% for province in baseline_census_provinces %}
+            <div class="col-lg-3 col-md-4 col-sm-6 mb-2">
+              <div class="custom-control custom-checkbox">
+                <input type="checkbox" class="custom-control-input" id="bccProvince{{ forloop.counter }}"
+                       name="provinces" value="{{ province.province_name }}"
+                       {% if province.is_current %}checked{% endif %}>
+                <label class="custom-control-label" for="bccProvince{{ forloop.counter }}">
+                  {{ province.province_name }}
+                </label>
+              </div>
+            </div>
+            {% empty %}
+            <div class="col-12">
+              <p class="small text-muted mb-0">
+                No provinces found. Load SRS EA population targets first.
+              </p>
+            </div>
+            {% endfor %}
+          </div>
+          {% if baseline_census_provinces %}
+          <button type="submit" class="btn btn-sm btn-primary mt-2">Save Baseline Census Config</button>
+          {% endif %}
+        </form>
+      </div>
+    </section>
   </div>
 </div>
 

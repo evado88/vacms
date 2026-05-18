@@ -26,6 +26,11 @@
           Census Table
         </a>
       </li>
+      <li class="nav-item" role="presentation">
+        <a class="nav-link {% if baseline_active_tab == 'chart' %}active{% endif %}" id="tab-chart-tab" data-tab="chart" href="?tab=chart" role="tab" aria-controls="tab-chart" aria-selected="{% if baseline_active_tab == 'chart' %}true{% else %}false{% endif %}">
+          Census Chart
+        </a>
+      </li>
     </ul>
 
     <!-- Tab panes -->
@@ -34,6 +39,10 @@
         <div id="national-operational-view" data-component="overview-dashboard" data-filter-url="{% url 'va_analytics:baseline-census-overview-filter-data' %}">
           <div class="national-operational-view-shell">
             <div class="nov-filters-row mb-3" data-component="filters">
+              <div class="nov-filter-current-census form-check">
+                <input class="form-check-input" type="checkbox" id="novCurrentCensus" checked>
+                <label class="form-check-label" for="novCurrentCensus">Current Baseline Census</label>
+              </div>
               <div class="nov-filter-select-wrap">
                 <select id="novLocationLevel" class="form-control form-control-sm form-select nov-filter-select" aria-label="Location level">
                   <option value="national" selected>National</option>
@@ -140,6 +149,75 @@
             </div>
             <div id="baselineProvinceTableSlot" data-component-slot data-component="province-table" data-scope="table" data-endpoint="{% url 'va_analytics:baseline-census-province-table-component' %}" data-cache="off">
               <div class="home-panel home-panel-placeholder">Loading census table...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="tab-pane dashboard-tab-panel fade {% if baseline_active_tab == 'chart' %}show active{% endif %}" id="tab-chart" data-tab-panel="chart" role="tabpanel" aria-labelledby="tab-chart-tab">
+        <div id="baseline-chart-view" data-endpoint="{% url 'va_analytics:baseline-census-chart-data' %}">
+          <div class="national-operational-view-shell">
+            <div class="baseline-chart-filters-row mb-3" data-component="chart-filters">
+              <div class="baseline-table-current-census form-check">
+                <input class="form-check-input" type="checkbox" id="chartCurrentCensus" checked>
+                <label class="form-check-label" for="chartCurrentCensus">Current Baseline Census</label>
+              </div>
+              <div class="baseline-table-filter-select-wrap">
+                <select id="chartLocationLevel" class="form-control form-control-sm form-select baseline-table-filter-select" aria-label="Chart location level">
+                  <option value="national" selected>National</option>
+                  <option value="province">Province</option>
+                  <option value="district">District</option>
+                  <option value="constituency">Constituency</option>
+                  <option value="ward">Ward</option>
+                </select>
+              </div>
+              <div class="baseline-table-filter-select-wrap">
+                <select id="chartLocationValue" class="form-control form-control-sm form-select baseline-table-filter-select" aria-label="Chart location value" disabled>
+                  <option value="">All National</option>
+                </select>
+              </div>
+              <div class="baseline-table-time-filters" role="radiogroup" aria-label="Chart time filters">
+                <div class="form-check">
+                  <input class="form-check-input" type="radio" name="chartGlobalTimeFilter" id="chartTimeAll" checked>
+                  <label class="form-check-label" for="chartTimeAll">All time</label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input" type="radio" name="chartGlobalTimeFilter" id="chartTime30">
+                  <label class="form-check-label" for="chartTime30">Last 30 days</label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input" type="radio" name="chartGlobalTimeFilter" id="chartTime7">
+                  <label class="form-check-label" for="chartTime7">Last 7 days</label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input" type="radio" name="chartGlobalTimeFilter" id="chartTime24">
+                  <label class="form-check-label" for="chartTime24">Last 24 hours</label>
+                </div>
+              </div>
+              <div class="baseline-table-date-filter">
+                <label for="chartStartDatetime" class="mb-0">Start:</label>
+                <input id="chartStartDatetime" type="date" class="form-control form-control-sm baseline-table-filter-input">
+              </div>
+              <div class="baseline-table-date-filter">
+                <label for="chartEndDatetime" class="mb-0">End:</label>
+                <input id="chartEndDatetime" type="date" class="form-control form-control-sm baseline-table-filter-input">
+              </div>
+            </div>
+            <div class="baseline-chart-breadcrumb-row mb-2">
+              <button type="button" id="baselineChartBack" class="btn btn-sm btn-outline-secondary baseline-chart-back" hidden>&larr; Back</button>
+              <nav class="baseline-chart-breadcrumb" id="baselineChartBreadcrumb" aria-label="Census chart drill-down breadcrumb"></nav>
+              <span class="baseline-chart-hint" id="baselineChartHint">
+                Tip: click a province bar to drill down into its districts.
+              </span>
+            </div>
+            <div class="baseline-chart-card">
+              <div class="baseline-chart-wrap">
+                <div class="baseline-chart-canvas-box">
+                  <canvas id="baselineCensusChart"></canvas>
+                </div>
+              </div>
+              <div class="baseline-chart-overlay" id="baselineChartLoading">Loading census chart&hellip;</div>
+              <div class="baseline-chart-overlay" id="baselineChartEmpty" hidden>No census data available for this selection.</div>
+              <div class="baseline-chart-overlay" id="baselineChartError" hidden>Unable to load the census chart. Please try again.</div>
             </div>
           </div>
         </div>

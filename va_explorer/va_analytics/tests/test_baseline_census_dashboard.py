@@ -7,8 +7,9 @@ from django.test import Client
 from django.urls import reverse
 from django.utils import timezone
 
-from va_explorer.tests.factories import GroupFactory, UserFactory
+from va_explorer.tests.factories import AdminFactory, GroupFactory, UserFactory
 from va_explorer.va_data_management.models import (
+    BaselineCensusProvince,
     Death,
     Household,
     HouseholdMember,
@@ -16,6 +17,11 @@ from va_explorer.va_data_management.models import (
     PregnancyOutcome,
     SRSClusterLocation,
     SRSEAPopulationTarget,
+)
+from va_explorer.va_data_management.utils.baseline_census import (
+    get_baseline_census_province_config,
+    get_excluded_census_provinces,
+    save_baseline_census_province_config,
 )
 
 pytestmark = pytest.mark.django_db
@@ -190,6 +196,7 @@ def _build_baseline_census_fixture():
         geoid=GEOID_A,
         province_name="CENTRAL",
         district_name="CHISAMBA",
+        constituency_name="CHISAMBA CENTRAL",
         ward_name="CHAMUKA",
         household_target=4,
         population_target=4,
@@ -202,6 +209,7 @@ def _build_baseline_census_fixture():
         geoid=GEOID_B,
         province_name="COPPERBELT",
         district_name="KITWE",
+        constituency_name="KITWE CENTRAL",
         ward_name="CHAMBISHI",
         household_target=0,
         population_target=50,
@@ -252,12 +260,37 @@ def _build_baseline_census_fixture():
     )
 
 
-def _table_rows(client, **params):
+def _client():
+    client = Client()
+    client.force_login(user=_dashboard_user())
+    return client
+
+
+def _table_response(client, **params):
     response = client.get(
         reverse("va_analytics:baseline-census-province-table-component"), params
     )
     assert response.status_code == 200
+    return response
+
+
+def _table_rows(client, **params):
+    """EA rows on the active ward page only, keyed by geoid."""
+    response = _table_response(client, **params)
     return {row["ea"]: row for row in response.context["bc_stats"]}
+
+
+def _all_table_rows(client, **params):
+    """Merge EA rows across every ward page into one dict keyed by geoid."""
+    merged = {}
+    page = 1
+    while True:
+        response = _table_response(client, **{**params, "bc_page": page})
+        merged.update({row["ea"]: row for row in response.context["bc_stats"]})
+        if not response.context["bc_has_next"]:
+            break
+        page += 1
+    return merged
 
 
 class TestBaselineCensusTableData:
@@ -266,7 +299,7 @@ class TestBaselineCensusTableData:
         client = Client()
         client.force_login(user=_dashboard_user())
 
-        rows = _table_rows(client)
+        rows = _all_table_rows(client)
 
         assert set(rows) == {GEOID_A, GEOID_B}
         row_a = rows[GEOID_A]
@@ -281,47 +314,53 @@ class TestBaselineCensusTableData:
         client = Client()
         client.force_login(user=_dashboard_user())
 
-        row_b = _table_rows(client)[GEOID_B]
+        row_b = _all_table_rows(client)[GEOID_B]
 
         assert row_b["hh_enumerated"] == 0
         assert row_b["pop_enumerated"] == 0
         assert row_b["total_deaths"] == 0
         assert row_b["pop_estimate"] == 50
 
-    def test_current_census_window_aggregates_recent_records(self):
+    def test_default_aggregation_includes_every_record(self):
         _build_baseline_census_fixture()
         client = Client()
         client.force_login(user=_dashboard_user())
 
-        # bc_current defaults to on -> rolling 3-month window.
+        # No rolling window: the "Current Baseline Census" filter no longer
+        # bounds by date, so every record (recent and old) is aggregated.
         row_a = _table_rows(client)[GEOID_A]
-
-        assert row_a["hh_enumerated"] == 3  # the old household is excluded
-        assert row_a["pop_enumerated"] == 3
-        assert row_a["refusals"] == 1  # consent="No" only; the old "Refused" is out
-        assert row_a["non_contact"] == 1
-        assert row_a["total_pregnancies"] == 1
-        assert row_a["total_deaths"] == 1
-        assert row_a["total_preg_outcomes"] == 1
-
-    def test_unchecked_includes_all_records(self):
-        _build_baseline_census_fixture()
-        client = Client()
-        client.force_login(user=_dashboard_user())
-
-        row_a = _table_rows(client, bc_current="0")[GEOID_A]
 
         assert row_a["hh_enumerated"] == 4
         assert row_a["pop_enumerated"] == 4
         assert row_a["refusals"] == 2  # consent="No" + the old result="Refused"
+        assert row_a["non_contact"] == 1
         assert row_a["total_pregnancies"] == 2
+        assert row_a["total_deaths"] == 1
+        assert row_a["total_preg_outcomes"] == 1
 
-    def test_explicit_preset_overrides_checkbox(self):
+    def test_current_census_excludes_unconfigured_province(self):
+        _build_baseline_census_fixture()
+        # COPPERBELT (EA B) is configured out of the current baseline census.
+        BaselineCensusProvince.objects.create(
+            province_name="COPPERBELT", is_current=False
+        )
+        client = Client()
+        client.force_login(user=_dashboard_user())
+
+        # bc_current on by default -> COPPERBELT is dropped from the table.
+        current_rows = _all_table_rows(client)
+        assert set(current_rows) == {GEOID_A}
+
+        # bc_current off -> the province config is ignored, COPPERBELT returns.
+        all_rows = _all_table_rows(client, bc_current="0")
+        assert set(all_rows) == {GEOID_A, GEOID_B}
+
+    def test_explicit_preset_applies_time_window(self):
         _build_baseline_census_fixture()
         client = Client()
         client.force_login(user=_dashboard_user())
 
-        # Last 24h preset with the checkbox still on: records 5 days old drop out.
+        # An explicit last-24h preset bounds by date: records 5 days old drop out.
         row_a = _table_rows(client, preset="24", bc_current="1")[GEOID_A]
 
         assert row_a["hh_enumerated"] == 0
@@ -332,15 +371,15 @@ class TestBaselineCensusTableData:
         client = Client()
         client.force_login(user=_dashboard_user())
 
-        rows = _table_rows(client)
+        rows = _all_table_rows(client)
         row_a = rows[GEOID_A]
         row_b = rows[GEOID_B]
 
-        # EA A: 3 / 4 -> 75.0% -> "yellow" band.
-        assert row_a["hh_coverage"] == 75.0
-        assert row_a["hh_coverage_band"] == "yellow"
-        assert row_a["pop_coverage"] == 75.0
-        assert row_a["pop_coverage_band"] == "yellow"
+        # EA A: 4 / 4 -> 100.0% -> "light-green" band.
+        assert row_a["hh_coverage"] == 100.0
+        assert row_a["hh_coverage_band"] == "light-green"
+        assert row_a["pop_coverage"] == 100.0
+        assert row_a["pop_coverage_band"] == "light-green"
 
         # EA B: zero household target -> no division, coverage is None / "empty".
         assert row_b["hh_coverage"] is None
@@ -359,7 +398,7 @@ class TestBaselineCensusTableData:
         )
         body = response.content.decode()
 
-        assert "coverage-cell coverage-cell--yellow" in body
+        assert "coverage-cell coverage-cell--light-green" in body
 
     def test_location_filter_narrows_to_province(self):
         _build_baseline_census_fixture()
@@ -386,3 +425,481 @@ class TestBaselineCensusCheckboxRendering:
         assert body.index('id="tableCurrentCensus"') < body.index(
             'id="tableLocationLevel"'
         )
+
+    def test_overview_tab_renders_current_census_checkbox(self):
+        client = Client()
+        client.force_login(user=_dashboard_user())
+
+        response = client.get(reverse("va_analytics:baseline-census-dashboard"))
+        body = response.content.decode()
+
+        # The overview tab now carries its own Current Baseline Census checkbox.
+        assert 'id="novCurrentCensus"' in body
+
+
+# --- Ward-grouped pagination + ward/grand total summary rows -------------------
+
+WARD_ALPHA_EA_1 = "11000000001"
+WARD_ALPHA_EA_2 = "11000000002"
+WARD_BETA_EA = "22000000001"
+
+
+def _build_multi_ea_ward_fixture():
+    """Ward ALPHA holds two EAs, ward BETA holds one.
+
+    Recent household records give ALPHA 8 enumerated households (5 + 3) and
+    BETA 4, so the ward- and grand-total maths have distinct, checkable values.
+    """
+    recent = _iso(timezone.now() - timedelta(days=5))
+    specs = (
+        (WARD_ALPHA_EA_1, "PROV1", "DIST1", "ALPHA", 10, 20, 5),
+        (WARD_ALPHA_EA_2, "PROV1", "DIST1", "ALPHA", 10, 20, 3),
+        (WARD_BETA_EA, "PROV2", "DIST2", "BETA", 8, 16, 4),
+    )
+    for geoid, province, district, ward, hh_target, pop_target, enumerated in specs:
+        SRSEAPopulationTarget.objects.create(
+            geoid=geoid,
+            province_name=province,
+            district_name=district,
+            ward_name=ward,
+            household_target=hh_target,
+            population_target=pop_target,
+        )
+        cluster = SRSClusterLocation.add_root(
+            name=geoid, location_type="ea", code=geoid, status="Active"
+        )
+        for idx in range(enumerated):
+            Household.objects.create(
+                key=f"hh-{geoid}-{idx}",
+                cluster=cluster,
+                submissiondate=recent,
+                consent="Yes",
+                result_list="Completed",
+            )
+
+
+class TestBaselineCensusWardPagination:
+    def test_one_ward_per_page_keeps_eas_together(self):
+        _build_multi_ea_ward_fixture()
+        response = _table_response(_client())
+
+        # Two wards -> two pages; page 1 holds both ALPHA EAs, never split.
+        assert response.context["bc_total_pages"] == 2
+        page_one = response.context["bc_stats"]
+        assert {row["ward"] for row in page_one} == {"ALPHA"}
+        assert {row["ea"] for row in page_one} == {WARD_ALPHA_EA_1, WARD_ALPHA_EA_2}
+
+    def test_second_page_is_the_next_ward(self):
+        _build_multi_ea_ward_fixture()
+        response = _table_response(_client(), bc_page=2)
+
+        assert {row["ward"] for row in response.context["bc_stats"]} == {"BETA"}
+
+    def test_out_of_range_page_clamps_to_last_ward(self):
+        _build_multi_ea_ward_fixture()
+        response = _table_response(_client(), bc_page=99)
+
+        assert response.context["bc_page"] == 2
+        assert {row["ward"] for row in response.context["bc_stats"]} == {"BETA"}
+
+    def test_ward_pages_ordered_by_the_sorted_column(self):
+        _build_multi_ea_ward_fixture()
+        # Sorted by enumerated households ascending: BETA (4) outranks ALPHA (8),
+        # so it leads even though location order would place ALPHA first.
+        response = _table_response(_client(), bc_sort="hh_enumerated", bc_dir="asc")
+
+        assert {row["ward"] for row in response.context["bc_stats"]} == {"BETA"}
+
+    def test_filter_rebuilds_pagination_to_matching_wards(self):
+        _build_multi_ea_ward_fixture()
+        response = _table_response(
+            _client(), location_level="province", location_value="PROV2"
+        )
+
+        assert response.context["bc_total_pages"] == 1
+        assert {row["ward"] for row in response.context["bc_stats"]} == {"BETA"}
+
+
+class TestBaselineCensusSummaryRows:
+    def test_ward_total_sums_the_active_ward(self):
+        _build_multi_ea_ward_fixture()
+        ward_total = _table_response(_client()).context["bc_ward_total"]
+
+        # ALPHA: 5 + 3 enumerated against a 10 + 10 household target.
+        assert ward_total["hh_estimate"] == 20
+        assert ward_total["hh_enumerated"] == 8
+        assert ward_total["hh_coverage"] == 40.0
+        assert ward_total["hh_coverage_band"] == "red"
+
+    def test_ward_total_changes_with_the_active_page(self):
+        _build_multi_ea_ward_fixture()
+        ward_total = _table_response(_client(), bc_page=2).context["bc_ward_total"]
+
+        # BETA: 4 enumerated against an 8 household target -> 50%.
+        assert ward_total["hh_enumerated"] == 4
+        assert ward_total["hh_coverage"] == 50.0
+        assert ward_total["hh_coverage_band"] == "amber"
+
+    def test_grand_total_covers_every_filtered_ward(self):
+        _build_multi_ea_ward_fixture()
+        grand_total = _table_response(_client()).context["bc_grand_total"]
+
+        # 5 + 3 + 4 enumerated against a 10 + 10 + 8 household target -> recomputed
+        # coverage, not an average of the per-ward percentages.
+        assert grand_total["hh_estimate"] == 28
+        assert grand_total["hh_enumerated"] == 12
+        assert grand_total["hh_coverage"] == 42.9
+        assert grand_total["hh_coverage_band"] == "red"
+
+    def test_grand_total_is_independent_of_the_active_page(self):
+        _build_multi_ea_ward_fixture()
+        page_two = _table_response(_client(), bc_page=2)
+
+        assert page_two.context["bc_grand_total"]["hh_enumerated"] == 12
+
+    def test_summary_rows_render_in_html(self):
+        _build_multi_ea_ward_fixture()
+        body = _table_response(_client()).content.decode()
+
+        assert "bc-ward-total-row" in body
+        assert "Ward Total / Average" in body
+        assert "bc-grand-total-row" in body
+        assert "Grand Total / Average" in body
+
+    def test_summary_rows_absent_without_data(self):
+        response = _table_response(_client())
+
+        assert response.context["bc_ward_total"] is None
+        assert response.context["bc_grand_total"] is None
+        body = response.content.decode()
+        assert "bc-ward-total-row" not in body
+        assert "bc-grand-total-row" not in body
+
+
+# --- Census Chart tab: drill-down JSON endpoint -------------------------------
+
+CHART_URL = "va_analytics:baseline-census-chart-data"
+
+
+def _chart_payload(client, **params):
+    response = client.get(reverse(CHART_URL), params)
+    assert response.status_code == 200
+    assert response["Content-Type"].startswith("application/json")
+    return response.json()
+
+
+def _chart_row(payload, value):
+    """The single result row whose geography ``value`` matches."""
+    return next(row for row in payload["results"] if row["value"] == value)
+
+
+class TestBaselineCensusChartTab:
+    def test_dashboard_renders_census_chart_tab(self):
+        response = _client().get(reverse("va_analytics:baseline-census-dashboard"))
+        body = response.content.decode()
+
+        assert 'data-tab="chart"' in body
+        assert 'id="tab-chart"' in body
+        assert 'id="baselineCensusChart"' in body
+
+    def test_chart_tab_query_param_marks_active(self):
+        response = _client().get(
+            reverse("va_analytics:baseline-census-dashboard") + "?tab=chart"
+        )
+
+        assert response.context["baseline_active_tab"] == "chart"
+
+
+class TestBaselineCensusChartData:
+    def test_requires_view_dashboard_permission(self):
+        client = Client()
+        client.force_login(user=_unprivileged_user())
+
+        response = client.get(reverse(CHART_URL))
+
+        assert response.status_code in (302, 403)
+
+    def test_province_level_returned_by_default(self):
+        _build_baseline_census_fixture()
+
+        payload = _chart_payload(_client())
+
+        assert payload["level"] == "province"
+        assert payload["child_level"] == "district"
+        assert {row["value"] for row in payload["results"]} == {
+            "CENTRAL",
+            "COPPERBELT",
+        }
+
+    def test_population_and_household_coverage_rolled_up(self):
+        _build_baseline_census_fixture()
+
+        central = _chart_row(_chart_payload(_client()), "CENTRAL")
+
+        # EA A rolls up into CENTRAL: 4 enumerated against a target of 4 -> 100%.
+        assert central["population_estimate"] == 4
+        assert central["population_enumerated"] == 4
+        assert central["population_coverage"] == 100.0
+        assert central["household_estimate"] == 4
+        assert central["household_enumerated"] == 4
+        assert central["household_coverage"] == 100.0
+
+    def test_death_estimate_and_coverage_are_null(self):
+        _build_baseline_census_fixture()
+
+        central = _chart_row(_chart_payload(_client()), "CENTRAL")
+
+        # SRSEAPopulationTarget has no death target, so estimate/coverage are
+        # null while the enumerated death count is still reported.
+        assert central["death_estimate"] is None
+        assert central["death_coverage"] is None
+        assert central["death_enumerated"] == 1
+
+    def test_zero_target_keeps_coverage_null(self):
+        _build_baseline_census_fixture()
+
+        # EA B has a zero household target -> division-safe null coverage.
+        copperbelt = _chart_row(_chart_payload(_client()), "COPPERBELT")
+
+        assert copperbelt["household_estimate"] == 0
+        assert copperbelt["household_coverage"] is None
+        assert copperbelt["population_coverage"] == 0.0
+
+    def test_district_level_filters_to_parent_province(self):
+        _build_baseline_census_fixture()
+
+        payload = _chart_payload(_client(), level="district", province="CENTRAL")
+
+        assert payload["level"] == "district"
+        assert payload["child_level"] == "constituency"
+        assert {row["value"] for row in payload["results"]} == {"CHISAMBA"}
+        assert payload["results"][0]["has_children"] is True
+
+    def test_constituency_level_filters_to_parent_district(self):
+        _build_baseline_census_fixture()
+
+        payload = _chart_payload(
+            _client(),
+            level="constituency",
+            province="CENTRAL",
+            district="CHISAMBA",
+        )
+
+        assert payload["level"] == "constituency"
+        assert payload["child_level"] == "ward"
+        assert {row["value"] for row in payload["results"]} == {"CHISAMBA CENTRAL"}
+
+    def test_ward_level_filters_to_parent_constituency(self):
+        _build_baseline_census_fixture()
+
+        payload = _chart_payload(
+            _client(),
+            level="ward",
+            province="CENTRAL",
+            district="CHISAMBA",
+            constituency="CHISAMBA CENTRAL",
+        )
+
+        assert payload["level"] == "ward"
+        assert payload["child_level"] == "ea"
+        assert {row["value"] for row in payload["results"]} == {"CHAMUKA"}
+
+    def test_ea_level_is_the_final_level(self):
+        _build_baseline_census_fixture()
+
+        payload = _chart_payload(
+            _client(),
+            level="ea",
+            province="CENTRAL",
+            district="CHISAMBA",
+            ward="CHAMUKA",
+        )
+
+        assert payload["level"] == "ea"
+        assert payload["child_level"] is None
+        assert {row["value"] for row in payload["results"]} == {GEOID_A}
+        assert payload["results"][0]["has_children"] is False
+
+    def test_current_census_excludes_unconfigured_province(self):
+        _build_baseline_census_fixture()
+        # COPPERBELT is configured out of the current baseline census.
+        BaselineCensusProvince.objects.create(
+            province_name="COPPERBELT", is_current=False
+        )
+        client = _client()
+
+        # bc_current on by default -> only CENTRAL is charted.
+        payload = _chart_payload(client)
+        assert {row["value"] for row in payload["results"]} == {"CENTRAL"}
+
+        # bc_current off -> the province config is ignored, COPPERBELT returns.
+        payload_all = _chart_payload(client, bc_current="0")
+        assert {row["value"] for row in payload_all["results"]} == {
+            "CENTRAL",
+            "COPPERBELT",
+        }
+
+    def test_explicit_preset_applies_time_window(self):
+        _build_baseline_census_fixture()
+
+        # An explicit last-24h preset bounds by date: 5-day-old records drop out.
+        central = _chart_row(
+            _chart_payload(_client(), preset="24", bc_current="1"), "CENTRAL"
+        )
+
+        assert central["household_enumerated"] == 0
+        assert central["death_enumerated"] == 0
+
+    def test_location_filter_narrows_results(self):
+        _build_baseline_census_fixture()
+
+        payload = _chart_payload(
+            _client(), location_level="province", location_value="CENTRAL"
+        )
+
+        assert {row["value"] for row in payload["results"]} == {"CENTRAL"}
+
+    def test_non_matching_filter_returns_empty_results(self):
+        _build_baseline_census_fixture()
+
+        payload = _chart_payload(_client(), level="district", province="NOWHERE")
+
+        assert payload["results"] == []
+
+    def test_breadcrumbs_track_the_drill_path(self):
+        _build_baseline_census_fixture()
+
+        payload = _chart_payload(
+            _client(),
+            level="constituency",
+            province="CENTRAL",
+            district="CHISAMBA",
+        )
+
+        labels = [crumb["label"] for crumb in payload["breadcrumbs"]]
+        assert labels == ["All Provinces", "CENTRAL", "CHISAMBA"]
+
+
+# --- Baseline Census Config: per-province current-census flags ----------------
+
+
+def _admin_client():
+    client = Client()
+    client.force_login(user=AdminFactory.create())
+    return client
+
+
+def _seed_two_province_targets():
+    SRSEAPopulationTarget.objects.create(
+        geoid=GEOID_A,
+        province_name="CENTRAL",
+        household_target=1,
+        population_target=1,
+    )
+    SRSEAPopulationTarget.objects.create(
+        geoid=GEOID_B,
+        province_name="COPPERBELT",
+        household_target=1,
+        population_target=1,
+    )
+
+
+class TestBaselineCensusProvinceConfigHelpers:
+    def test_config_lists_every_province_defaulting_to_current(self):
+        _seed_two_province_targets()
+
+        config = get_baseline_census_province_config()
+
+        assert config == [
+            {"province_name": "CENTRAL", "is_current": True},
+            {"province_name": "COPPERBELT", "is_current": True},
+        ]
+        assert get_excluded_census_provinces() == []
+
+    def test_save_marks_unchecked_provinces_excluded(self):
+        _seed_two_province_targets()
+
+        # Only CENTRAL stays checked.
+        save_baseline_census_province_config(["CENTRAL"])
+
+        assert get_excluded_census_provinces() == ["COPPERBELT"]
+        config = {
+            row["province_name"]: row["is_current"]
+            for row in get_baseline_census_province_config()
+        }
+        assert config == {"CENTRAL": True, "COPPERBELT": False}
+
+    def test_save_is_idempotent_and_can_re_include(self):
+        _seed_two_province_targets()
+        save_baseline_census_province_config(["CENTRAL"])
+
+        # Re-checking COPPERBELT flips it back to current.
+        save_baseline_census_province_config(["CENTRAL", "COPPERBELT"])
+
+        assert get_excluded_census_provinces() == []
+        assert BaselineCensusProvince.objects.count() == 2
+
+
+class TestBaselineCensusConfigAdminPanel:
+    def test_admin_panel_renders_config_section(self):
+        _seed_two_province_targets()
+
+        response = _admin_client().get(reverse("va_admin:index"))
+        body = response.content.decode()
+
+        assert response.status_code == 200
+        assert "Baseline Census Config" in body
+        assert 'id="baselineCensusConfigSection"' in body
+        assert 'value="CENTRAL"' in body
+        assert 'value="COPPERBELT"' in body
+
+    def test_save_endpoint_persists_unchecked_provinces(self):
+        _seed_two_province_targets()
+
+        response = _admin_client().post(
+            reverse("va_admin:baseline-census-config"),
+            {"provinces": ["CENTRAL"]},
+        )
+
+        assert response.status_code == 302
+        assert get_excluded_census_provinces() == ["COPPERBELT"]
+
+    def test_save_endpoint_rejects_non_superuser(self):
+        _seed_two_province_targets()
+        client = Client()
+        client.force_login(user=_dashboard_user())
+
+        response = client.post(
+            reverse("va_admin:baseline-census-config"),
+            {"provinces": ["CENTRAL"]},
+        )
+
+        assert response.status_code == 403
+        # Nothing was persisted for the unauthorized request.
+        assert BaselineCensusProvince.objects.count() == 0
+
+
+class TestBaselineCensusOverviewKpiGating:
+    def test_overview_kpis_gated_by_current_census_provinces(self):
+        _seed_two_province_targets()
+        recent = _iso(timezone.now() - timedelta(days=2))
+        Household.objects.create(
+            key="hh-central", province="CENTRAL", submissiondate=recent
+        )
+        Household.objects.create(
+            key="hh-copperbelt", province="COPPERBELT", submissiondate=recent
+        )
+        BaselineCensusProvince.objects.create(
+            province_name="COPPERBELT", is_current=False
+        )
+
+        client = _client()
+        url = reverse("va_analytics:baseline-census-overview-filter-data")
+
+        # bc_current on -> the COPPERBELT household is excluded.
+        on_payload = client.get(url, {"kpis_only": "1", "bc_current": "1"}).json()
+        assert on_payload["kpis"]["households"]["total"] == 1
+
+        # bc_current off -> the province config is ignored, both are counted.
+        off_payload = client.get(url, {"kpis_only": "1", "bc_current": "0"}).json()
+        assert off_payload["kpis"]["households"]["total"] == 2

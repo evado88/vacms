@@ -20,11 +20,12 @@ from django.db.models import (
     When,
 )
 from django.db.models.functions import Cast, Lower, Substr, Trim
+from django.http import JsonResponse
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_date as django_parse_date
 from django.utils.dateparse import parse_datetime as django_parse_datetime
-from django.views.generic import ListView, RedirectView, TemplateView
+from django.views.generic import ListView, RedirectView, TemplateView, View
 from numpy import round
 from pandas import to_datetime as to_dt
 from rest_framework.response import Response
@@ -33,6 +34,7 @@ from rest_framework.views import APIView
 from va_explorer.home.services.common import (
     coverage_band,
     parse_filter_range,
+    parse_location_filter,
 )
 from va_explorer.home.views import (
     HomeOverviewMapData,
@@ -1365,7 +1367,7 @@ class BaselineCensusDashboardView(
         context = super().get_context_data(**kwargs)
         raw_tab = (self.request.GET.get("tab") or "overview").strip().lower()
         context["baseline_active_tab"] = (
-            raw_tab if raw_tab in {"overview", "table"} else "overview"
+            raw_tab if raw_tab in {"overview", "table", "chart"} else "overview"
         )
         return context
 
@@ -1374,7 +1376,44 @@ baseline_census_dashboard_view = BaselineCensusDashboardView.as_view()
 
 
 class BaselineCensusOverviewFilterDataView(NationalOperationalFilterData):
-    """Baseline-census namespaced overview filter data endpoint."""
+    """Baseline-census overview filter data.
+
+    When the "Current Baseline Census" filter is on, the overview KPI cards are
+    gated by the province configuration (admin panel -> Baseline Census Config)
+    so the overview agrees with the Census Table and Census Chart tabs.
+    Otherwise this delegates to the shared national-operational endpoint
+    unchanged, keeping the home dashboard's cached fast path intact.
+    """
+
+    def get(self, request, *args, **kwargs):
+        from va_explorer.home.services.nov import (
+            get_national_operational_view_data,
+        )
+        from va_explorer.va_data_management.utils.baseline_census import (
+            get_excluded_census_provinces,
+        )
+
+        kpis_only = str(request.GET.get("kpis_only", "")).strip() in {
+            "1",
+            "true",
+            "True",
+        }
+        bc_current = request.GET.get("bc_current") not in ("0", "false", "False")
+        if not (kpis_only and bc_current):
+            return super().get(request, *args, **kwargs)
+
+        preset, start_dt, end_dt, _has_custom = parse_filter_range(request)
+        location_level, location_value = parse_location_filter(request)
+        data = get_national_operational_view_data(
+            start_dt=start_dt,
+            end_dt=end_dt,
+            request=request,
+            location_level=location_level,
+            location_value=location_value,
+            include_chart_series=False,
+            census_province_exclude=get_excluded_census_provinces(),
+        )
+        return JsonResponse({"kpis": data.get("kpis", {})})
 
 
 baseline_census_overview_filter_data_view = (
@@ -1418,10 +1457,6 @@ def normalize_ea_to_geoid(raw):
 class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
     template_name = "va_analytics/components/_baseline_census_province_table.html"
 
-    # Rolling window applied when "Current Baseline Census" is on and no explicit
-    # time filter is set.
-    _CURRENT_CENSUS_DAYS = 90
-
     _VALID_SORT_FIELDS = {
         "province",
         "district",
@@ -1445,6 +1480,19 @@ class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
         "ward": "ward_name",
         "ea": "geoid",
     }
+    # EA-row columns that aggregate by summing across rows. Coverage columns
+    # are excluded — they are recomputed from the summed numerator/denominator.
+    _SUM_FIELDS = (
+        "hh_estimate",
+        "hh_enumerated",
+        "pop_estimate",
+        "pop_enumerated",
+        "refusals",
+        "non_contact",
+        "total_deaths",
+        "total_pregnancies",
+        "total_preg_outcomes",
+    )
 
     def get_context_data(self, **kwargs):
         from django.db.models import Count, Q
@@ -1456,6 +1504,9 @@ class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
             Pregnancy,
             PregnancyOutcome,
             SRSEAPopulationTarget,
+        )
+        from va_explorer.va_data_management.utils.baseline_census import (
+            get_excluded_census_provinces,
         )
 
         context = super().get_context_data(**kwargs)
@@ -1477,23 +1528,18 @@ class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
         location_level = req.GET.get("location_level", "").strip().lower()
         location_value = req.GET.get("location_value", "").strip()
 
-        # "Current Baseline Census" checkbox — absent means on (the first bare
-        # component load gets the rolling window).
+        # "Current Baseline Census" checkbox — absent means on. When on, the
+        # data is restricted to the provinces configured as part of the current
+        # baseline census (admin panel -> Baseline Census Config).
         bc_current = req.GET.get("bc_current") not in ("0", "false", "False")
 
-        # Resolve the date window. An explicit preset or custom range always wins;
-        # otherwise the checkbox decides between the rolling window and no limit.
+        # Resolve the date window. Only an explicit preset or custom range adds
+        # a time bound; the checkbox no longer applies a rolling window.
         preset, start_dt, end_dt, has_custom = parse_filter_range(req)
         explicit_time = has_custom or preset in {"30", "7", "24"}
         if not explicit_time:
-            if bc_current:
-                start_dt = timezone.localtime(timezone.now()) - timedelta(
-                    days=self._CURRENT_CENSUS_DAYS
-                )
-                end_dt = None
-            else:
-                start_dt = None
-                end_dt = None
+            start_dt = None
+            end_dt = None
         start_iso, end_iso = self._iso_bounds(start_dt, end_dt)
 
         # --- Enrichment counts, keyed by canonical geoid (one query per model) ---
@@ -1577,6 +1623,10 @@ class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
 
         # --- Base rows: every EA in the target table (all 10 provinces) ---
         targets = SRSEAPopulationTarget.objects.all()
+        if bc_current:
+            excluded_provinces = get_excluded_census_provinces()
+            if excluded_provinces:
+                targets = targets.exclude(province_name__in=excluded_provinces)
         lookup = self._LOCATION_FIELD_MAP.get(location_level)
         if location_value and lookup:
             targets = targets.filter(**{f"{lookup}__icontains": location_value})
@@ -1629,8 +1679,11 @@ class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
                 }
             )
 
-        rows = self._sort_rows(rows, bc_sort, bc_dir)
-        pagination = self._paginate_rows(rows, bc_page, per_page=10)
+        # Grand total spans every filtered EA; ward total spans the EAs of the
+        # single ward shown on the active page.
+        bc_grand_total = self._summarize_census_rows(rows)
+        pagination = self._paginate_census_by_ward(rows, bc_page, bc_sort, bc_dir)
+        bc_ward_total = self._summarize_census_rows(pagination["rows"])
 
         context.update(
             {
@@ -1642,6 +1695,8 @@ class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
                 "bc_ward_search": bc_ward,
                 "bc_ea_search": bc_ea,
                 "bc_current": bc_current,
+                "bc_ward_total": bc_ward_total,
+                "bc_grand_total": bc_grand_total,
                 "bc_page": pagination["page"],
                 "bc_total_pages": pagination["total_pages"],
                 "bc_has_prev": pagination["has_prev"],
@@ -1707,16 +1762,85 @@ class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
 
         return sorted(rows, key=numeric_key, reverse=reverse)
 
+    @classmethod
+    def _summarize_census_rows(cls, rows):
+        """Totals/averages for a list of EA row dicts, or ``None`` when empty.
+
+        Count columns are summed; coverage columns are recomputed from the
+        summed numerator/denominator rather than averaging percentages."""
+        if not rows:
+            return None
+        totals = dict.fromkeys(cls._SUM_FIELDS, 0)
+        for row in rows:
+            for field in cls._SUM_FIELDS:
+                value = row.get(field)
+                if value in (None, ""):
+                    continue
+                try:
+                    totals[field] += int(value)
+                except (TypeError, ValueError):
+                    continue
+        hh_coverage = cls._coverage_pct(totals["hh_enumerated"], totals["hh_estimate"])
+        pop_coverage = cls._coverage_pct(
+            totals["pop_enumerated"], totals["pop_estimate"]
+        )
+        totals["hh_coverage"] = hh_coverage
+        totals["hh_coverage_band"] = coverage_band(hh_coverage)
+        totals["pop_coverage"] = pop_coverage
+        totals["pop_coverage_band"] = coverage_band(pop_coverage)
+        return totals
+
     @staticmethod
-    def _paginate_rows(rows, page, per_page=10):
-        total = len(rows)
-        total_pages = max(1, (total + per_page - 1) // per_page)
+    def _group_rows_by_ward(rows):
+        """Group EA rows into ``(province, district, ward)`` buckets,
+        preserving first-seen order. Returns a list of ``(key, [rows])``."""
+        groups = {}
+        order = []
+        for row in rows:
+            key = (row.get("province"), row.get("district"), row.get("ward"))
+            if key not in groups:
+                groups[key] = []
+                order.append(key)
+            groups[key].append(row)
+        return [(key, groups[key]) for key in order]
+
+    @classmethod
+    def _paginate_census_by_ward(cls, rows, page, bc_sort, bc_dir):
+        """Paginate EA rows one ward per page.
+
+        EA rows within a ward are sorted by ``bc_sort``/``bc_dir``. The ward
+        pages themselves are ordered by location when the sort column is a
+        location field, otherwise by each ward's aggregate of the sort column
+        (wards with no value sort last)."""
+        groups = [
+            (key, cls._sort_rows(ward_rows, bc_sort, bc_dir))
+            for key, ward_rows in cls._group_rows_by_ward(rows)
+        ]
+        reverse = bc_dir == "desc"
+        if bc_sort in {"province", "district", "ward", "ea"}:
+            groups.sort(
+                key=lambda item: tuple(str(part or "").lower() for part in item[0]),
+                reverse=reverse,
+            )
+        else:
+
+            def ward_metric(item):
+                summary = cls._summarize_census_rows(item[1]) or {}
+                value = summary.get(bc_sort)
+                if value is None:
+                    return float("-inf") if reverse else float("inf")
+                try:
+                    return float(value)
+                except (TypeError, ValueError):
+                    return 0.0
+
+            groups.sort(key=ward_metric, reverse=reverse)
+
+        total_pages = max(1, len(groups))
         current_page = min(max(1, page), total_pages)
-        start = (current_page - 1) * per_page
-        end = start + per_page
-        sliced = rows[start:end]
+        ward_rows = groups[current_page - 1][1] if groups else []
         return {
-            "rows": sliced,
+            "rows": ward_rows,
             "page": current_page,
             "total_pages": total_pages,
             "has_prev": current_page > 1,
@@ -1725,14 +1849,282 @@ class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
             "next_page": (
                 current_page + 1 if current_page < total_pages else total_pages
             ),
-            "visible_count": len(sliced),
-            "total_count": total,
+            "visible_count": len(ward_rows),
+            "total_count": len(rows),
         }
 
 
 baseline_census_province_table_component_view = (
     BaselineCensusProvinceTableComponent.as_view()
 )
+
+
+# Administrative hierarchy used by the Census Chart drill-down, ordered from
+# the broadest level to the narrowest. ``geoid`` is the canonical EA key.
+_CENSUS_LEVEL_ORDER = ("province", "district", "constituency", "ward", "ea")
+_CENSUS_LEVEL_FIELD = {
+    "province": "province_name",
+    "district": "district_name",
+    "constituency": "constituency_name",
+    "ward": "ward_name",
+    "ea": "geoid",
+}
+
+
+def aggregate_census_by_level(
+    level,
+    parent_filters,
+    location_level,
+    location_value,
+    start_iso,
+    end_iso,
+    excluded_provinces=None,
+):
+    """Aggregate baseline-census estimates and enumerated counts to ``level``.
+
+    ``SRSEAPopulationTarget`` holds one row per EA carrying the full
+    administrative naming, so it doubles as the ``geoid -> administrative name``
+    map. Enumerated counts (households, household members, deaths) are gathered
+    once each, keyed by canonical geoid, then rolled up to the requested level
+    in a single in-memory pass — no per-group queries.
+
+    ``excluded_provinces`` drops provinces that are not part of the current
+    baseline census (used when the "Current Baseline Census" filter is on).
+
+    Returns ``(results, child_level)`` where ``results`` is a list of metric
+    dicts and ``child_level`` is the next drill-down level (``None`` at EA).
+    """
+    from va_explorer.va_data_management.models import (
+        Death,
+        Household,
+        HouseholdMember,
+        SRSEAPopulationTarget,
+    )
+
+    group_field = _CENSUS_LEVEL_FIELD.get(level, "province_name")
+    coverage = BaselineCensusProvinceTableComponent._coverage_pct
+    date_filter = BaselineCensusProvinceTableComponent._date_filter
+
+    # --- Target rows: geoid -> administrative names + estimates ---
+    targets = SRSEAPopulationTarget.objects.all()
+    if excluded_provinces:
+        targets = targets.exclude(province_name__in=excluded_provinces)
+    # User-facing location scoping, mirroring the Census Table tab. The target
+    # table has no Location FK, so it is filtered on its denormalised names
+    # rather than via restrict_queryset_to_user_locations().
+    location_lookup = _CENSUS_LEVEL_FIELD.get((location_level or "").lower())
+    if location_value and location_lookup:
+        targets = targets.filter(**{f"{location_lookup}__icontains": location_value})
+    # Drill-down parent filters use exact match — values come from chart clicks,
+    # not free-text search.
+    for parent_level in ("province", "district", "constituency", "ward"):
+        value = (parent_filters or {}).get(parent_level)
+        if value:
+            targets = targets.filter(**{_CENSUS_LEVEL_FIELD[parent_level]: value})
+
+    target_rows = targets.values(
+        "geoid",
+        "province_name",
+        "district_name",
+        "constituency_name",
+        "ward_name",
+        "household_target",
+        "population_target",
+    )
+
+    geoid_to_group = {}
+    groups = {}
+    order = []
+    for row in target_rows:
+        group_key = (row.get(group_field) or "").strip()
+        geoid_to_group[row["geoid"]] = group_key
+        acc = groups.get(group_key)
+        if acc is None:
+            acc = {
+                "population_estimate": 0,
+                "household_estimate": 0,
+                "population_enumerated": 0,
+                "household_enumerated": 0,
+                "death_enumerated": 0,
+            }
+            groups[group_key] = acc
+            order.append(group_key)
+        acc["population_estimate"] += row["population_target"] or 0
+        acc["household_estimate"] += row["household_target"] or 0
+
+    # --- Enumerated counts, one query per model, keyed by canonical geoid ---
+    def _counts_by_geoid(queryset, date_field, key_field):
+        counts = {}
+        rows = (
+            date_filter(queryset, date_field, start_iso, end_iso)
+            .values(key_field)
+            .annotate(cnt=Count("pk"))
+        )
+        for row in rows:
+            geoid = normalize_ea_to_geoid(row[key_field])
+            if geoid:
+                counts[geoid] = counts.get(geoid, 0) + row["cnt"]
+        return counts
+
+    hh_by_geoid = _counts_by_geoid(
+        Household.objects.exclude(cluster__isnull=True),
+        "submissiondate",
+        "cluster__name",
+    )
+    pop_by_geoid = _counts_by_geoid(
+        HouseholdMember.objects.exclude(household__cluster__isnull=True),
+        "household__submissiondate",
+        "household__cluster__name",
+    )
+    death_by_geoid = _counts_by_geoid(
+        Death.objects.exclude(ea__isnull=True).exclude(ea=""),
+        "submissiondate",
+        "ea",
+    )
+
+    # --- Roll EA-level counts up to the requested level ---
+    for geoid, group_key in geoid_to_group.items():
+        acc = groups[group_key]
+        acc["household_enumerated"] += hh_by_geoid.get(geoid, 0)
+        acc["population_enumerated"] += pop_by_geoid.get(geoid, 0)
+        acc["death_enumerated"] += death_by_geoid.get(geoid, 0)
+
+    child_index = _CENSUS_LEVEL_ORDER.index(level) + 1
+    child_level = (
+        _CENSUS_LEVEL_ORDER[child_index]
+        if child_index < len(_CENSUS_LEVEL_ORDER)
+        else None
+    )
+
+    results = []
+    for group_key in order:
+        acc = groups[group_key]
+        results.append(
+            {
+                "label": group_key or "—",
+                "level": level,
+                "value": group_key,
+                "population_estimate": acc["population_estimate"],
+                "population_enumerated": acc["population_enumerated"],
+                "population_coverage": coverage(
+                    acc["population_enumerated"], acc["population_estimate"]
+                ),
+                "household_estimate": acc["household_estimate"],
+                "household_enumerated": acc["household_enumerated"],
+                "household_coverage": coverage(
+                    acc["household_enumerated"], acc["household_estimate"]
+                ),
+                # SRSEAPopulationTarget has no death-target column, so there is
+                # no death estimate. None keeps coverage division-safe —
+                # _coverage_pct treats a falsy denominator as "no coverage".
+                "death_estimate": None,
+                "death_enumerated": acc["death_enumerated"],
+                "death_coverage": coverage(acc["death_enumerated"], None),
+                "has_children": child_level is not None,
+            }
+        )
+
+    # Stable, user-friendly ordering by the geography label.
+    results.sort(key=lambda row: str(row["value"]).lower())
+    return results, child_level
+
+
+class BaselineCensusChartDataView(CustomAuthMixin, PermissionRequiredMixin, View):
+    """JSON endpoint backing the Census Chart tab of the Baseline Census
+    Dashboard. Returns estimate/enumerated/coverage metrics for Population,
+    Households and Deaths aggregated to the requested administrative level,
+    plus drill-down breadcrumbs."""
+
+    permission_required = "va_analytics.view_dashboard"
+    _PARENT_LEVELS = ("province", "district", "constituency", "ward")
+    _CHILD_OF = {
+        "province": "district",
+        "district": "constituency",
+        "constituency": "ward",
+        "ward": "ea",
+    }
+
+    def get(self, request, *args, **kwargs):
+        try:
+            return self._build_response(request)
+        except Exception:
+            logger.exception("Census chart data endpoint failed")
+            return JsonResponse(
+                {"error": "Unable to load census chart data."}, status=500
+            )
+
+    def _build_response(self, request):
+        from va_explorer.va_data_management.utils.baseline_census import (
+            get_excluded_census_provinces,
+        )
+
+        level = BaselineCensusProvinceTableComponent._pick(
+            (request.GET.get("level", "province") or "province").strip().lower(),
+            set(_CENSUS_LEVEL_ORDER),
+            "province",
+        )
+        parent_filters = {
+            parent: request.GET.get(parent, "").strip()
+            for parent in self._PARENT_LEVELS
+        }
+        location_level = request.GET.get("location_level", "").strip().lower()
+        location_value = request.GET.get("location_value", "").strip()
+
+        # Date/province resolution mirrors the Census Table tab so the two tabs
+        # always agree. Only an explicit preset/custom range adds a time bound;
+        # the "Current Baseline Census" checkbox restricts to the provinces
+        # configured as part of the current baseline census.
+        bc_current = request.GET.get("bc_current") not in ("0", "false", "False")
+        preset, start_dt, end_dt, has_custom = parse_filter_range(request)
+        explicit_time = has_custom or preset in {"30", "7", "24"}
+        if not explicit_time:
+            start_dt = None
+            end_dt = None
+        start_iso, end_iso = BaselineCensusProvinceTableComponent._iso_bounds(
+            start_dt, end_dt
+        )
+
+        excluded_provinces = get_excluded_census_provinces() if bc_current else []
+        results, child_level = aggregate_census_by_level(
+            level,
+            parent_filters,
+            location_level,
+            location_value,
+            start_iso,
+            end_iso,
+            excluded_provinces=excluded_provinces,
+        )
+
+        return JsonResponse(
+            {
+                "level": level,
+                "child_level": child_level,
+                "breadcrumbs": self._build_breadcrumbs(parent_filters),
+                "results": results,
+            }
+        )
+
+    def _build_breadcrumbs(self, parent_filters):
+        """Drill path as clickable steps. Each crumb carries the level to load
+        and the cumulative parent filters needed to reload at that step."""
+        crumbs = [{"label": "All Provinces", "level": "province", "parents": {}}]
+        cumulative = {}
+        for parent in self._PARENT_LEVELS:
+            value = parent_filters.get(parent)
+            if not value:
+                break
+            cumulative = {**cumulative, parent: value}
+            crumbs.append(
+                {
+                    "label": value,
+                    "level": self._CHILD_OF[parent],
+                    "parents": dict(cumulative),
+                }
+            )
+        return crumbs
+
+
+baseline_census_chart_data_view = BaselineCensusChartDataView.as_view()
 
 
 class OutcomesDashboardView(CustomAuthMixin, PermissionRequiredMixin, TemplateView):

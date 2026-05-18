@@ -7,11 +7,12 @@ import traceback
 from datetime import timedelta
 
 from django.conf import settings
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.management import call_command
 from django.http import HttpResponseForbidden, JsonResponse, StreamingHttpResponse
 from django.middleware.csrf import get_token
-from django.shortcuts import render
+from django.shortcuts import redirect, render
 from django.utils import timezone
 from django.utils.dateparse import parse_date as django_parse_date
 from django.views.decorators.http import require_POST
@@ -25,6 +26,10 @@ from va_explorer.va_admin.command_registry import (
     resolve_data_file,
 )
 from va_explorer.va_admin.models import AdminPanelAlert
+from va_explorer.va_data_management.utils.baseline_census import (
+    get_baseline_census_province_config,
+    save_baseline_census_province_config,
+)
 from va_explorer.vacms.models import AdminCommandRun
 
 PRODUCTION_SETTINGS_MODULE = "config.settings.production"
@@ -193,8 +198,36 @@ def admin_panel_view(request):
         "command_groups_json": command_groups_json,
         "filename_placeholders": STANDARD_FILENAME_PLACEHOLDERS,
         "alerts_feed": [_serialize_alert(alert) for alert in _fetch_alert_feed()],
+        "baseline_census_provinces": get_baseline_census_province_config(),
     }
     return render(request, "va_admin/admin_panel.html", context)
+
+
+@require_POST
+@login_required
+def baseline_census_config_view(request):
+    """Persist which provinces are part of the current baseline census.
+
+    Driven by the admin panel's "Baseline Census Config" section. Checked
+    provinces are part of the current census; unchecked provinces are excluded
+    from the dashboard's "Current Baseline Census" filter.
+    """
+    if not user_can_run_admin_commands(request.user):
+        _record_alert(
+            request=request,
+            category=AdminPanelAlert.SECURITY,
+            severity=AdminPanelAlert.HIGH,
+            title="Unauthorized baseline census config attempt",
+            summary="User attempted to change baseline census config without "
+            "required privileges.",
+        )
+        return HttpResponseForbidden("You are not allowed to access this page.")
+
+    save_baseline_census_province_config(request.POST.getlist("provinces"))
+    messages.success(
+        request, "Baseline census province configuration saved successfully."
+    )
+    return redirect("va_admin:index")
 
 
 def _sanitize_input_value(field, raw_value):

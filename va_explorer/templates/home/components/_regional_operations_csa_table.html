@@ -106,4 +106,44 @@
     <span>Page {{ csa_page }} of {{ csa_total_pages }} | Rows: {{ csa_visible_count }} of {{ csa_total_count }}</span>
     <a href="?csa_page={{ csa_next_page }}" class="regional-page-link {% if not csa_has_next %}disabled{% endif %}" data-table="csa" aria-disabled="{% if csa_has_next %}false{% else %}true{% endif %}">Next</a>
   </div>
+  {% if csa_total %}
+    <div class="csa-table-container csa-grand-total" role="region" aria-label="CSA table totals">
+      <table class="csa-table">
+        <colgroup>
+          <col style="width: 12%;">
+          <col style="display: none;">
+          <col style="width: 9%;">
+          <col style="width: 8%;">
+          <col style="width: 8%;">
+          <col style="width: 6%;">
+          <col style="width: 6%;">
+          <col style="width: 6%;">
+          <col style="width: 7%;">
+          <col style="width: 8%;">
+          <col style="width: 12%;">
+          <col style="width: 6%;">
+          <col style="width: 6%;">
+          <col style="width: 6%;">
+        </colgroup>
+        <tbody>
+          <tr class="csa-total-row">
+            <td class="csa-name">Total / Average</td>
+            <td style="display: none;" aria-hidden="true"></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td class="numeric">{{ csa_total.visits }}</td>
+            <td class="numeric">{{ csa_total.events }}</td>
+            <td class="numeric">{{ csa_total.deaths }}</td>
+            <td class="numeric">{{ csa_total.pregnancies }}</td>
+            <td class="numeric">{{ csa_total.pregnancy_outcomes }}</td>
+            <td class="numeric">{{ csa_total.overdue_without_interview }}</td>
+            <td class="numeric">{{ csa_total.csa_target }}</td>
+            <td class="numeric coverage-cell coverage-cell--{{ csa_total.coverage_band|default:'empty' }}">{% if csa_total.coverage_pct is not None %}{{ csa_total.coverage_pct }}%{% else %}—{% endif %}</td>
+            <td></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
 </div>

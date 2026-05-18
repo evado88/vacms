@@ -1588,6 +1588,98 @@ def test_csa_component_handles_unmatched_mapping_safely(user: User):
     assert row["coverage_pct"] is None
 
 
+def test_csa_component_renders_totals_row_spanning_all_filtered_rows(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    # Twelve CSAs force a second page (the table caps at 10 rows).
+    for idx in range(12):
+        name = f"CSA{idx:02d}"
+        CSASupervisorTargetMap.objects.create(
+            csa_name_raw=f"{name}_{idx}",
+            csa_display_name=name,
+            csa_name_normalized=name.lower(),
+            supervisor_name="Supervisor",
+            csa_target=10,
+            status=CSASupervisorTargetMap.STATUS_ACTIVE,
+        )
+        CSADailyTracker.objects.create(
+            key=f"csa-total-{idx}",
+            enumerator=f"{name}_{idx}",
+            province="Lusaka",
+            district="Lusaka",
+            ward="Ward 1",
+            today="2026-03-15",
+            num_death="1",
+            num_preg="0",
+            num_outcome="0",
+        )
+
+    response = client.get(
+        "/regional-operations/components/csa/",
+        {"time_preset": "timeAll"},
+        follow=True,
+    )
+    assert response.status_code == 200
+
+    # The visible page is capped at 10 rows; the totals span all 12 CSAs.
+    assert len(response.context["csa_stats"]) == 10
+    csa_total = response.context["csa_total"]
+    assert csa_total is not None
+    assert csa_total["visits"] == 12
+    assert csa_total["deaths"] == 12
+    assert csa_total["events"] == 12
+    # Coverage is recomputed from the summed visits / target (12 / 120), not an
+    # average of the per-row percentages.
+    assert csa_total["csa_target"] == 120
+    assert csa_total["coverage_pct"] == 10.0
+    assert csa_total["coverage_band"] == "red"
+    assert b"csa-total-row" in response.content
+    assert b"Total / Average" in response.content
+
+
+def test_csa_totals_reflect_active_filters(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    specs = (("AlphaCsa", "Lusaka"), ("BetaCsa", "Lusaka"), ("GammaCsa", "Southern"))
+    for idx, (name, province) in enumerate(specs):
+        CSASupervisorTargetMap.objects.create(
+            csa_name_raw=f"{name}_{idx}",
+            csa_display_name=name,
+            csa_name_normalized=name.lower(),
+            supervisor_name="Supervisor",
+            csa_target=10,
+            status=CSASupervisorTargetMap.STATUS_ACTIVE,
+        )
+        CSADailyTracker.objects.create(
+            key=f"geo-{idx}",
+            enumerator=f"{name}_{idx}",
+            province=province,
+            district="Lusaka",
+            ward="Ward 1",
+            today="2026-03-15",
+            num_death="1",
+            num_preg="0",
+            num_outcome="0",
+        )
+
+    national = client.get(
+        "/regional-operations/components/csa/",
+        {"time_preset": "timeAll"},
+        follow=True,
+    )
+    assert national.context["csa_total"]["deaths"] == 3
+
+    # Narrowing the geography filter shrinks the totals to the Lusaka CSAs.
+    lusaka = client.get(
+        "/regional-operations/components/csa/",
+        {"time_preset": "timeAll", "geography": "lusaka"},
+        follow=True,
+    )
+    assert lusaka.context["csa_total"]["deaths"] == 2
+
+
 @time_machine.travel(dt.datetime(2026, 4, 26, 12, 0, tzinfo=eastern_tz))
 def test_csa_component_default_all_time_shows_available_tracker_rows(user: User):
     client = Client()

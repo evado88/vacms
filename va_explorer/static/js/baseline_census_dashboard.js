@@ -551,6 +551,8 @@ const requestNationalOperationalFilterData = (options = {}) => {
   const locationValue = (document.getElementById("novLocationValue")?.value || "").trim();
   const startDatetime = document.getElementById("novStartDatetime")?.value || "";
   const endDatetime = document.getElementById("novEndDatetime")?.value || "";
+  const currentCensusCheckbox = document.getElementById("novCurrentCensus");
+  const bcCurrent = currentCensusCheckbox ? currentCensusCheckbox.checked : true;
 
   const kpiEndpoint = root.dataset.filterUrl || "";
   if (kpiEndpoint) {
@@ -566,6 +568,7 @@ const requestNationalOperationalFilterData = (options = {}) => {
       end: endDatetime,
       location_level: locationLevel || "national",
       location_value: locationValue,
+      bc_current: bcCurrent ? "1" : "0",
     });
     fetch(`${kpiEndpoint}?${params.toString()}`, {
       method: "GET",
@@ -616,8 +619,15 @@ const initNationalOperationalFilters = () => {
   const endInput = document.getElementById("novEndDatetime");
   const locationLevel = document.getElementById("novLocationLevel");
   const locationValue = document.getElementById("novLocationValue");
+  const currentCensusCheckbox = document.getElementById("novCurrentCensus");
 
   updateNovLocationValueOptions();
+
+  if (currentCensusCheckbox) {
+    currentCensusCheckbox.addEventListener("change", () => {
+      requestNationalOperationalFilterData({ invalidateScope: true });
+    });
+  }
 
   if (locationLevel) {
     locationLevel.addEventListener("change", () => {
@@ -765,6 +775,7 @@ const initTableFilters = () => {
 const resizeChartsForTab = (tab) => {
   const mapByTab = {
     overview: ["enumerationCoverageChart"],
+    chart: ["baselineCensusChart"],
   };
   (mapByTab[tab] || []).forEach((id) => {
     const canvas = document.getElementById(id);
@@ -797,8 +808,506 @@ const initTableTab = async () => {
   initTableFilters();
 }
 
+// ---------------------------------------------------------------------------
+// Census Chart (drill-down combined bar + line chart)
+// ---------------------------------------------------------------------------
+const CENSUS_INDICATORS = [
+  { key: "population", label: "Population" },
+  { key: "household", label: "Households" },
+  { key: "death", label: "Deaths" },
+];
+
+// Drill-down hint copy per level: which geography the bars represent and what
+// the next level down is called.
+const CENSUS_LEVEL_LABELS = {
+  province: { singular: "province", children: "districts" },
+  district: { singular: "district", children: "constituencies" },
+  constituency: { singular: "constituency", children: "wards" },
+  ward: { singular: "ward", children: "EAs" },
+  ea: { singular: "EA", children: null },
+};
+
+let chartTabInitialized = false;
+let chartFiltersBound = false;
+let chartFetchRequestId = 0;
+let lastChartPayload = null;
+
+let bcChartFilterState = {
+  location_level: "national",
+  location_value: "",
+  start: "",
+  end: "",
+  preset: "",
+  current: true,
+};
+// Drill-down position: the level currently shown plus the accumulated
+// ancestor filters (province/district/constituency/ward) that produced it.
+let bcChartNav = { level: "province", parents: {} };
+
+const resetChartNav = () => {
+  bcChartNav = { level: "province", parents: {} };
+};
+
+const getCensusChartUrl = () => {
+  const root = document.getElementById("baseline-chart-view");
+  return root ? (root.dataset.endpoint || "") : "";
+};
+
+const setCensusChartOverlay = (state) => {
+  const overlays = {
+    loading: "baselineChartLoading",
+    empty: "baselineChartEmpty",
+    error: "baselineChartError",
+  };
+  Object.values(overlays).forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.hidden = true;
+  });
+  const activeId = overlays[state];
+  if (activeId) {
+    const el = document.getElementById(activeId);
+    if (el) el.hidden = false;
+  }
+};
+
+const updateChartLocationValueOptions = (level) => {
+  const valueSelect = document.getElementById("chartLocationValue");
+  if (!valueSelect) return;
+
+  const options = NOV_LOCATION_OPTIONS[level] || [];
+  const disableValue = level === "national" || options.length === 0;
+
+  valueSelect.innerHTML = "";
+  if (disableValue) {
+    valueSelect.disabled = true;
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "All National";
+    valueSelect.appendChild(option);
+    return;
+  }
+
+  valueSelect.disabled = false;
+  options.forEach((item, index) => {
+    const option = document.createElement("option");
+    option.value = item;
+    option.textContent = item;
+    if (index === 0) option.selected = true;
+    valueSelect.appendChild(option);
+  });
+};
+
+const renderCensusBreadcrumb = (payload) => {
+  const nav = document.getElementById("baselineChartBreadcrumb");
+  const backBtn = document.getElementById("baselineChartBack");
+  if (!nav) return;
+
+  const crumbs = (payload && payload.breadcrumbs) || [];
+  nav.innerHTML = "";
+  crumbs.forEach((crumb, index) => {
+    if (index > 0) {
+      const sep = document.createElement("span");
+      sep.className = "baseline-chart-breadcrumb-sep";
+      sep.textContent = "›";
+      nav.appendChild(sep);
+    }
+    const isLast = index === crumbs.length - 1;
+    if (isLast) {
+      const current = document.createElement("span");
+      current.className = "baseline-chart-breadcrumb-current";
+      current.textContent = crumb.label;
+      nav.appendChild(current);
+    } else {
+      const link = document.createElement("button");
+      link.type = "button";
+      link.className = "baseline-chart-breadcrumb-link";
+      link.textContent = crumb.label;
+      link.addEventListener("click", () => navigateCensusChartTo(crumb));
+      nav.appendChild(link);
+    }
+  });
+  if (backBtn) backBtn.hidden = crumbs.length <= 1;
+};
+
+const navigateCensusChartTo = (crumb) => {
+  if (!crumb) return;
+  bcChartNav = { level: crumb.level, parents: { ...(crumb.parents || {}) } };
+  fetchCensusChartData();
+};
+
+// Instructional label: tells users they can click bars to drill down, and
+// names the level they will drill into next.
+const renderCensusChartHint = (payload) => {
+  const hint = document.getElementById("baselineChartHint");
+  if (!hint) return;
+  const level = (payload && payload.level) || "province";
+  const meta = CENSUS_LEVEL_LABELS[level] || CENSUS_LEVEL_LABELS.province;
+  if (payload && payload.child_level && meta.children) {
+    hint.textContent =
+      `Tip: click a ${meta.singular} bar (or its label) to drill down ` +
+      `into its ${meta.children}.`;
+  } else {
+    hint.textContent =
+      "EA is the deepest level — no further drill-down available.";
+  }
+};
+
+const drillIntoCensus = (row) => {
+  if (!row || !lastChartPayload) return;
+  const childLevel = lastChartPayload.child_level;
+  if (!childLevel || !row.has_children) return;
+  // The clicked geography becomes a parent filter for the child level.
+  bcChartNav = {
+    level: childLevel,
+    parents: { ...bcChartNav.parents, [row.level]: row.value },
+  };
+  fetchCensusChartData();
+};
+
+// Widen the canvas box so grouped bars stay legible when a level has many
+// geographies; the wrap then scrolls horizontally. Narrow datasets keep the
+// box at 100% so the chart simply fills the tab.
+const sizeCensusCanvasBox = (categoryCount) => {
+  const wrap = document.querySelector("#baseline-chart-view .baseline-chart-wrap");
+  const box = document.querySelector("#baseline-chart-view .baseline-chart-canvas-box");
+  if (!wrap || !box) return;
+  const minPerCategory = 46;
+  const needed = categoryCount * minPerCategory;
+  box.style.width = needed > wrap.clientWidth ? `${needed}px` : "100%";
+};
+
+const renderCensusChart = (payload) => {
+  const canvas = document.getElementById("baselineCensusChart");
+  if (!canvas || typeof Chart === "undefined") return;
+
+  destroyChartForCanvas(canvas);
+
+  const results = payload.results || [];
+  const labels = [];
+  const estimateData = [];
+  const enumeratedData = [];
+  const coverageData = [];
+
+  // Each geography contributes three x-axis categories — one per indicator.
+  // The geography name sits on the middle (Households) tick so it reads as a
+  // centred group label.
+  results.forEach((row) => {
+    CENSUS_INDICATORS.forEach((indicator, indicatorIndex) => {
+      labels.push([
+        indicatorIndex === 1 ? row.label || "—" : "",
+        indicator.label,
+      ]);
+      estimateData.push(row[`${indicator.key}_estimate`]);
+      enumeratedData.push(row[`${indicator.key}_enumerated`]);
+      coverageData.push(row[`${indicator.key}_coverage`]);
+    });
+  });
+
+  const resolveRow = (dataIndex) => results[Math.floor(dataIndex / CENSUS_INDICATORS.length)];
+
+  sizeCensusCanvasBox(labels.length);
+
+  const chart = new Chart(canvas.getContext("2d"), {
+    type: "bar",
+    data: {
+      labels,
+      datasets: [
+        {
+          type: "bar",
+          label: "Estimate",
+          data: estimateData,
+          backgroundColor: "#2563eb",
+          borderRadius: 4,
+          yAxisID: "y",
+        },
+        {
+          type: "bar",
+          label: "Enumerated",
+          data: enumeratedData,
+          backgroundColor: "#dc2626",
+          borderRadius: 4,
+          yAxisID: "y",
+        },
+        {
+          type: "line",
+          label: "Coverage",
+          data: coverageData,
+          borderColor: "#16a34a",
+          backgroundColor: "#16a34a",
+          borderWidth: 2,
+          pointBackgroundColor: "#16a34a",
+          pointBorderColor: "#ffffff",
+          pointBorderWidth: 2,
+          pointRadius: 4,
+          pointHoverRadius: 5,
+          spanGaps: false,
+          tension: 0.25,
+          yAxisID: "yCoverage",
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: {
+        intersect: false,
+        mode: "index",
+      },
+      layout: {
+        padding: {
+          top: 22,
+        },
+      },
+      onClick: (evt, elements) => {
+        if (!elements || !elements.length) return;
+        drillIntoCensus(resolveRow(elements[0].index));
+      },
+      onHover: (evt, elements) => {
+        const target = evt && evt.native && evt.native.target;
+        if (!target) return;
+        const row = elements && elements.length ? resolveRow(elements[0].index) : null;
+        target.style.cursor = row && row.has_children ? "pointer" : "default";
+      },
+      plugins: {
+        legend: {
+          display: true,
+          position: "top",
+          labels: {
+            boxWidth: 12,
+            boxHeight: 12,
+          },
+        },
+        tooltip: {
+          callbacks: {
+            title(items) {
+              if (!items.length) return "";
+              const dataIndex = items[0].dataIndex;
+              const row = resolveRow(dataIndex) || {};
+              const indicator = CENSUS_INDICATORS[dataIndex % CENSUS_INDICATORS.length];
+              return `${row.label || "—"} — ${indicator.label}`;
+            },
+            label(context) {
+              const value = context.raw;
+              if (value === null || value === undefined) return "";
+              const label = context.dataset.label || "";
+              const formatted = context.dataset.yAxisID === "yCoverage"
+                ? formatCoverageValue(value)
+                : formatCountValue(value);
+              return `${label}: ${formatted}`;
+            },
+          },
+        },
+      },
+      scales: {
+        x: {
+          grid: {
+            display: false,
+          },
+          ticks: {
+            autoSkip: false,
+            maxRotation: 0,
+          },
+        },
+        y: {
+          beginAtZero: true,
+          position: "left",
+          title: {
+            display: true,
+            text: "Counts",
+          },
+          ticks: {
+            callback: (value) => formatCountValue(value),
+          },
+        },
+        yCoverage: {
+          beginAtZero: true,
+          suggestedMax: 100,
+          position: "right",
+          title: {
+            display: true,
+            text: "Coverage",
+          },
+          grid: {
+            drawOnChartArea: false,
+          },
+          ticks: {
+            callback: (value) => formatCoverageValue(value),
+          },
+        },
+      },
+    },
+    plugins: [enumerationCoverageLabelsPlugin],
+  });
+  chartInstances.set(canvas, chart);
+};
+
+const fetchCensusChartData = () => {
+  const url = getCensusChartUrl();
+  if (!url) return Promise.resolve();
+
+  const requestId = ++chartFetchRequestId;
+  setCensusChartOverlay("loading");
+
+  const params = new URLSearchParams();
+  params.set("level", bcChartNav.level);
+  Object.entries(bcChartNav.parents).forEach(([key, value]) => {
+    if (value) params.set(key, value);
+  });
+  if (bcChartFilterState.location_level && bcChartFilterState.location_value) {
+    params.set("location_level", bcChartFilterState.location_level);
+    params.set("location_value", bcChartFilterState.location_value);
+  }
+  if (bcChartFilterState.start) params.set("start", bcChartFilterState.start);
+  if (bcChartFilterState.end) params.set("end", bcChartFilterState.end);
+  if (bcChartFilterState.preset) params.set("preset", bcChartFilterState.preset);
+  params.set("bc_current", bcChartFilterState.current ? "1" : "0");
+
+  return fetch(`${url}?${params.toString()}`, {
+    method: "GET",
+    headers: { "X-Requested-With": "XMLHttpRequest" },
+    credentials: "same-origin",
+  })
+    .then((res) => {
+      if (!res.ok) throw new Error(`Census chart fetch failed: ${res.status}`);
+      return res.json();
+    })
+    .then((payload) => {
+      if (requestId !== chartFetchRequestId) return;
+      if (payload.error) throw new Error(payload.error);
+      lastChartPayload = payload;
+      bcChartNav.level = payload.level || bcChartNav.level;
+      renderCensusBreadcrumb(payload);
+      renderCensusChartHint(payload);
+      if (!payload.results || payload.results.length === 0) {
+        destroyChartForCanvas(document.getElementById("baselineCensusChart"));
+        setCensusChartOverlay("empty");
+        return;
+      }
+      setCensusChartOverlay(null);
+      renderCensusChart(payload);
+    })
+    .catch((err) => {
+      if (requestId !== chartFetchRequestId) return;
+      console.error("[baseline-census] census chart fetch failed", err);
+      setCensusChartOverlay("error");
+    });
+};
+
+const initChartFilters = () => {
+  if (chartFiltersBound) return;
+  chartFiltersBound = true;
+
+  const levelSelect = document.getElementById("chartLocationLevel");
+  const valueSelect = document.getElementById("chartLocationValue");
+  const currentCensusCheckbox = document.getElementById("chartCurrentCensus");
+
+  if (currentCensusCheckbox) {
+    bcChartFilterState.current = currentCensusCheckbox.checked;
+    currentCensusCheckbox.addEventListener("change", function () {
+      bcChartFilterState.current = this.checked;
+      resetChartNav();
+      fetchCensusChartData();
+    });
+  }
+
+  if (levelSelect) {
+    updateChartLocationValueOptions("national");
+    levelSelect.addEventListener("change", function () {
+      updateChartLocationValueOptions(this.value);
+      bcChartFilterState.location_level = this.value;
+      bcChartFilterState.location_value = "";
+      resetChartNav();
+      fetchCensusChartData();
+    });
+  }
+
+  if (valueSelect) {
+    valueSelect.addEventListener("change", function () {
+      bcChartFilterState.location_value = this.value;
+      resetChartNav();
+      fetchCensusChartData();
+    });
+  }
+
+  ["chartTimeAll", "chartTime30", "chartTime7", "chartTime24"].forEach((id) => {
+    const radio = document.getElementById(id);
+    if (!radio) return;
+    radio.addEventListener("change", function () {
+      if (!this.checked) return;
+      const presetMap = {
+        chartTimeAll: "",
+        chartTime30: "30",
+        chartTime7: "7",
+        chartTime24: "24",
+      };
+      const preset = presetMap[id] || "";
+      bcChartFilterState.preset = preset;
+
+      const startInput = document.getElementById("chartStartDatetime");
+      const endInput = document.getElementById("chartEndDatetime");
+      if (preset && startInput && endInput) {
+        const now = new Date();
+        const start = new Date(now);
+        if (preset === "30") start.setDate(start.getDate() - 30);
+        if (preset === "7") start.setDate(start.getDate() - 7);
+        if (preset === "24") start.setHours(start.getHours() - 24);
+        startInput.value = toDateString(start);
+        endInput.value = toDateString(now);
+        bcChartFilterState.start = startInput.value;
+        bcChartFilterState.end = endInput.value;
+      } else {
+        bcChartFilterState.start = "";
+        bcChartFilterState.end = "";
+      }
+      resetChartNav();
+      fetchCensusChartData();
+    });
+  });
+
+  const startInput = document.getElementById("chartStartDatetime");
+  const endInput = document.getElementById("chartEndDatetime");
+
+  if (startInput) {
+    startInput.addEventListener("change", function () {
+      bcChartFilterState.start = this.value;
+      resetChartNav();
+      fetchCensusChartData();
+    });
+  }
+
+  if (endInput) {
+    endInput.addEventListener("change", function () {
+      bcChartFilterState.end = this.value;
+      resetChartNav();
+      fetchCensusChartData();
+    });
+  }
+};
+
+const wireChartBreadcrumbEvents = () => {
+  const backBtn = document.getElementById("baselineChartBack");
+  if (!backBtn) return;
+  backBtn.addEventListener("click", () => {
+    const crumbs = (lastChartPayload && lastChartPayload.breadcrumbs) || [];
+    if (crumbs.length < 2) return;
+    navigateCensusChartTo(crumbs[crumbs.length - 2]);
+  });
+};
+
+const initChartTab = async () => {
+  if (chartTabInitialized) {
+    resizeChartsForTab("chart");
+    return;
+  }
+  chartTabInitialized = true;
+  initChartFilters();
+  wireChartBreadcrumbEvents();
+  await fetchCensusChartData();
+  resizeChartsForTab("chart");
+};
+
 const initBaselineCensusTab = async (tab) => {
-  const normalizedTab = tab === "table" ? "table" : "overview";
+  const normalizedTab = ["table", "chart"].includes(tab) ? tab : "overview";
   const started = perfNow();
   if (normalizedTab === "overview") {
     await initOverviewTab();
@@ -808,6 +1317,11 @@ const initBaselineCensusTab = async (tab) => {
   if (normalizedTab === "table") {
     await initTableTab();
     perfLog("tab.init.table", started);
+    return;
+  }
+  if (normalizedTab === "chart") {
+    await initChartTab();
+    perfLog("tab.init.chart", started);
   }
 }
 

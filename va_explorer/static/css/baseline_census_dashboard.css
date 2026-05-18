@@ -232,7 +232,7 @@
 
 #national-operational-view .nov-filters-row {
   display: grid;
-  grid-template-columns: minmax(130px, 0.6fr) minmax(130px, 0.8fr) minmax(0, 2fr) minmax(0, 0.75fr) minmax(0, 0.75fr);
+  grid-template-columns: auto minmax(130px, 0.6fr) minmax(130px, 0.8fr) minmax(0, 2fr) minmax(0, 0.75fr) minmax(0, 0.75fr);
   gap: 10px;
   align-items: center;
   width: 100%;
@@ -240,6 +240,20 @@
   border: 1px solid #e2e8f0;
   border-radius: 12px;
   padding: 10px 12px;
+}
+
+#national-operational-view .nov-filter-current-census {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  white-space: nowrap;
+}
+
+#national-operational-view .nov-filter-current-census .form-check-label {
+  font-size: 0.86rem;
+  margin: 0;
 }
 
 #baseline-table-view .national-operational-view-shell {
@@ -544,6 +558,41 @@
   color: #6a7789;
 }
 
+/* Summary rows — ward total (table footer) and grand total (below pagination).
+   Coverage cells keep their colour coding; only non-coverage cells get the
+   highlighted background. */
+#baseline-table-view .baseline-census-table tfoot td {
+  padding: 10px 8px;
+}
+
+#baseline-table-view .baseline-census-table tfoot .bc-ward-total-row td,
+#baseline-table-view .baseline-census-grand-total .bc-grand-total-row td {
+  font-weight: 700;
+  color: #223044;
+  border-top: 2px solid rgba(0, 0, 0, 0.18);
+}
+
+#baseline-table-view .baseline-census-table tfoot td:not(:last-child),
+#baseline-table-view .baseline-census-grand-total tbody td:not(:last-child) {
+  border-right: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+#baseline-table-view .baseline-census-table tfoot .bc-ward-total-row td:not(.coverage-cell) {
+  background: #eef2f8;
+}
+
+#baseline-table-view .baseline-census-grand-total {
+  margin-top: 6px;
+}
+
+#baseline-table-view .baseline-census-grand-total .bc-grand-total-row td {
+  border-top: 3px solid rgba(0, 0, 0, 0.32);
+}
+
+#baseline-table-view .baseline-census-grand-total .bc-grand-total-row td:not(.coverage-cell) {
+  background: #dfe7f3;
+}
+
 #baseline-table-view .sort-icon {
   font-size: 0.75rem;
   color: #7a8799;
@@ -564,6 +613,154 @@
   pointer-events: none;
   opacity: 0.45;
   text-decoration: none;
+}
+
+/* ------------------------------------------------------------------------- */
+/* Census Chart tab — drill-down combined bar + line chart                   */
+/* Vertical layout: filters row + breadcrumb row sized to content, chart card */
+/* flex-grows to fill the rest of the viewport-bounded shell.                 */
+/* ------------------------------------------------------------------------- */
+#baseline-chart-view .national-operational-view-shell {
+  background: #f3f4f6;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 4px;
+  height: calc(100vh - 180px);
+  height: calc(100dvh - 180px);
+  max-height: calc(100vh - 180px);
+  max-height: calc(100dvh - 180px);
+  min-height: 0;
+  overflow: hidden;
+  padding: 20px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+}
+
+#baseline-chart-view .baseline-chart-filters-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  width: 100%;
+  min-width: 0;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+
+#baseline-chart-view .baseline-chart-breadcrumb-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+#baseline-chart-view .baseline-chart-breadcrumb {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  font-size: 0.86rem;
+  color: #6a7789;
+}
+
+#baseline-chart-view .baseline-chart-breadcrumb-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #2563eb;
+  font-size: 0.86rem;
+  cursor: pointer;
+}
+
+#baseline-chart-view .baseline-chart-breadcrumb-link:hover {
+  text-decoration: underline;
+}
+
+#baseline-chart-view .baseline-chart-breadcrumb-current {
+  color: #1f2937;
+  font-weight: 600;
+}
+
+#baseline-chart-view .baseline-chart-breadcrumb-sep {
+  color: #a4adba;
+}
+
+#baseline-chart-view .baseline-chart-hint {
+  margin-left: auto;
+  font-size: 0.82rem;
+  font-style: italic;
+  color: #2563eb;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+#baseline-chart-view .baseline-chart-hint::before {
+  content: "\1F449";
+  font-style: normal;
+}
+
+#baseline-chart-view .baseline-chart-card {
+  position: relative;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.05);
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  min-height: 0;
+  min-width: 0;
+  padding: 12px 14px;
+  overflow: hidden;
+}
+
+#baseline-chart-view .baseline-chart-wrap {
+  position: relative;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+#baseline-chart-view .baseline-chart-canvas-box {
+  position: relative;
+  height: 100%;
+  width: 100%;
+  min-height: 0;
+}
+
+#baseline-chart-view .baseline-chart-canvas-box canvas {
+  display: block;
+  height: 100% !important;
+  width: 100% !important;
+}
+
+#baseline-chart-view .baseline-chart-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #6a7789;
+  font-size: 0.92rem;
+}
+
+#baseline-chart-view .baseline-chart-overlay[hidden] {
+  display: none;
+}
+
+#baseline-chart-view #baselineChartError {
+  color: #b91c1c;
 }
 
 #national-operational-view .events-chart-canvas-wrap {
@@ -758,7 +955,7 @@
   }
 
   #national-operational-view .nov-filters-row {
-    grid-template-columns: minmax(120px, 0.8fr) minmax(120px, 1fr) minmax(0, 1.6fr) minmax(0, 0.9fr) minmax(0, 0.9fr);
+    grid-template-columns: auto minmax(120px, 0.8fr) minmax(120px, 1fr) minmax(0, 1.6fr) minmax(0, 0.9fr) minmax(0, 0.9fr);
   }
 
   #national-operational-view .nov-kpi-card {
@@ -799,8 +996,19 @@
     grid-template-columns: 1fr;
   }
 
-  #baseline-table-view .baseline-table-filters-row {
+  #baseline-table-view .baseline-table-filters-row,
+  #baseline-chart-view .baseline-chart-filters-row {
     flex-wrap: wrap;
+  }
+
+  #baseline-chart-view .national-operational-view-shell {
+    height: auto;
+    max-height: none;
+    overflow: visible;
+  }
+
+  #baseline-chart-view .baseline-chart-card {
+    min-height: 420px;
   }
 
   #baseline-table-view .baseline-census-table-header,
@@ -814,7 +1022,8 @@
 }
 
 @media (max-width: 420px) {
-  #baseline-table-view .baseline-table-time-filters {
+  #baseline-table-view .baseline-table-time-filters,
+  #baseline-chart-view .baseline-table-time-filters {
     flex-wrap: wrap;
   }
 

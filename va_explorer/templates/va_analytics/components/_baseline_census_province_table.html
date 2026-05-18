@@ -91,6 +91,24 @@
           </tr>
         {% endfor %}
       </tbody>
+      {% if bc_ward_total %}
+        <tfoot>
+          <tr class="bc-ward-total-row">
+            <td colspan="4">Ward Total / Average</td>
+            <td class="numeric">{{ bc_ward_total.hh_estimate }}</td>
+            <td class="numeric">{{ bc_ward_total.hh_enumerated }}</td>
+            <td class="numeric coverage-cell coverage-cell--{{ bc_ward_total.hh_coverage_band|default:'empty' }}">{% if bc_ward_total.hh_coverage is not None %}{{ bc_ward_total.hh_coverage }}%{% else %}&mdash;{% endif %}</td>
+            <td class="numeric">{{ bc_ward_total.pop_estimate }}</td>
+            <td class="numeric">{{ bc_ward_total.pop_enumerated }}</td>
+            <td class="numeric coverage-cell coverage-cell--{{ bc_ward_total.pop_coverage_band|default:'empty' }}">{% if bc_ward_total.pop_coverage is not None %}{{ bc_ward_total.pop_coverage }}%{% else %}&mdash;{% endif %}</td>
+            <td class="numeric">{{ bc_ward_total.refusals }}</td>
+            <td class="numeric">{{ bc_ward_total.non_contact }}</td>
+            <td class="numeric">{{ bc_ward_total.total_deaths }}</td>
+            <td class="numeric">{{ bc_ward_total.total_pregnancies }}</td>
+            <td class="numeric">{{ bc_ward_total.total_preg_outcomes }}</td>
+          </tr>
+        </tfoot>
+      {% endif %}
     </table>
   </div>
   <div class="baseline-census-pagination" aria-label="Province census table pagination">
@@ -98,4 +116,32 @@
     <span>Page {{ bc_page }} of {{ bc_total_pages }} | Rows: {{ bc_visible_count }} of {{ bc_total_count }}</span>
     <a href="?bc_page={{ bc_next_page }}" class="bc-page-link baseline-census-page-link {% if not bc_has_next %}disabled{% endif %}" data-table="bc-province" aria-disabled="{% if bc_has_next %}false{% else %}true{% endif %}">Next</a>
   </div>
+  {% if bc_grand_total %}
+    <div class="baseline-census-table-container baseline-census-grand-total" role="region" aria-label="Province census grand total">
+      <table class="baseline-census-table">
+        <colgroup>
+          <col style="width: 8%;"><col style="width: 8%;"><col style="width: 8%;"><col style="width: 7%;">
+          <col style="width: 6%;"><col style="width: 7%;"><col style="width: 6%;"><col style="width: 6%;">
+          <col style="width: 7%;"><col style="width: 6%;"><col style="width: 5%;"><col style="width: 6%;">
+          <col style="width: 6%;"><col style="width: 7%;"><col style="width: 7%;">
+        </colgroup>
+        <tbody>
+          <tr class="bc-grand-total-row">
+            <td colspan="4">Grand Total / Average</td>
+            <td class="numeric">{{ bc_grand_total.hh_estimate }}</td>
+            <td class="numeric">{{ bc_grand_total.hh_enumerated }}</td>
+            <td class="numeric coverage-cell coverage-cell--{{ bc_grand_total.hh_coverage_band|default:'empty' }}">{% if bc_grand_total.hh_coverage is not None %}{{ bc_grand_total.hh_coverage }}%{% else %}&mdash;{% endif %}</td>
+            <td class="numeric">{{ bc_grand_total.pop_estimate }}</td>
+            <td class="numeric">{{ bc_grand_total.pop_enumerated }}</td>
+            <td class="numeric coverage-cell coverage-cell--{{ bc_grand_total.pop_coverage_band|default:'empty' }}">{% if bc_grand_total.pop_coverage is not None %}{{ bc_grand_total.pop_coverage }}%{% else %}&mdash;{% endif %}</td>
+            <td class="numeric">{{ bc_grand_total.refusals }}</td>
+            <td class="numeric">{{ bc_grand_total.non_contact }}</td>
+            <td class="numeric">{{ bc_grand_total.total_deaths }}</td>
+            <td class="numeric">{{ bc_grand_total.total_pregnancies }}</td>
+            <td class="numeric">{{ bc_grand_total.total_preg_outcomes }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
 </div>

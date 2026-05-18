@@ -2237,6 +2237,39 @@ class RegionalOperationsComponentContextMixin:
     def _coverage_band(value):
         return _coverage_band_helper(value)
 
+    @staticmethod
+    def _summarize_csa_rows(rows):
+        """Totals/averages for a list of CSA row dicts, or ``None`` when empty.
+
+        Count columns are summed; ``coverage_pct`` is recomputed from the
+        summed visits/target rather than averaging percentages."""
+        if not rows:
+            return None
+        sum_fields = (
+            "visits",
+            "events",
+            "deaths",
+            "pregnancies",
+            "pregnancy_outcomes",
+            "overdue_without_interview",
+            "csa_target",
+        )
+        totals = dict.fromkeys(sum_fields, 0)
+        for row in rows:
+            for field in sum_fields:
+                value = row.get(field)
+                if value in (None, ""):
+                    continue
+                try:
+                    totals[field] += int(value)
+                except (TypeError, ValueError):
+                    continue
+        target = totals["csa_target"]
+        coverage_pct = round(totals["visits"] / target * 100, 1) if target else None
+        totals["coverage_pct"] = coverage_pct
+        totals["coverage_band"] = _coverage_band_helper(coverage_pct)
+        return totals
+
     def _get_csa_target_supervisor_map(self):
         cache_attr = "_csa_target_supervisor_map_cache"
         cache_meta = CSASupervisorTargetMap.objects.aggregate(
@@ -3137,6 +3170,7 @@ class RegionalOperationsComponentContextMixin:
         return {
             "csa_stats": csa_pagination["rows"],
             "csa_rows": csa_pagination["rows"],
+            "csa_total": self._summarize_csa_rows(csa_rows_sorted),
             "csa_sort": csa_sort,
             "csa_dir": csa_dir,
             "csa_search": csa_search,
