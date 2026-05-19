@@ -189,6 +189,8 @@ class TestBackwardsCompat:
 GEOID_A = "01021011002"  # EA with census records
 GEOID_B = "02030011004"  # EA in the target table with no enumeration yet
 GEOID_CODED = "01021011055"  # EA whose vital events use ODK coded geography
+GEOID_FALLBACK = "01021011077"  # EA populated on Household.ea, not cluster
+GEOID_UNMATCHED = "09021022004"  # EA absent from the target table entirely
 
 
 def _iso(dt):
@@ -317,6 +319,79 @@ def _build_coded_vital_events_fixture():
     PregnancyOutcome.objects.create(key="po-coded", submissiondate=recent, **coded_geo)
 
 
+def _build_household_ea_fallback_fixture():
+    now = timezone.now()
+    recent = _iso(now - timedelta(days=5))
+    SRSEAPopulationTarget.objects.create(
+        geoid=GEOID_FALLBACK,
+        province_name="CENTRAL",
+        district_name="CHISAMBA",
+        constituency_name="CHISAMBA CENTRAL",
+        ward_name="CHAMUKA",
+        household_target=1,
+        population_target=3,
+    )
+    household = Household.objects.create(
+        key="hh-ea-fallback",
+        cluster=None,
+        ea="EA_" + GEOID_FALLBACK,
+        submissiondate=recent,
+        consent="No",
+        result_list="Non-contact",
+    )
+    for idx in range(3):
+        HouseholdMember.objects.create(
+            household=household,
+            first_name=f"Fallback member {idx}",
+        )
+
+
+def _build_unmatched_ea_fixture():
+    """One CENTRAL target EA with an enumerated household inside it, plus a
+    second household whose EA is absent from the target table. The unmatched
+    household still names CENTRAL/CHISAMBA (in mixed case) so the chart can
+    attribute it by administrative text rather than dropping it."""
+    now = timezone.now()
+    recent = _iso(now - timedelta(days=5))
+
+    SRSEAPopulationTarget.objects.create(
+        geoid=GEOID_A,
+        province_name="CENTRAL",
+        district_name="CHISAMBA",
+        constituency_name="CHISAMBA CENTRAL",
+        ward_name="CHAMUKA",
+        household_target=10,
+        population_target=20,
+    )
+    cluster_a = SRSClusterLocation.add_root(
+        name=GEOID_A, location_type="ea", code="A1", status="Active"
+    )
+    resolved_hh = Household.objects.create(
+        key="hh-resolved",
+        cluster=cluster_a,
+        submissiondate=recent,
+    )
+    for idx in range(2):
+        HouseholdMember.objects.create(
+            household=resolved_hh, first_name=f"Resolved {idx}"
+        )
+
+    unmatched_hh = Household.objects.create(
+        key="hh-unmatched",
+        cluster=None,
+        ea=GEOID_UNMATCHED,
+        province="Central",
+        district="Chisamba",
+        constituency="Chisamba Central",
+        ward="Chamuka",
+        submissiondate=recent,
+    )
+    for idx in range(3):
+        HouseholdMember.objects.create(
+            household=unmatched_hh, first_name=f"Unmatched {idx}"
+        )
+
+
 def _client():
     client = Client()
     client.force_login(user=_dashboard_user())
@@ -398,6 +473,20 @@ class TestBaselineCensusTableData:
         assert row_a["total_pregnancies"] == 2
         assert row_a["total_deaths"] == 1
         assert row_a["total_preg_outcomes"] == 1
+
+    def test_population_and_households_fallback_to_household_ea_when_cluster_missing(
+        self,
+    ):
+        _build_household_ea_fallback_fixture()
+
+        row = _table_rows(_client())[GEOID_FALLBACK]
+
+        assert row["hh_enumerated"] == 1
+        assert row["pop_enumerated"] == 3
+        assert row["hh_coverage"] == 100.0
+        assert row["pop_coverage"] == 100.0
+        assert row["refusals"] == 1
+        assert row["non_contact"] == 1
 
     def test_current_census_excludes_unconfigured_province(self):
         _build_baseline_census_fixture()
@@ -819,6 +908,96 @@ class TestBaselineCensusChartData:
         assert central["household_estimate"] == 4
         assert central["household_enumerated"] == 4
         assert central["household_coverage"] == 100.0
+
+    def test_population_and_households_fallback_to_household_ea_when_cluster_missing(
+        self,
+    ):
+        _build_household_ea_fallback_fixture()
+
+        central = _chart_row(_chart_payload(_client()), "CENTRAL")
+
+        assert central["population_estimate"] == 3
+        assert central["population_enumerated"] == 3
+        assert central["population_coverage"] == 100.0
+        assert central["household_estimate"] == 1
+        assert central["household_enumerated"] == 1
+        assert central["household_coverage"] == 100.0
+
+    def test_unmatched_ea_members_fold_into_province_group(self):
+        _build_unmatched_ea_fixture()
+
+        payload = _chart_payload(_client())
+        central = _chart_row(payload, "CENTRAL")
+
+        # 2 resolved + 3 unmatched members; 1 resolved + 1 unmatched household.
+        assert central["population_enumerated"] == 5
+        assert central["household_enumerated"] == 2
+        # The unmatched household names CENTRAL, so no separate bucket appears.
+        assert all(row["value"] != "Unmatched" for row in payload["results"])
+
+    def test_unmatched_ea_members_fold_into_district_group(self):
+        _build_unmatched_ea_fixture()
+
+        payload = _chart_payload(_client(), level="district", province="CENTRAL")
+        chisamba = _chart_row(payload, "CHISAMBA")
+
+        assert chisamba["population_enumerated"] == 5
+        assert chisamba["household_enumerated"] == 2
+
+    def test_unmatched_ea_surfaces_as_bucket_at_ea_level(self):
+        _build_unmatched_ea_fixture()
+
+        payload = _chart_payload(
+            _client(),
+            level="ea",
+            province="CENTRAL",
+            district="CHISAMBA",
+            constituency="CHISAMBA CENTRAL",
+            ward="CHAMUKA",
+        )
+
+        # The resolved EA still carries its 2 members.
+        assert _chart_row(payload, GEOID_A)["population_enumerated"] == 2
+
+        # The EA missing from the target table surfaces explicitly instead of
+        # being silently dropped.
+        unmatched = _chart_row(payload, "Unmatched")
+        assert unmatched["population_enumerated"] == 3
+        assert unmatched["population_estimate"] == 0
+        assert unmatched["population_coverage"] is None
+        assert unmatched["has_children"] is False
+
+    def test_chart_population_total_reconciles_with_member_count(self):
+        _build_unmatched_ea_fixture()
+
+        payload = _chart_payload(_client())
+        total = sum(row["population_enumerated"] for row in payload["results"])
+
+        # No enumerated member is silently dropped, mirroring the Enumeration
+        # Coverage summary.
+        assert total == HouseholdMember.objects.count()
+
+    def test_unmatched_ea_respects_drilldown_filter(self):
+        _build_unmatched_ea_fixture()
+        # An unmatched household in another province must not leak into a
+        # drill-down scoped to CENTRAL.
+        other_hh = Household.objects.create(
+            key="hh-unmatched-other",
+            cluster=None,
+            ea=GEOID_UNMATCHED,
+            province="Copperbelt",
+            district="Kitwe",
+            submissiondate=_iso(timezone.now() - timedelta(days=5)),
+        )
+        for idx in range(7):
+            HouseholdMember.objects.create(
+                household=other_hh, first_name=f"Other {idx}"
+            )
+
+        payload = _chart_payload(_client(), level="district", province="CENTRAL")
+
+        assert _chart_row(payload, "CHISAMBA")["population_enumerated"] == 5
+        assert all(row["value"] != "Kitwe" for row in payload["results"])
 
     def test_death_estimate_and_coverage_are_null(self):
         _build_baseline_census_fixture()

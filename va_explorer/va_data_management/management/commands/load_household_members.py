@@ -89,36 +89,40 @@ class Command(BaseCommand):
         # Restore parent_key
         df["parent_key"] = parent_keys
 
-        # Build household map
-        hh_map = {h.key: h for h in Household.objects.all()}
+        # Build household map, keyed by a trimmed key so trailing whitespace or
+        # quoting differences in the CSV's parent_key do not cause silent skips.
+        hh_map = {str(h.key).strip(): h for h in Household.objects.all()}
         objects = []
         skipped_rows = []
+        skip_reasons = {"blank parent_key": 0, "household key not found": 0}
 
-        for i, row in df.iterrows():
+        for _, row in df.iterrows():
             parent_key = row.get("parent_key")
-            if parent_key not in hh_map:
-                self.stderr.write(
-                    self.style.WARNING(
-                        f"Skipping row {i}: household key '{parent_key}' not found"
-                    )
-                )
+            if pd.isnull(parent_key) or not str(parent_key).strip():
+                skip_reasons["blank parent_key"] += 1
                 skipped_rows.append(row)
                 continue
 
-            household = hh_map[parent_key]
+            household = hh_map.get(str(parent_key).strip())
+            if household is None:
+                skip_reasons["household key not found"] += 1
+                skipped_rows.append(row)
+                continue
+
             data = row.drop("parent_key").to_dict()
             obj = HouseholdMember(**data)
             obj.household = household
             objects.append(obj)
 
-        HouseholdMember.objects.bulk_create(objects)
+        HouseholdMember.objects.bulk_create(objects, batch_size=2000)
 
-        self.stdout.write(
-            self.style.SUCCESS(f"Imported {len(objects)} household members.")
-        )
-        self.stdout.write(self.style.WARNING(f"Skipped {len(skipped_rows)} row(s)."))
+        total_rows = len(df)
+        imported = len(objects)
+        skipped = len(skipped_rows)
 
-        # Save skipped rows to file
+        # Save skipped rows before reporting so the summary can point at the
+        # log that explains every skip.
+        log_file = None
         if skipped_rows:
             os.makedirs(log_dir, exist_ok=True)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -126,4 +130,36 @@ class Command(BaseCommand):
                 log_dir, f"skipped_household_members_{timestamp}.csv"
             )
             pd.DataFrame(skipped_rows).to_csv(log_file, index=False)
-            self.stdout.write(self.style.WARNING(f"Logged skipped rows to {log_file}"))
+
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"Imported {imported} of {total_rows} household members."
+            )
+        )
+        if skipped:
+            self.stdout.write(self.style.WARNING(f"Skipped {skipped} row(s):"))
+            for reason, count in skip_reasons.items():
+                if count:
+                    self.stdout.write(self.style.WARNING(f"  - {reason}: {count}"))
+            if log_file:
+                self.stdout.write(
+                    self.style.WARNING(f"Logged skipped rows to {log_file}")
+                )
+
+        # Make a failed or mostly-failed run impossible to mistake for success.
+        if imported == 0:
+            self.stderr.write(
+                self.style.ERROR(
+                    "No household members were imported — every row was skipped. "
+                    "Check that the matching Household records are loaded and that "
+                    "the CSV's parent_key values match Household.key."
+                )
+            )
+        elif total_rows and skipped / total_rows > 0.5:
+            self.stderr.write(
+                self.style.ERROR(
+                    f"More than half the rows were skipped ({skipped}/{total_rows}). "
+                    "This usually means the CSV's parent_key values do not match "
+                    "the loaded Household records — review the skipped-rows log."
+                )
+            )

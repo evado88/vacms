@@ -1618,6 +1618,182 @@ def _vital_event_counts_by_geoid(
     return counts
 
 
+def _resolve_household_geoid(row, *, cluster_key, ea_key, target_by_geoid):
+    """Resolve household-derived records to a known target geoid.
+
+    Imported household data can have a missing cluster while still carrying the
+    raw EA value. Prefer the linked cluster when it joins to a filtered target
+    row, then fall back to ``Household.ea``.
+    """
+    cluster_geoid = normalize_ea_to_geoid(row.get(cluster_key))
+    if cluster_geoid in target_by_geoid:
+        return cluster_geoid
+
+    ea_geoid = normalize_ea_to_geoid(row.get(ea_key))
+    if ea_geoid in target_by_geoid:
+        return ea_geoid
+    return ""
+
+
+def _household_counts_by_geoid(start_iso, end_iso, date_filter, target_rows):
+    target_by_geoid = _baseline_target_by_geoid(target_rows)
+    if not target_by_geoid:
+        return {}
+
+    from va_explorer.va_data_management.models import Household
+
+    counts = {}
+    rows = (
+        date_filter(Household.objects.all(), "submissiondate", start_iso, end_iso)
+        .values("cluster__name", "ea")
+        .annotate(
+            hh_enumerated=Count("pk"),
+            refusals=Count(
+                "pk",
+                filter=Q(consent__iexact="No") | Q(result_list__iexact="Refused"),
+            ),
+            non_contact=Count("pk", filter=Q(result_list__iexact="Non-contact")),
+        )
+    )
+    for row in rows:
+        geoid = _resolve_household_geoid(
+            row,
+            cluster_key="cluster__name",
+            ea_key="ea",
+            target_by_geoid=target_by_geoid,
+        )
+        if not geoid:
+            continue
+        acc = counts.setdefault(
+            geoid, {"hh_enumerated": 0, "refusals": 0, "non_contact": 0}
+        )
+        acc["hh_enumerated"] += row["hh_enumerated"]
+        acc["refusals"] += row["refusals"]
+        acc["non_contact"] += row["non_contact"]
+    return counts
+
+
+def _household_member_counts_by_geoid(start_iso, end_iso, date_filter, target_rows):
+    target_by_geoid = _baseline_target_by_geoid(target_rows)
+    if not target_by_geoid:
+        return {}
+
+    from va_explorer.va_data_management.models import HouseholdMember
+
+    counts = {}
+    rows = (
+        date_filter(
+            HouseholdMember.objects.exclude(household__isnull=True),
+            "household__submissiondate",
+            start_iso,
+            end_iso,
+        )
+        .values("household__cluster__name", "household__ea")
+        .annotate(cnt=Count("pk"))
+    )
+    for row in rows:
+        geoid = _resolve_household_geoid(
+            row,
+            cluster_key="household__cluster__name",
+            ea_key="household__ea",
+            target_by_geoid=target_by_geoid,
+        )
+        if geoid:
+            counts[geoid] = counts.get(geoid, 0) + row["cnt"]
+    return counts
+
+
+def _unmatched_household_member_counts(start_iso, end_iso, date_filter, target_rows):
+    """Household members whose EA is absent from the target table.
+
+    Mirrors :func:`_household_member_counts_by_geoid` but keeps the rows it
+    *cannot* resolve, tagged with the household's denormalised administrative
+    text so the chart can still attribute them to a province/district/etc.
+    """
+    target_by_geoid = _baseline_target_by_geoid(target_rows)
+    if not target_by_geoid:
+        return []
+
+    from va_explorer.va_data_management.models import HouseholdMember
+
+    rows = (
+        date_filter(
+            HouseholdMember.objects.exclude(household__isnull=True),
+            "household__submissiondate",
+            start_iso,
+            end_iso,
+        )
+        .values(
+            "household__cluster__name",
+            "household__ea",
+            "household__province",
+            "household__district",
+            "household__constituency",
+            "household__ward",
+        )
+        .annotate(cnt=Count("pk"))
+    )
+    unmatched = []
+    for row in rows:
+        geoid = _resolve_household_geoid(
+            row,
+            cluster_key="household__cluster__name",
+            ea_key="household__ea",
+            target_by_geoid=target_by_geoid,
+        )
+        if geoid:
+            continue
+        unmatched.append(
+            {
+                "province": row["household__province"],
+                "district": row["household__district"],
+                "constituency": row["household__constituency"],
+                "ward": row["household__ward"],
+                "cnt": row["cnt"],
+            }
+        )
+    return unmatched
+
+
+def _unmatched_household_counts(start_iso, end_iso, date_filter, target_rows):
+    """Households whose EA is absent from the target table.
+
+    Companion to :func:`_unmatched_household_member_counts` for the Households
+    indicator. Counts are tagged with the household's administrative text.
+    """
+    target_by_geoid = _baseline_target_by_geoid(target_rows)
+    if not target_by_geoid:
+        return []
+
+    from va_explorer.va_data_management.models import Household
+
+    rows = (
+        date_filter(Household.objects.all(), "submissiondate", start_iso, end_iso)
+        .values("cluster__name", "ea", "province", "district", "constituency", "ward")
+        .annotate(cnt=Count("pk"))
+    )
+    unmatched = []
+    for row in rows:
+        geoid = _resolve_household_geoid(
+            row,
+            cluster_key="cluster__name",
+            ea_key="ea",
+            target_by_geoid=target_by_geoid,
+        )
+        if geoid:
+            continue
+        unmatched.append(
+            {
+                "province": row["province"],
+                "district": row["district"],
+                "constituency": row["constituency"],
+                "ward": row["ward"],
+                "cnt": row["cnt"],
+            }
+        )
+    return unmatched
+
+
 class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
     template_name = "va_analytics/components/_baseline_census_province_table.html"
 
@@ -1672,12 +1848,8 @@ class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
         start_iso=None,
         end_iso=None,
     ):
-        from django.db.models import Count, Q
-
         from va_explorer.va_data_management.models import (
             Death,
-            Household,
-            HouseholdMember,
             Pregnancy,
             PregnancyOutcome,
             SRSEAPopulationTarget,
@@ -1687,53 +1859,20 @@ class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
         )
 
         # --- Enrichment counts, keyed by canonical geoid (one query per model) ---
-        hh_by_geoid = {}
-        hh_rows = (
-            self._date_filter(
-                Household.objects.exclude(cluster__isnull=True),
-                "submissiondate",
-                start_iso,
-                end_iso,
-            )
-            .values("cluster__name")
-            .annotate(
-                hh_enumerated=Count("pk"),
-                refusals=Count(
-                    "pk",
-                    filter=Q(consent__iexact="No") | Q(result_list__iexact="Refused"),
-                ),
-                non_contact=Count("pk", filter=Q(result_list__iexact="Non-contact")),
-            )
-        )
-        for row in hh_rows:
-            geoid = normalize_ea_to_geoid(row["cluster__name"])
-            if not geoid:
-                continue
-            acc = hh_by_geoid.setdefault(
-                geoid, {"hh_enumerated": 0, "refusals": 0, "non_contact": 0}
-            )
-            acc["hh_enumerated"] += row["hh_enumerated"]
-            acc["refusals"] += row["refusals"]
-            acc["non_contact"] += row["non_contact"]
-
-        pop_by_geoid = {}
-        member_rows = (
-            self._date_filter(
-                HouseholdMember.objects.exclude(household__cluster__isnull=True),
-                "household__submissiondate",
-                start_iso,
-                end_iso,
-            )
-            .values("household__cluster__name")
-            .annotate(cnt=Count("pk"))
-        )
-        for row in member_rows:
-            geoid = normalize_ea_to_geoid(row["household__cluster__name"])
-            if geoid:
-                pop_by_geoid[geoid] = pop_by_geoid.get(geoid, 0) + row["cnt"]
-
         all_target_rows_for_geo = list(
             SRSEAPopulationTarget.objects.all().values(*_BASELINE_CENSUS_TARGET_FIELDS)
+        )
+        hh_by_geoid = _household_counts_by_geoid(
+            start_iso,
+            end_iso,
+            self._date_filter,
+            all_target_rows_for_geo,
+        )
+        pop_by_geoid = _household_member_counts_by_geoid(
+            start_iso,
+            end_iso,
+            self._date_filter,
+            all_target_rows_for_geo,
         )
         po_by_geoid = _vital_event_counts_by_geoid(
             PregnancyOutcome,
@@ -2142,6 +2281,89 @@ _CENSUS_LEVEL_FIELD = {
     "ward": "ward_name",
     "ea": "geoid",
 }
+# Bucket for enumerated records whose EA is missing from the target table.
+_UNMATCHED_GROUP_KEY = "Unmatched"
+
+
+def _new_census_group():
+    return {
+        "population_estimate": 0,
+        "household_estimate": 0,
+        "population_enumerated": 0,
+        "household_enumerated": 0,
+        "death_enumerated": 0,
+        "pregnancy_enumerated": 0,
+        "pregnancy_outcome_enumerated": 0,
+    }
+
+
+def _attribute_unmatched_counts(
+    groups,
+    order,
+    level,
+    parent_filters,
+    location_level,
+    location_value,
+    excluded_provinces,
+    *,
+    unmatched_members,
+    unmatched_households,
+):
+    """Fold EA-unresolved household counts into the level's groups.
+
+    Rows whose EA is missing from the target table are attributed by the
+    household's denormalised province/district/constituency/ward text. They
+    land in the matching group when one exists, otherwise in an explicit
+    "Unmatched" group, so chart totals never silently lose enumerated records.
+    """
+    if not unmatched_members and not unmatched_households:
+        return
+
+    group_by_norm = {_baseline_geo_key(key): key for key in order}
+    excluded_norm = {_baseline_geo_key(name) for name in (excluded_provinces or [])}
+    parent_levels = ("province", "district", "constituency", "ward")
+
+    def resolve_group(row):
+        # Province exclusion mirrors the target-row filtering.
+        if excluded_norm and _baseline_geo_key(row.get("province")) in excluded_norm:
+            return None
+        # Drill-down parent filters.
+        for parent in parent_levels:
+            wanted = (parent_filters or {}).get(parent)
+            if wanted and _baseline_geo_key(row.get(parent)) != _baseline_geo_key(
+                wanted
+            ):
+                return None
+        # Location search filter, applied to the matching admin field.
+        if location_value and location_level in parent_levels:
+            text = str(row.get(location_level) or "")
+            if location_value.lower() not in text.lower():
+                return None
+        # An unmatched row has no target EA, so at EA granularity it can only
+        # land in the explicit "Unmatched" group.
+        if level == "ea":
+            return _UNMATCHED_GROUP_KEY
+        return group_by_norm.get(
+            _baseline_geo_key(row.get(level)), _UNMATCHED_GROUP_KEY
+        )
+
+    def bucket(group_key):
+        acc = groups.get(group_key)
+        if acc is None:
+            acc = _new_census_group()
+            groups[group_key] = acc
+            order.append(group_key)
+        return acc
+
+    for row in unmatched_members:
+        group_key = resolve_group(row)
+        if group_key is not None:
+            bucket(group_key)["population_enumerated"] += row["cnt"]
+
+    for row in unmatched_households:
+        group_key = resolve_group(row)
+        if group_key is not None:
+            bucket(group_key)["household_enumerated"] += row["cnt"]
 
 
 def aggregate_census_by_level(
@@ -2169,8 +2391,6 @@ def aggregate_census_by_level(
     """
     from va_explorer.va_data_management.models import (
         Death,
-        Household,
-        HouseholdMember,
         Pregnancy,
         PregnancyOutcome,
         SRSEAPopulationTarget,
@@ -2217,43 +2437,24 @@ def aggregate_census_by_level(
         geoid_to_group[row["geoid"]] = group_key
         acc = groups.get(group_key)
         if acc is None:
-            acc = {
-                "population_estimate": 0,
-                "household_estimate": 0,
-                "population_enumerated": 0,
-                "household_enumerated": 0,
-                "death_enumerated": 0,
-                "pregnancy_enumerated": 0,
-                "pregnancy_outcome_enumerated": 0,
-            }
+            acc = _new_census_group()
             groups[group_key] = acc
             order.append(group_key)
         acc["population_estimate"] += row["population_target"] or 0
         acc["household_estimate"] += row["household_target"] or 0
 
     # --- Enumerated counts, one query per model, keyed by canonical geoid ---
-    def _counts_by_geoid(queryset, date_field, key_field):
-        counts = {}
-        rows = (
-            date_filter(queryset, date_field, start_iso, end_iso)
-            .values(key_field)
-            .annotate(cnt=Count("pk"))
-        )
-        for row in rows:
-            geoid = normalize_ea_to_geoid(row[key_field])
-            if geoid:
-                counts[geoid] = counts.get(geoid, 0) + row["cnt"]
-        return counts
-
-    hh_by_geoid = _counts_by_geoid(
-        Household.objects.exclude(cluster__isnull=True),
-        "submissiondate",
-        "cluster__name",
+    hh_by_geoid = _household_counts_by_geoid(
+        start_iso,
+        end_iso,
+        date_filter,
+        target_rows,
     )
-    pop_by_geoid = _counts_by_geoid(
-        HouseholdMember.objects.exclude(household__cluster__isnull=True),
-        "household__submissiondate",
-        "household__cluster__name",
+    pop_by_geoid = _household_member_counts_by_geoid(
+        start_iso,
+        end_iso,
+        date_filter,
+        target_rows,
     )
     death_by_geoid = _vital_event_counts_by_geoid(
         Death,
@@ -2284,11 +2485,34 @@ def aggregate_census_by_level(
     # --- Roll EA-level counts up to the requested level ---
     for geoid, group_key in geoid_to_group.items():
         acc = groups[group_key]
-        acc["household_enumerated"] += hh_by_geoid.get(geoid, 0)
+        acc["household_enumerated"] += hh_by_geoid.get(geoid, {}).get(
+            "hh_enumerated", 0
+        )
         acc["population_enumerated"] += pop_by_geoid.get(geoid, 0)
         acc["death_enumerated"] += death_by_geoid.get(geoid, 0)
         acc["pregnancy_enumerated"] += pregnancy_by_geoid.get(geoid, 0)
         acc["pregnancy_outcome_enumerated"] += pregnancy_outcome_by_geoid.get(geoid, 0)
+
+    # --- Surface enumerated household data whose EA is absent from the target
+    # table. _resolve_household_geoid drops these rows, so they never reach the
+    # geoid roll-up above; attributing them by the household's own
+    # administrative text keeps the chart total in step with the Enumeration
+    # Coverage summary instead of silently losing people. ---
+    _attribute_unmatched_counts(
+        groups,
+        order,
+        level,
+        parent_filters,
+        location_level,
+        location_value,
+        excluded_provinces,
+        unmatched_members=_unmatched_household_member_counts(
+            start_iso, end_iso, date_filter, target_rows
+        ),
+        unmatched_households=_unmatched_household_counts(
+            start_iso, end_iso, date_filter, target_rows
+        ),
+    )
 
     child_index = _CENSUS_LEVEL_ORDER.index(level) + 1
     child_level = (
@@ -2330,12 +2554,20 @@ def aggregate_census_by_level(
                 "pregnancy_outcome_coverage": coverage(
                     acc["pregnancy_outcome_enumerated"], None
                 ),
-                "has_children": child_level is not None,
+                "has_children": (
+                    child_level is not None and group_key != _UNMATCHED_GROUP_KEY
+                ),
             }
         )
 
-    # Stable, user-friendly ordering by the geography label.
-    results.sort(key=lambda row: str(row["value"]).lower())
+    # Stable, user-friendly ordering by the geography label, with the
+    # "Unmatched" bucket pinned last so it never displaces real geographies.
+    results.sort(
+        key=lambda row: (
+            row["value"] == _UNMATCHED_GROUP_KEY,
+            str(row["value"]).lower(),
+        )
+    )
     return results, child_level
 
 
