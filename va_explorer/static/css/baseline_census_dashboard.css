@@ -22,11 +22,11 @@
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   height: calc(100vh - 180px);
-  height: calc(100dvh - 180px);
+  height: var(--bcd-shell-height, calc(100dvh - 180px));
   max-height: calc(100vh - 180px);
-  max-height: calc(100dvh - 180px);
-  min-height: 0;
-  overflow: hidden;
+  max-height: var(--bcd-shell-height, calc(100dvh - 180px));
+  min-height: 360px;
+  overflow: auto;
   padding: 20px;
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
 }
@@ -68,7 +68,7 @@
 
 #national-operational-view .nov-overview-left-container {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   gap: 12px;
   min-height: 0;
 }
@@ -198,7 +198,7 @@
 
 #national-operational-view #novKpiCardsContainer .nov-coverage-chart-wrap {
   height: 100%;
-  min-height: 0;
+  min-height: 180px;
   min-width: 0;
   position: relative;
 }
@@ -643,11 +643,11 @@
   grid-template-rows: auto auto auto minmax(0, 1fr);
   gap: 4px;
   height: calc(100vh - 180px);
-  height: calc(100dvh - 180px);
+  height: var(--bcd-shell-height, calc(100dvh - 180px));
   max-height: calc(100vh - 180px);
-  max-height: calc(100dvh - 180px);
-  min-height: 0;
-  overflow: hidden;
+  max-height: var(--bcd-shell-height, calc(100dvh - 180px));
+  min-height: 360px;
+  overflow: auto;
   padding: 20px;
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
 }

@@ -883,6 +883,64 @@ const resizeChartsForTab = (tab) => {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Viewport-fit sizing: keep the active tab's shell within the space between
+// its top edge and the fixed footer banner, leaving a 20px gap. Recomputed on
+// tab switch and (debounced) on window resize. The computed height is
+// published as the --bcd-shell-height custom property, which the shell CSS
+// consumes (with a calc() fallback for pre-JS render).
+// ---------------------------------------------------------------------------
+const BCD_FOOTER_SELECTOR = "footer.footer";
+const BCD_WRAPPER_SELECTOR = ".main-content-wrapper";
+const BCD_BOTTOM_GAP = 20;
+const BCD_MIN_SHELL = 360;
+const BCD_FALLBACK_FOOTER_H = 88;
+
+const applyBaselineViewportHeight = () => {
+  const root = document.querySelector(SHELL_SELECTOR);
+  if (!root) return;
+  const panel = root.querySelector(".tab-pane.show.active");
+  const shell = panel && panel.querySelector(".national-operational-view-shell");
+  if (!shell) return;
+
+  const footer = document.querySelector(BCD_FOOTER_SELECTOR);
+  const footerTop = footer
+    ? footer.getBoundingClientRect().top
+    : window.innerHeight - BCD_FALLBACK_FOOTER_H;
+
+  // getBoundingClientRect().top is viewport-relative; add the scroll offsets so
+  // the result is the shell's resting position regardless of page scroll.
+  const wrapper = document.querySelector(BCD_WRAPPER_SELECTOR);
+  const wrapperScrollTop = wrapper ? wrapper.scrollTop : 0;
+  const shellTop =
+    shell.getBoundingClientRect().top + wrapperScrollTop + window.scrollY;
+
+  const available = Math.max(
+    Math.round(footerTop - shellTop - BCD_BOTTOM_GAP),
+    BCD_MIN_SHELL
+  );
+  root.style.setProperty("--bcd-shell-height", `${available}px`);
+
+  // Resize the active tab's charts so Chart.js reflows to the new height.
+  resizeChartsForTab(panel.dataset.tabPanel || "overview");
+};
+
+let bcdResizeTimer = null;
+const scheduleBaselineViewportHeight = () => {
+  if (bcdResizeTimer) clearTimeout(bcdResizeTimer);
+  bcdResizeTimer = setTimeout(() => {
+    bcdResizeTimer = null;
+    applyBaselineViewportHeight();
+  }, 120);
+};
+
+let bcdResizeBound = false;
+const bindBaselineViewportResize = () => {
+  if (bcdResizeBound) return;
+  bcdResizeBound = true;
+  window.addEventListener("resize", scheduleBaselineViewportHeight);
+};
+
 const initOverviewTab = async () => {
   await loadSlotOnce("novKpisComponentSlot");
   renderOverviewCoverageCharts();
@@ -1517,6 +1575,7 @@ document.addEventListener("dashboard:refresh-tab", (event) => {
   const started = perfNow();
   initBaselineCensusTab(tab)
     .then(() => {
+      applyBaselineViewportHeight();
       const durationMs = perfNow() - started;
       if (!firstRenderMeasured) {
         firstRenderMeasured = true;
@@ -1540,3 +1599,8 @@ document.addEventListener("dashboard:refresh-tab", (event) => {
     })
     .catch((error) => console.error(error));
 });
+
+// Keep the Baseline Census Dashboard shells fitted to the viewport: bind the
+// debounced resize handler once, and run an initial sizing pass.
+bindBaselineViewportResize();
+scheduleBaselineViewportHeight();
