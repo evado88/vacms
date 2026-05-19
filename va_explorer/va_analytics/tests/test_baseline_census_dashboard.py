@@ -1,3 +1,5 @@
+import csv
+import io
 from datetime import timedelta
 from datetime import timezone as dt_timezone
 
@@ -141,6 +143,8 @@ class TestBaselineCensusComponentEndpoints:
         assert "Total Deaths" in body
         assert "Total Pregnancies" in body
         assert "Total Preg. Outcomes" in body
+        assert "Download CSV" in body
+        assert reverse("va_analytics:baseline-census-province-table-csv-export") in body
 
 
 class TestBaselineCensusDataEndpoints:
@@ -346,6 +350,10 @@ def _all_table_rows(client, **params):
     return merged
 
 
+def _csv_response_rows(response):
+    return list(csv.DictReader(io.StringIO(response.content.decode())))
+
+
 class TestBaselineCensusTableData:
     def test_rows_sourced_from_target_table(self):
         _build_baseline_census_fixture()
@@ -486,6 +494,66 @@ class TestBaselineCensusTableData:
         assert row["total_deaths"] == 1
         assert row["total_pregnancies"] == 1
         assert row["total_preg_outcomes"] == 1
+
+    def test_csv_export_returns_full_dataset_and_ignores_normal_filters(self):
+        _build_baseline_census_fixture()
+        client = _client()
+
+        response = client.get(
+            reverse("va_analytics:baseline-census-province-table-csv-export"),
+            {
+                "location_level": "province",
+                "location_value": "COPPERBELT",
+                "bc_province_search": "COPPERBELT",
+                "bc_page": "99",
+            },
+        )
+
+        assert response.status_code == 200
+        assert response["Content-Type"].startswith("text/csv")
+        assert "attachment;" in response["Content-Disposition"]
+        rows = _csv_response_rows(response)
+        by_ea = {row["EA"]: row for row in rows if row["EA"]}
+        assert {GEOID_A, GEOID_B}.issubset(by_ea)
+        assert by_ea[GEOID_A]["Province"] == "CENTRAL"
+        assert by_ea[GEOID_A]["HH Enumerated"] == "4"
+        assert by_ea[GEOID_A]["Pop. Coverage %"] == "100.0"
+
+    def test_csv_export_applies_current_census_only_when_requested(self):
+        _build_baseline_census_fixture()
+        BaselineCensusProvince.objects.create(
+            province_name="COPPERBELT", is_current=False
+        )
+        client = _client()
+
+        all_response = client.get(
+            reverse("va_analytics:baseline-census-province-table-csv-export"),
+            {"current_census": "false"},
+        )
+        current_response = client.get(
+            reverse("va_analytics:baseline-census-province-table-csv-export"),
+            {"current_census": "true"},
+        )
+
+        all_eas = {row["EA"] for row in _csv_response_rows(all_response) if row["EA"]}
+        current_eas = {
+            row["EA"] for row in _csv_response_rows(current_response) if row["EA"]
+        }
+        assert {GEOID_A, GEOID_B}.issubset(all_eas)
+        assert current_eas == {GEOID_A}
+
+    def test_csv_export_empty_dataset_has_headers(self):
+        response = _client().get(
+            reverse("va_analytics:baseline-census-province-table-csv-export")
+        )
+
+        assert response.status_code == 200
+        assert (
+            response.content.decode()
+            .splitlines()[0]
+            .startswith("Province,District,Ward,EA")
+        )
+        assert _csv_response_rows(response) == []
 
 
 class TestBaselineCensusSharedFilterRendering:

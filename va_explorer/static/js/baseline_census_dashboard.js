@@ -1395,6 +1395,16 @@ document.querySelectorAll(`${SHELL_SELECTOR} [data-tab]`).forEach((tabLink) => {
 });
 
 document.addEventListener("click", (event) => {
+  const downloadLink = event.target.closest("[data-baseline-census-download]");
+  if (downloadLink) {
+    event.preventDefault();
+    const url = new URL(downloadLink.href, window.location.origin);
+    const state = syncBaselineFilterStateFromControls();
+    url.searchParams.set("current_census", state.current ? "true" : "false");
+    window.location.assign(url.toString());
+    return;
+  }
+
   const trigger = event.target.closest("[data-action='refresh-component']");
   if (!trigger) return;
   const targetSelector = trigger.dataset.target || "";

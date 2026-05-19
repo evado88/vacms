@@ -526,6 +526,21 @@
   min-width: 0;
 }
 
+#baseline-table-view .baseline-census-download-button {
+  background: #ffffff;
+  border-color: #009140;
+  color: #009140;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+#baseline-table-view .baseline-census-download-button:hover,
+#baseline-table-view .baseline-census-download-button:focus {
+  background: #009140;
+  border-color: #009140;
+  color: #ffffff;
+}
+
 #baseline-table-view .baseline-census-search {
   flex: 1 1 0;
   min-width: 0;
@@ -843,7 +858,9 @@
 
 #baseline-chart-view .census-chart-subtab--active:hover,
 #baseline-chart-view .census-chart-subtab--active:focus {
-  color: #ffffff;
+  background: #ffffff;
+  border-color: #009140;
+  color: #009140;
 }
 
 /* The sub-panels container is the chart card surface; only the active panel

@@ -1,3 +1,4 @@
+import csv
 import difflib
 import logging
 import math
@@ -18,7 +19,7 @@ from django.db.models import (
     Subquery,
 )
 from django.db.models.functions import Substr
-from django.http import JsonResponse
+from django.http import HttpResponse, JsonResponse
 from django.utils import timezone
 from django.utils.dateparse import parse_date as django_parse_date
 from django.utils.dateparse import parse_datetime as django_parse_datetime
@@ -3088,6 +3089,29 @@ class RegionalOperationsComponentContextMixin:
             "province_scope": province_scope,
         }
 
+    def _get_csa_export_rows(self):
+        """Full CSA table dataset for CSV export.
+
+        The export intentionally ignores interactive geography, date, search,
+        sort, and pagination filters while preserving user province access
+        restrictions and the table's CSA aggregation/coverage logic.
+        """
+        rows = self._build_csa_rows(
+            "national",
+            "",
+            "",
+            self._allowed_province_names(),
+            "all",
+        )
+        rows = self._sort_rows(rows, "visits", "desc")
+        return sorted(
+            rows,
+            key=lambda row: (
+                str(row.get("status") or "").strip().lower()
+                == CSASupervisorTargetMap.STATUS_INACTIVE
+            ),
+        )
+
     def _get_csa_context(self, params):
         """Build context for the CSA supervision table only."""
         selected_geo = params["selected_geo"]
@@ -3401,6 +3425,76 @@ class RegionalOperationsCsaComponent(
         params = self._resolve_regional_params()
         context.update(self._get_csa_context(params))
         return context
+
+
+class RegionalOperationsCsaCsvExport(
+    RegionalOperationsComponentContextMixin, CustomAuthMixin, View
+):
+    _CSV_COLUMNS = (
+        ("name", "CSA Name"),
+        ("province", "Province"),
+        ("supervisor", "Supervisor"),
+        ("district", "District"),
+        ("ward", "Ward"),
+        ("visits", "Visits"),
+        ("events", "Events"),
+        ("deaths", "Deaths"),
+        ("pregnancies", "Pregnancies"),
+        ("pregnancy_outcomes", "Pregnancy Outcomes"),
+        (
+            "overdue_without_interview",
+            "Pregnancies >= 6 mo. Past Due Date Without Interview",
+        ),
+        ("csa_target", "CSA Target"),
+        ("coverage_pct", "Coverage %"),
+        ("status", "Status"),
+    )
+
+    def get(self, request, *args, **kwargs):
+        try:
+            rows = self._get_csa_export_rows()
+            total = self._summarize_csa_rows(rows)
+            return self._csv_response(rows, total)
+        except Exception:
+            logger.exception("CSA supervision CSV export failed")
+            return JsonResponse(
+                {"error": "Unable to export CSA supervision data."}, status=500
+            )
+
+    def _csv_response(self, rows, total):
+        filename = timezone.now().strftime("csa_supervision_data_%Y%m%d_%H%M%S.csv")
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        writer = csv.writer(response)
+        writer.writerow([label for _, label in self._CSV_COLUMNS])
+        for row in rows:
+            writer.writerow(
+                [self._csv_value(row.get(key)) for key, _ in self._CSV_COLUMNS]
+            )
+        if total:
+            writer.writerow(
+                [
+                    "Total / Average",
+                    "",
+                    "",
+                    "",
+                    "",
+                    self._csv_value(total.get("visits")),
+                    self._csv_value(total.get("events")),
+                    self._csv_value(total.get("deaths")),
+                    self._csv_value(total.get("pregnancies")),
+                    self._csv_value(total.get("pregnancy_outcomes")),
+                    self._csv_value(total.get("overdue_without_interview")),
+                    self._csv_value(total.get("csa_target")),
+                    self._csv_value(total.get("coverage_pct")),
+                    "",
+                ]
+            )
+        return response
+
+    @staticmethod
+    def _csv_value(value):
+        return "" if value is None else value
 
 
 class RegionalOperationsMsoComponent(

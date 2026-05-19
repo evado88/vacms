@@ -1,4 +1,6 @@
+import csv
 import datetime as dt
+import io
 import json
 from datetime import date, datetime
 
@@ -1813,6 +1815,79 @@ def test_csa_component_paginates_ten_rows_per_page(user: User):
     assert response.context["csa_visible_count"] == 10
     assert response.context["csa_total_count"] == 11
     assert response.context["csa_total_pages"] == 2
+
+
+def _csv_response_rows(response):
+    return list(csv.DictReader(io.StringIO(response.content.decode())))
+
+
+def test_csa_component_renders_download_button(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    response = client.get("/regional-operations/components/csa/", follow=True)
+
+    assert response.status_code == 200
+    assert b"Download CSV" in response.content
+    assert (
+        reverse("home:regional_operations_csa_csv_export").encode() in response.content
+    )
+
+
+def test_csa_csv_export_returns_full_unfiltered_dataset(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    for name, supervisor, district in (
+        ("Alice", "Supervisor Alpha", "Lusaka"),
+        ("Bob", "Supervisor Beta", "Kafue"),
+    ):
+        CSASupervisorTargetMap.objects.create(
+            csa_name_raw=f"{name}_1",
+            csa_display_name=name,
+            csa_name_normalized=name.lower(),
+            supervisor_name=supervisor,
+            csa_target=10,
+            status=CSASupervisorTargetMap.STATUS_ACTIVE,
+        )
+        CSADailyTracker.objects.create(
+            key=f"export-{name}",
+            enumerator=f"{name}_1",
+            province="Lusaka",
+            district=district,
+            ward="Ward 1",
+            today=date.today().isoformat(),
+            num_death="1",
+            num_preg="1",
+            num_outcome="0",
+        )
+
+    response = client.get(
+        reverse("home:regional_operations_csa_csv_export"),
+        {"csa_search": "Alice", "csa_supervisor_search": "Alpha"},
+    )
+
+    assert response.status_code == 200
+    assert response["Content-Type"].startswith("text/csv")
+    assert "attachment;" in response["Content-Disposition"]
+    rows = _csv_response_rows(response)
+    names = {row["CSA Name"] for row in rows}
+    assert {"Alice", "Bob", "Total / Average"}.issubset(names)
+    alice = next(row for row in rows if row["CSA Name"] == "Alice")
+    assert alice["Supervisor"] == "Supervisor Alpha"
+    assert alice["Deaths"] == "1"
+    assert alice["Pregnancies"] == "1"
+
+
+def test_csa_csv_export_empty_dataset_has_headers(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    response = client.get(reverse("home:regional_operations_csa_csv_export"))
+
+    assert response.status_code == 200
+    assert response.content.decode().splitlines()[0].startswith("CSA Name,Province")
+    assert _csv_response_rows(response) == []
 
 
 def test_mso_component_paginates_ten_rows_per_page(user: User):

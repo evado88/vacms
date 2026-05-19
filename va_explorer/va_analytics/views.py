@@ -1,3 +1,4 @@
+import csv
 import hashlib
 import json
 import logging
@@ -20,7 +21,7 @@ from django.db.models import (
     When,
 )
 from django.db.models.functions import Cast, Lower, Substr, Trim
-from django.http import JsonResponse
+from django.http import HttpResponse, JsonResponse
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_date as django_parse_date
@@ -1658,7 +1659,19 @@ class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
         "total_preg_outcomes",
     )
 
-    def get_context_data(self, **kwargs):
+    def _build_census_rows(
+        self,
+        *,
+        bc_current=False,
+        location_level="",
+        location_value="",
+        bc_province="",
+        bc_district="",
+        bc_ward="",
+        bc_ea="",
+        start_iso=None,
+        end_iso=None,
+    ):
         from django.db.models import Count, Q
 
         from va_explorer.va_data_management.models import (
@@ -1672,43 +1685,6 @@ class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
         from va_explorer.va_data_management.utils.baseline_census import (
             get_dashboard_excluded_census_provinces,
         )
-
-        context = super().get_context_data(**kwargs)
-        req = self.request
-
-        bc_sort = self._pick(
-            req.GET.get("bc_sort", "province"), self._VALID_SORT_FIELDS, "province"
-        )
-        bc_dir = self._pick(req.GET.get("bc_dir", "asc"), {"asc", "desc"}, "asc")
-        bc_province = req.GET.get("bc_province_search", "").strip()
-        bc_district = req.GET.get("bc_district_search", "").strip()
-        bc_ward = req.GET.get("bc_ward_search", "").strip()
-        bc_ea = req.GET.get("bc_ea_search", "").strip()
-        try:
-            bc_page = max(1, int(req.GET.get("bc_page", 1) or 1))
-        except (TypeError, ValueError):
-            bc_page = 1
-
-        location_level = req.GET.get("location_level", "").strip().lower()
-        location_value = req.GET.get("location_value", "").strip()
-
-        # The dashboard always filters to activated provinces. The "Current
-        # Census" checkbox narrows further to the provinces marked current in
-        # the admin panel config.
-        bc_current = str(req.GET.get("bc_current", "")).strip() in (
-            "1",
-            "true",
-            "True",
-        )
-
-        # Resolve the date window. Only an explicit preset or custom range adds
-        # a time bound; the checkbox no longer applies a rolling window.
-        preset, start_dt, end_dt, has_custom = parse_filter_range(req)
-        explicit_time = has_custom or preset in {"30", "7", "24"}
-        if not explicit_time:
-            start_dt = None
-            end_dt = None
-        start_iso, end_iso = self._iso_bounds(start_dt, end_dt)
 
         # --- Enrichment counts, keyed by canonical geoid (one query per model) ---
         hh_by_geoid = {}
@@ -1792,7 +1768,7 @@ class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
         )
         if excluded_provinces:
             targets = targets.exclude(province_name__in=excluded_provinces)
-        lookup = self._LOCATION_FIELD_MAP.get(location_level)
+        lookup = self._LOCATION_FIELD_MAP.get((location_level or "").lower())
         if location_value and lookup:
             targets = targets.filter(**{f"{lookup}__icontains": location_value})
         if bc_province:
@@ -1843,6 +1819,57 @@ class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
                     "total_preg_outcomes": po_by_geoid.get(geoid, 0),
                 }
             )
+        return rows
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        req = self.request
+
+        bc_sort = self._pick(
+            req.GET.get("bc_sort", "province"), self._VALID_SORT_FIELDS, "province"
+        )
+        bc_dir = self._pick(req.GET.get("bc_dir", "asc"), {"asc", "desc"}, "asc")
+        bc_province = req.GET.get("bc_province_search", "").strip()
+        bc_district = req.GET.get("bc_district_search", "").strip()
+        bc_ward = req.GET.get("bc_ward_search", "").strip()
+        bc_ea = req.GET.get("bc_ea_search", "").strip()
+        try:
+            bc_page = max(1, int(req.GET.get("bc_page", 1) or 1))
+        except (TypeError, ValueError):
+            bc_page = 1
+
+        location_level = req.GET.get("location_level", "").strip().lower()
+        location_value = req.GET.get("location_value", "").strip()
+
+        # The dashboard always filters to activated provinces. The "Current
+        # Census" checkbox narrows further to the provinces marked current in
+        # the admin panel config.
+        bc_current = str(req.GET.get("bc_current", "")).strip() in (
+            "1",
+            "true",
+            "True",
+        )
+
+        # Resolve the date window. Only an explicit preset or custom range adds
+        # a time bound; the checkbox no longer applies a rolling window.
+        preset, start_dt, end_dt, has_custom = parse_filter_range(req)
+        explicit_time = has_custom or preset in {"30", "7", "24"}
+        if not explicit_time:
+            start_dt = None
+            end_dt = None
+        start_iso, end_iso = self._iso_bounds(start_dt, end_dt)
+
+        rows = self._build_census_rows(
+            bc_current=bc_current,
+            location_level=location_level,
+            location_value=location_value,
+            bc_province=bc_province,
+            bc_district=bc_district,
+            bc_ward=bc_ward,
+            bc_ea=bc_ea,
+            start_iso=start_iso,
+            end_iso=end_iso,
+        )
 
         # Grand total spans every filtered EA; ward total spans the EAs of the
         # single ward shown on the active page.
@@ -2022,6 +2049,87 @@ class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
 baseline_census_province_table_component_view = (
     BaselineCensusProvinceTableComponent.as_view()
 )
+
+
+class BaselineCensusTableCsvExport(
+    PermissionRequiredMixin, BaselineCensusProvinceTableComponent
+):
+    permission_required = "va_analytics.view_dashboard"
+
+    _CSV_COLUMNS = (
+        ("province", "Province"),
+        ("district", "District"),
+        ("ward", "Ward"),
+        ("ea", "EA"),
+        ("hh_estimate", "HH Estimate"),
+        ("hh_enumerated", "HH Enumerated"),
+        ("hh_coverage", "HH Coverage %"),
+        ("pop_estimate", "Pop. Estimate"),
+        ("pop_enumerated", "Pop. Enumerated"),
+        ("pop_coverage", "Pop. Coverage %"),
+        ("refusals", "Refusals"),
+        ("non_contact", "Non-Contact"),
+        ("total_deaths", "Total Deaths"),
+        ("total_pregnancies", "Total Pregnancies"),
+        ("total_preg_outcomes", "Total Preg. Outcomes"),
+    )
+
+    def get(self, request, *args, **kwargs):
+        try:
+            current_census = str(
+                request.GET.get("current_census", request.GET.get("bc_current", ""))
+            ).strip().lower() in {"1", "true", "yes", "on"}
+            rows = self._sort_rows(
+                self._build_census_rows(bc_current=current_census),
+                "province",
+                "asc",
+            )
+            total = self._summarize_census_rows(rows)
+            return self._csv_response(rows, total)
+        except Exception:
+            logger.exception("Baseline Census CSV export failed")
+            return JsonResponse(
+                {"error": "Unable to export baseline census data."}, status=500
+            )
+
+    def _csv_response(self, rows, total):
+        filename = timezone.now().strftime("baseline_census_data_%Y%m%d_%H%M%S.csv")
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        writer = csv.writer(response)
+        writer.writerow([label for _, label in self._CSV_COLUMNS])
+        for row in rows:
+            writer.writerow(
+                [self._csv_value(row.get(key)) for key, _ in self._CSV_COLUMNS]
+            )
+        if total:
+            writer.writerow(
+                [
+                    "Grand Total / Average",
+                    "",
+                    "",
+                    "",
+                    self._csv_value(total.get("hh_estimate")),
+                    self._csv_value(total.get("hh_enumerated")),
+                    self._csv_value(total.get("hh_coverage")),
+                    self._csv_value(total.get("pop_estimate")),
+                    self._csv_value(total.get("pop_enumerated")),
+                    self._csv_value(total.get("pop_coverage")),
+                    self._csv_value(total.get("refusals")),
+                    self._csv_value(total.get("non_contact")),
+                    self._csv_value(total.get("total_deaths")),
+                    self._csv_value(total.get("total_pregnancies")),
+                    self._csv_value(total.get("total_preg_outcomes")),
+                ]
+            )
+        return response
+
+    @staticmethod
+    def _csv_value(value):
+        return "" if value is None else value
+
+
+baseline_census_table_csv_export_view = BaselineCensusTableCsvExport.as_view()
 
 
 # Administrative hierarchy used by the Census Chart drill-down, ordered from

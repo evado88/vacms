@@ -346,6 +346,21 @@
   white-space: nowrap;
 }
 
+.csa-download-button {
+  background: #ffffff;
+  border-color: #009140;
+  color: #009140;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.csa-download-button:hover,
+.csa-download-button:focus {
+  background: #009140;
+  border-color: #009140;
+  color: #ffffff;
+}
+
 .csa-search-group {
   display: flex;
   align-items: center;

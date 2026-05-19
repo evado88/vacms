@@ -44,6 +44,7 @@ from va_explorer.va_analytics.views import (
     baseline_census_overview_kpis_component_view,
     baseline_census_overview_map_data_view,
     baseline_census_province_table_component_view,
+    baseline_census_table_csv_export_view,
     dashboard_map_view,
     dashboard_view,
     outcomes_dashboard_view,
@@ -79,6 +80,11 @@ urlpatterns = [
         "baseline-census/components/overview/province-table/",
         view=baseline_census_province_table_component_view,
         name="baseline-census-province-table-component",
+    ),
+    path(
+        "baseline-census/components/overview/province-table/export.csv",
+        view=baseline_census_table_csv_export_view,
+        name="baseline-census-province-table-csv-export",
     ),
     path(
         "baseline-census/components/chart/census-chart-data/",
