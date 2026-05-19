@@ -363,6 +363,7 @@ const renderVitalEventsChart = (kpis = {}) => {
 const renderOverviewCoverageCharts = (kpis = {}) => {
   renderEnumerationCoverageChart(kpis);
   renderVitalEventsChart(kpis);
+  scheduleOverviewChartResize();
 }
 
 const selectedNovPreset = () => {
@@ -498,6 +499,7 @@ const updateNationalOperationalKpis = (kpis) => {
   setElementTextById("nov-kpi-total-deaths", deaths.total);
 
   renderOverviewCoverageCharts(kpis);
+  scheduleOverviewChartResize();
 }
 
 let _novKpiInflight = null;
@@ -862,6 +864,55 @@ const initTableFilters = () => {
   }
 }
 
+const OVERVIEW_CHART_IDS = ["enumerationCoverageChart", "vitalEventsChart"];
+
+const isOverviewTabActive = () => {
+  const panel = document.querySelector(`${SHELL_SELECTOR} [data-tab-panel="overview"]`);
+  return Boolean(panel && panel.classList.contains("show") && panel.classList.contains("active"));
+};
+
+const resizeOverviewChartsNow = () => {
+  if (!isOverviewTabActive()) return;
+  OVERVIEW_CHART_IDS.forEach((id) => {
+    const canvas = document.getElementById(id);
+    const chart = canvas && chartInstances.get(canvas);
+    if (chart) chart.resize();
+  });
+};
+
+let overviewResizeTimer = null;
+let overviewResizeFrame = null;
+const scheduleOverviewChartResize = () => {
+  if (overviewResizeTimer) clearTimeout(overviewResizeTimer);
+  overviewResizeTimer = setTimeout(() => {
+    overviewResizeTimer = null;
+    if (overviewResizeFrame) cancelAnimationFrame(overviewResizeFrame);
+    overviewResizeFrame = requestAnimationFrame(() => {
+      overviewResizeFrame = null;
+      resizeOverviewChartsNow();
+    });
+  }, 80);
+};
+
+let overviewResizeObserver = null;
+
+const bindOverviewResizeObserver = () => {
+  if (typeof ResizeObserver === "undefined") return;
+  if (!overviewResizeObserver) {
+    overviewResizeObserver = new ResizeObserver(scheduleOverviewChartResize);
+  }
+  overviewResizeObserver.disconnect();
+  [
+    document.getElementById("national-operational-view"),
+    document.getElementById("novKpisComponentSlot"),
+    document.getElementById("novKpiCardsContainer"),
+    ...Array.from(document.querySelectorAll("#national-operational-view .nov-coverage-chart-card")),
+    ...Array.from(document.querySelectorAll("#national-operational-view .nov-coverage-chart-wrap")),
+  ].forEach((element) => {
+    if (element) overviewResizeObserver.observe(element);
+  });
+};
+
 const resizeChartsForTab = (tab) => {
   if (tab === "chart") {
     // Only the active Census Chart sub-tab canvas is visible and worth sizing.
@@ -872,15 +923,7 @@ const resizeChartsForTab = (tab) => {
     if (chart) chart.resize();
     return;
   }
-  const mapByTab = {
-    overview: ["enumerationCoverageChart", "vitalEventsChart"],
-  };
-  (mapByTab[tab] || []).forEach((id) => {
-    const canvas = document.getElementById(id);
-    if (!canvas) return;
-    const chart = chartInstances.get(canvas);
-    if (chart) chart.resize();
-  });
+  if (tab === "overview") scheduleOverviewChartResize();
 }
 
 // ---------------------------------------------------------------------------
@@ -943,16 +986,18 @@ const bindBaselineViewportResize = () => {
 
 const initOverviewTab = async () => {
   await loadSlotOnce("novKpisComponentSlot");
+  bindOverviewResizeObserver();
   renderOverviewCoverageCharts();
 
   if (overviewInitialized) {
     requestNationalOperationalFilterData();
-    resizeChartsForTab("overview");
+    scheduleOverviewChartResize();
     return;
   }
   overviewInitialized = true;
   initNationalOperationalFilters();
   requestNationalOperationalFilterData();
+  scheduleOverviewChartResize();
 }
 
 let tableTabInitialized = false;
@@ -1563,8 +1608,10 @@ document.addEventListener("dashboard:component-loaded", (event) => {
   if (!slot || !slot.id) return;
 
   if (slot.id === "novKpisComponentSlot" && overviewInitialized) {
+    bindOverviewResizeObserver();
     renderOverviewCoverageCharts();
     requestNationalOperationalFilterData();
+    scheduleOverviewChartResize();
   }
 });
 
