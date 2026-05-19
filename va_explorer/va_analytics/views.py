@@ -1467,6 +1467,156 @@ def normalize_ea_to_geoid(raw):
     return text.zfill(11) if text.isdigit() else text
 
 
+_BASELINE_CENSUS_VITAL_FORMS = ("pregnancy", "pregnancy_outcome", "death")
+_BASELINE_CENSUS_GEO_FIELDS = ("province", "district", "constituency", "ward", "ea")
+_BASELINE_CENSUS_TARGET_FIELDS = (
+    "geoid",
+    "province_name",
+    "district_name",
+    "constituency_name",
+    "ward_name",
+)
+
+
+def _baseline_geo_key(value):
+    if value is None:
+        return ""
+    from va_explorer.va_data_management.utils.loading import normalize_string
+
+    return normalize_string(str(value)).strip().lower()
+
+
+def _baseline_odk_location_choice_lookup():
+    cache_key = "baseline_census:odk_location_choice_lookup:v1"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    from va_explorer.va_data_management.models import ODKFormChoice
+    from va_explorer.va_data_management.utils.loading import (
+        normalize_string,
+        normalize_value,
+    )
+
+    normalized_forms = {normalize_string(form) for form in _BASELINE_CENSUS_VITAL_FORMS}
+    normalized_fields = {
+        normalize_string(field) for field in _BASELINE_CENSUS_GEO_FIELDS
+    }
+    lookup = {}
+    choices = ODKFormChoice.objects.filter(form_name__in=normalized_forms).values(
+        "form_name", "field_name", "value", "label"
+    )
+    for choice in choices:
+        form_name = normalize_string(choice["form_name"])
+        field_name = normalize_string(choice["field_name"])
+        if field_name not in normalized_fields:
+            continue
+        label = (choice["label"] or "").strip()
+        if not label:
+            continue
+        mapping = lookup.setdefault((form_name, field_name), {})
+        mapping[normalize_value(choice["value"])] = label
+        mapping[_baseline_geo_key(label)] = label
+
+    if lookup:
+        cache.set(cache_key, lookup, 300)
+    return lookup
+
+
+def _resolve_baseline_odk_location_value(choice_lookup, form_name, field_name, value):
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if not text:
+        return ""
+
+    from va_explorer.va_data_management.utils.loading import (
+        normalize_string,
+        normalize_value,
+    )
+
+    mapping = choice_lookup.get(
+        (normalize_string(form_name), normalize_string(field_name)), {}
+    )
+    return (
+        mapping.get(normalize_value(text))
+        or mapping.get(_baseline_geo_key(text))
+        or text
+    )
+
+
+def _baseline_target_by_geoid(target_rows):
+    return {
+        normalize_ea_to_geoid(row.get("geoid")): row
+        for row in target_rows
+        if normalize_ea_to_geoid(row.get("geoid"))
+    }
+
+
+def _resolve_vital_event_geoid(row, form_name, target_by_geoid, choice_lookup):
+    resolved = {
+        field: _resolve_baseline_odk_location_value(
+            choice_lookup, form_name, field, row.get(field)
+        )
+        for field in _BASELINE_CENSUS_GEO_FIELDS
+    }
+    geoid = normalize_ea_to_geoid(resolved.get("ea") or row.get("ea"))
+    target = target_by_geoid.get(geoid)
+    if not target:
+        return ""
+
+    checks = (
+        ("province", "province_name"),
+        ("district", "district_name"),
+        ("constituency", "constituency_name"),
+        ("ward", "ward_name"),
+    )
+    for source_field, target_field in checks:
+        source_value = resolved.get(source_field)
+        if source_value and _baseline_geo_key(source_value) != _baseline_geo_key(
+            target.get(target_field)
+        ):
+            return ""
+    return geoid
+
+
+def _vital_event_counts_by_geoid(
+    model,
+    form_name,
+    start_iso,
+    end_iso,
+    date_filter,
+    target_rows,
+    include_cluster=False,
+):
+    target_by_geoid = _baseline_target_by_geoid(target_rows)
+    if not target_by_geoid:
+        return {}
+
+    choice_lookup = _baseline_odk_location_choice_lookup()
+    fields = list(_BASELINE_CENSUS_GEO_FIELDS)
+    if include_cluster:
+        fields.append("cluster__name")
+
+    counts = {}
+    rows = (
+        date_filter(model.objects.all(), "submissiondate", start_iso, end_iso)
+        .values(*fields)
+        .annotate(cnt=Count("pk"))
+    )
+    for row in rows:
+        geoid = ""
+        if include_cluster:
+            geoid = normalize_ea_to_geoid(row.get("cluster__name"))
+        if geoid not in target_by_geoid:
+            geoid = _resolve_vital_event_geoid(
+                row, form_name, target_by_geoid, choice_lookup
+            )
+        if geoid:
+            counts[geoid] = counts.get(geoid, 0) + row["cnt"]
+    return counts
+
+
 class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
     template_name = "va_analytics/components/_baseline_census_province_table.html"
 
@@ -1490,6 +1640,7 @@ class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
     _LOCATION_FIELD_MAP = {
         "province": "province_name",
         "district": "district_name",
+        "constituency": "constituency_name",
         "ward": "ward_name",
         "ea": "geoid",
     }
@@ -1605,38 +1756,34 @@ class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
             if geoid:
                 pop_by_geoid[geoid] = pop_by_geoid.get(geoid, 0) + row["cnt"]
 
-        po_by_geoid = {}
-        po_rows = (
-            self._date_filter(
-                PregnancyOutcome.objects.exclude(cluster__isnull=True),
-                "submissiondate",
-                start_iso,
-                end_iso,
-            )
-            .values("cluster__name")
-            .annotate(cnt=Count("pk"))
+        all_target_rows_for_geo = list(
+            SRSEAPopulationTarget.objects.all().values(*_BASELINE_CENSUS_TARGET_FIELDS)
         )
-        for row in po_rows:
-            geoid = normalize_ea_to_geoid(row["cluster__name"])
-            if geoid:
-                po_by_geoid[geoid] = po_by_geoid.get(geoid, 0) + row["cnt"]
-
-        def _ea_text_counts(model):
-            counts = {}
-            qs = self._date_filter(
-                model.objects.exclude(ea__isnull=True).exclude(ea=""),
-                "submissiondate",
-                start_iso,
-                end_iso,
-            )
-            for row in qs.values("ea").annotate(cnt=Count("pk")):
-                geoid = normalize_ea_to_geoid(row["ea"])
-                if geoid:
-                    counts[geoid] = counts.get(geoid, 0) + row["cnt"]
-            return counts
-
-        preg_by_geoid = _ea_text_counts(Pregnancy)
-        death_by_geoid = _ea_text_counts(Death)
+        po_by_geoid = _vital_event_counts_by_geoid(
+            PregnancyOutcome,
+            "pregnancy_outcome",
+            start_iso,
+            end_iso,
+            self._date_filter,
+            all_target_rows_for_geo,
+            include_cluster=True,
+        )
+        preg_by_geoid = _vital_event_counts_by_geoid(
+            Pregnancy,
+            "pregnancy",
+            start_iso,
+            end_iso,
+            self._date_filter,
+            all_target_rows_for_geo,
+        )
+        death_by_geoid = _vital_event_counts_by_geoid(
+            Death,
+            "death",
+            start_iso,
+            end_iso,
+            self._date_filter,
+            all_target_rows_for_geo,
+        )
 
         # --- Base rows: every EA in the target table (all 10 provinces) ---
         targets = SRSEAPopulationTarget.objects.all()
@@ -1942,14 +2089,16 @@ def aggregate_census_by_level(
         if value:
             targets = targets.filter(**{_CENSUS_LEVEL_FIELD[parent_level]: value})
 
-    target_rows = targets.values(
-        "geoid",
-        "province_name",
-        "district_name",
-        "constituency_name",
-        "ward_name",
-        "household_target",
-        "population_target",
+    target_rows = list(
+        targets.values(
+            "geoid",
+            "province_name",
+            "district_name",
+            "constituency_name",
+            "ward_name",
+            "household_target",
+            "population_target",
+        )
     )
 
     geoid_to_group = {}
@@ -1998,22 +2147,30 @@ def aggregate_census_by_level(
         "household__submissiondate",
         "household__cluster__name",
     )
-    death_by_geoid = _counts_by_geoid(
-        Death.objects.exclude(ea__isnull=True).exclude(ea=""),
-        "submissiondate",
-        "ea",
+    death_by_geoid = _vital_event_counts_by_geoid(
+        Death,
+        "death",
+        start_iso,
+        end_iso,
+        date_filter,
+        target_rows,
     )
-    # Pregnancies key off the EA text field; pregnancy outcomes off the cluster
-    # FK — matching the Census Table tab's aggregation.
-    pregnancy_by_geoid = _counts_by_geoid(
-        Pregnancy.objects.exclude(ea__isnull=True).exclude(ea=""),
-        "submissiondate",
-        "ea",
+    pregnancy_by_geoid = _vital_event_counts_by_geoid(
+        Pregnancy,
+        "pregnancy",
+        start_iso,
+        end_iso,
+        date_filter,
+        target_rows,
     )
-    pregnancy_outcome_by_geoid = _counts_by_geoid(
-        PregnancyOutcome.objects.exclude(cluster__isnull=True),
-        "submissiondate",
-        "cluster__name",
+    pregnancy_outcome_by_geoid = _vital_event_counts_by_geoid(
+        PregnancyOutcome,
+        "pregnancy_outcome",
+        start_iso,
+        end_iso,
+        date_filter,
+        target_rows,
+        include_cluster=True,
     )
 
     # --- Roll EA-level counts up to the requested level ---

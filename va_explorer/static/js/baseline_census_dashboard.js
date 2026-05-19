@@ -1,5 +1,5 @@
 const chartInstances = new WeakMap();
-let novFiltersBound = false;
+let baselineSharedFiltersBound = false;
 let overviewInitialized = false;
 let firstRenderMeasured = false;
 const tabWarmCache = new Set();
@@ -225,6 +225,16 @@ const renderEnumerationCoverageChart = (kpis = {}) => {
           top: 22,
         },
       },
+      onClick: (evt, elements) => {
+        if (!elements || !elements.length) return;
+        const index = elements[0].index;
+        if (index === 0) navigateToCensusChartSubtab("population");
+        if (index === 1) navigateToCensusChartSubtab("household");
+      },
+      onHover: (evt, elements) => {
+        const target = evt && evt.native && evt.native.target;
+        if (target) target.style.cursor = elements && elements.length ? "pointer" : "default";
+      },
       plugins: {
         legend: {
           display: true,
@@ -321,6 +331,14 @@ const renderVitalEventsChart = (kpis = {}) => {
           top: 22,
         },
       },
+      onClick: (evt, elements) => {
+        if (!elements || !elements.length) return;
+        navigateToCensusChartSubtab("vital_events");
+      },
+      onHover: (evt, elements) => {
+        const target = evt && evt.native && evt.native.target;
+        if (target) target.style.cursor = elements && elements.length ? "pointer" : "default";
+      },
       plugins: {
         legend: {
           display: false,
@@ -366,21 +384,21 @@ const renderOverviewCoverageCharts = (kpis = {}) => {
   scheduleOverviewChartResize();
 }
 
-const selectedNovPreset = () => {
-  if (document.getElementById("novTime30")?.checked) return "30";
-  if (document.getElementById("novTime7")?.checked) return "7";
-  if (document.getElementById("novTime24")?.checked) return "24";
-  return "all";
-}
-
 const toDateString = (dateObj) => {
   const pad = (n) => String(n).padStart(2, "0");
   return `${dateObj.getFullYear()}-${pad(dateObj.getMonth() + 1)}-${pad(dateObj.getDate())}`;
 }
 
-const applyPresetToDatetimeInputs = (preset) => {
-  const startInput = document.getElementById("novStartDatetime");
-  const endInput = document.getElementById("novEndDatetime");
+const selectedBaselinePreset = () => {
+  if (document.getElementById("baselineTime30")?.checked) return "30";
+  if (document.getElementById("baselineTime7")?.checked) return "7";
+  if (document.getElementById("baselineTime24")?.checked) return "24";
+  return "all";
+}
+
+const applyBaselinePresetToDatetimeInputs = (preset) => {
+  const startInput = document.getElementById("baselineStartDatetime");
+  const endInput = document.getElementById("baselineEndDatetime");
   if (!startInput || !endInput) return;
 
   if (preset === "all") {
@@ -398,8 +416,8 @@ const applyPresetToDatetimeInputs = (preset) => {
   endInput.value = toDateString(now);
 }
 
-const clearPresetSelection = () => {
-  ["novTimeAll", "novTime30", "novTime7", "novTime24"].forEach((id) => {
+const clearBaselinePresetSelection = () => {
+  ["baselineTimeAll", "baselineTime30", "baselineTime7", "baselineTime24"].forEach((id) => {
     const input = document.getElementById(id);
     if (input) input.checked = false;
   });
@@ -423,11 +441,21 @@ const NOV_LOCATION_OPTIONS = {
     "Kanyama Ward",
     "Namwala Central Ward",
   ],
+  ea: [],
 }
 
-const updateNovLocationValueOptions = () => {
-  const levelSelect = document.getElementById("novLocationLevel");
-  const valueSelect = document.getElementById("novLocationValue");
+let baselineFilterState = {
+  location_level: "national",
+  location_value: "",
+  start: "",
+  end: "",
+  preset: "all",
+  current: false,
+};
+
+const updateBaselineLocationValueOptions = () => {
+  const levelSelect = document.getElementById("baselineLocationLevel");
+  const valueSelect = document.getElementById("baselineLocationValue");
   if (!levelSelect || !valueSelect) return;
 
   const level = levelSelect.value || "national";
@@ -452,6 +480,32 @@ const updateNovLocationValueOptions = () => {
     if (index === 0) option.selected = true;
     valueSelect.appendChild(option);
   });
+}
+
+const syncBaselineFilterStateFromControls = () => {
+  baselineFilterState = {
+    location_level: (document.getElementById("baselineLocationLevel")?.value || "national").toLowerCase(),
+    location_value: (document.getElementById("baselineLocationValue")?.value || "").trim(),
+    start: document.getElementById("baselineStartDatetime")?.value || "",
+    end: document.getElementById("baselineEndDatetime")?.value || "",
+    preset: selectedBaselinePreset(),
+    current: Boolean(document.getElementById("baselineCurrentCensus")?.checked),
+  };
+  if (baselineFilterState.location_level === "national") {
+    baselineFilterState.location_value = "";
+  }
+  return baselineFilterState;
+}
+
+const appendBaselineFilterParams = (params) => {
+  const state = syncBaselineFilterStateFromControls();
+  params.set("location_level", state.location_level || "national");
+  if (state.location_value) params.set("location_value", state.location_value);
+  if (state.start) params.set("start", state.start);
+  if (state.end) params.set("end", state.end);
+  if (state.preset && state.preset !== "all") params.set("preset", state.preset);
+  params.set("bc_current", state.current ? "1" : "0");
+  return params;
 }
 
 const setElementTextById = (id, value) => {
@@ -520,15 +574,6 @@ const bcSortDefaults = {
 };
 let bcSortState = Object.assign({}, bcSortDefaults);
 
-let bcTableFilterState = {
-  location_level: 'national',
-  location_value: '',
-  start: '',
-  end: '',
-  preset: '',
-  current: false,
-};
-
 const BC_SEARCH_IDS = ["bcProvinceSearch", "bcDistrictSearch", "bcWardSearch", "bcEaSearch"];
 const BC_STATE_KEY_MAP = {
   bcProvinceSearch: "bc_province_search",
@@ -554,15 +599,7 @@ const refreshBcProvinceTable = () => {
     if (val) params.set(key, val);
   });
 
-  // Merge Table tab location/time filter params if provided
-  if (bcTableFilterState.location_level && bcTableFilterState.location_value) {
-    params.set('location_level', bcTableFilterState.location_level);
-    params.set('location_value', bcTableFilterState.location_value);
-  }
-  if (bcTableFilterState.start) params.set('start', bcTableFilterState.start);
-  if (bcTableFilterState.end) params.set('end', bcTableFilterState.end);
-  if (bcTableFilterState.preset) params.set('preset', bcTableFilterState.preset);
-  params.set('bc_current', bcTableFilterState.current ? '1' : '0');
+  appendBaselineFilterParams(params);
 
   fetch(`${url}?${params.toString()}`, {
     method: "GET",
@@ -638,13 +675,7 @@ const requestNationalOperationalFilterData = (options = {}) => {
   if (!root) return;
 
   const requestId = ++novFilterRequestId;
-  const selectedPreset = selectedNovPreset();
-  const locationLevel = (document.getElementById("novLocationLevel")?.value || "national").toLowerCase();
-  const locationValue = (document.getElementById("novLocationValue")?.value || "").trim();
-  const startDatetime = document.getElementById("novStartDatetime")?.value || "";
-  const endDatetime = document.getElementById("novEndDatetime")?.value || "";
-  const currentCensusCheckbox = document.getElementById("novCurrentCensus");
-  const bcCurrent = currentCensusCheckbox ? currentCensusCheckbox.checked : false;
+  const state = syncBaselineFilterStateFromControls();
 
   const kpiEndpoint = root.dataset.filterUrl || "";
   if (kpiEndpoint) {
@@ -653,15 +684,7 @@ const requestNationalOperationalFilterData = (options = {}) => {
     }
     const controller = new AbortController();
     _novKpiInflight = controller;
-    const params = new URLSearchParams({
-      kpis_only: "1",
-      preset: selectedPreset,
-      start: startDatetime,
-      end: endDatetime,
-      location_level: locationLevel || "national",
-      location_value: locationValue,
-      bc_current: bcCurrent ? "1" : "0",
-    });
+    const params = appendBaselineFilterParams(new URLSearchParams({ kpis_only: "1" }));
     fetch(`${kpiEndpoint}?${params.toString()}`, {
       method: "GET",
       headers: { "X-Requested-With": "XMLHttpRequest" },
@@ -685,88 +708,9 @@ const requestNationalOperationalFilterData = (options = {}) => {
   }
 
   perfLog("render.overview.kpis", started, {
-    locationLevel,
-    hasLocationValue: Boolean(locationValue),
-    selectedPreset,
-  });
-}
-
-const initNationalOperationalFilters = () => {
-  const root = document.getElementById("national-operational-view");
-  if (!root || novFiltersBound) return;
-  novFiltersBound = true;
-
-  ["novTimeAll", "novTime30", "novTime7", "novTime24"].forEach((id) => {
-    const radio = document.getElementById(id);
-    if (!radio) return;
-    radio.addEventListener("change", () => {
-      if (!radio.checked) return;
-      const preset = selectedNovPreset();
-      applyPresetToDatetimeInputs(preset);
-      requestNationalOperationalFilterData({ invalidateScope: true });
-    });
-  });
-
-  const startInput = document.getElementById("novStartDatetime");
-  const endInput = document.getElementById("novEndDatetime");
-  const locationLevel = document.getElementById("novLocationLevel");
-  const locationValue = document.getElementById("novLocationValue");
-  const currentCensusCheckbox = document.getElementById("novCurrentCensus");
-
-  updateNovLocationValueOptions();
-
-  if (currentCensusCheckbox) {
-    currentCensusCheckbox.addEventListener("change", () => {
-      requestNationalOperationalFilterData({ invalidateScope: true });
-    });
-  }
-
-  if (locationLevel) {
-    locationLevel.addEventListener("change", () => {
-      updateNovLocationValueOptions();
-      requestNationalOperationalFilterData({ invalidateScope: true });
-    });
-  }
-
-  if (locationValue) {
-    locationValue.addEventListener("change", () => {
-      requestNationalOperationalFilterData({ invalidateScope: true });
-    });
-  }
-
-  [startInput, endInput].forEach((input) => {
-    if (!input) return;
-    input.addEventListener("change", () => {
-      clearPresetSelection();
-      requestNationalOperationalFilterData({ invalidateScope: true });
-    });
-  });
-}
-
-const updateTableLocationValueOptions = (level) => {
-  const valueSelect = document.getElementById("tableLocationValue");
-  if (!valueSelect) return;
-
-  const options = NOV_LOCATION_OPTIONS[level] || [];
-  const disableValue = level === "national" || options.length === 0;
-
-  valueSelect.innerHTML = "";
-  if (disableValue) {
-    valueSelect.disabled = true;
-    const option = document.createElement("option");
-    option.value = "";
-    option.textContent = "All National";
-    valueSelect.appendChild(option);
-    return;
-  }
-
-  valueSelect.disabled = false;
-  options.forEach((item, index) => {
-    const option = document.createElement("option");
-    option.value = item;
-    option.textContent = item;
-    if (index === 0) option.selected = true;
-    valueSelect.appendChild(option);
+    locationLevel: state.location_level,
+    hasLocationValue: Boolean(state.location_value),
+    selectedPreset: state.preset,
   });
 }
 
@@ -774,94 +718,64 @@ const resetBcSortState = () => {
   bcSortState = Object.assign({}, bcSortDefaults);
 }
 
-const initTableFilters = () => {
-  const levelSelect = document.getElementById("tableLocationLevel");
-  const valueSelect = document.getElementById("tableLocationValue");
+const handleBaselineFilterChange = () => {
+  syncBaselineFilterStateFromControls();
+  invalidateScope("overview-data");
+  resetBcSortState();
+  resetChartNav();
 
-  const currentCensusCheckbox = document.getElementById("tableCurrentCensus");
-  if (currentCensusCheckbox) {
-    bcTableFilterState.current = currentCensusCheckbox.checked;
-    currentCensusCheckbox.addEventListener("change", function () {
-      bcTableFilterState.current = this.checked;
-      resetBcSortState();
-      refreshBcProvinceTable();
-    });
-  }
+  if (overviewInitialized) requestNationalOperationalFilterData();
+  if (tableTabInitialized) refreshBcProvinceTable();
+  if (chartTabInitialized) fetchCensusChartData();
+  scheduleBaselineViewportHeight();
+}
 
-  if (levelSelect) {
-    updateTableLocationValueOptions("national");
-    levelSelect.addEventListener("change", function () {
-      updateTableLocationValueOptions(this.value);
-      bcTableFilterState.location_level = this.value;
-      bcTableFilterState.location_value = '';
-      resetBcSortState();
-      refreshBcProvinceTable();
-    });
-  }
+const initBaselineSharedFilters = () => {
+  const root = document.getElementById("baselineSharedFilters");
+  if (!root || baselineSharedFiltersBound) return;
+  baselineSharedFiltersBound = true;
 
-  if (valueSelect) {
-    valueSelect.addEventListener("change", function () {
-      bcTableFilterState.location_value = this.value;
-      resetBcSortState();
-      refreshBcProvinceTable();
-    });
-  }
+  updateBaselineLocationValueOptions();
+  syncBaselineFilterStateFromControls();
 
-  ["tableTimeAll", "tableTime30", "tableTime7", "tableTime24"].forEach(id => {
+  ["baselineTimeAll", "baselineTime30", "baselineTime7", "baselineTime24"].forEach((id) => {
     const radio = document.getElementById(id);
     if (!radio) return;
-    radio.addEventListener("change", function () {
-      if (!this.checked) return;
-      const presetMap = {
-        tableTimeAll: '',
-        tableTime30: '30',
-        tableTime7: '7',
-        tableTime24: '24',
-      };
-      const preset = presetMap[id] || '';
-      bcTableFilterState.preset = preset;
-
-      if (preset) {
-        const startInput = document.getElementById("tableStartDatetime");
-        const endInput = document.getElementById("tableEndDatetime");
-        if (startInput && endInput) {
-          const now = new Date();
-          const start = new Date(now);
-          if (preset === '30') start.setDate(start.getDate() - 30);
-          if (preset === '7') start.setDate(start.getDate() - 7);
-          if (preset === '24') start.setHours(start.getHours() - 24);
-          startInput.value = toDateString(start);
-          endInput.value = toDateString(now);
-          bcTableFilterState.start = startInput.value;
-          bcTableFilterState.end = endInput.value;
-        }
-      } else {
-        bcTableFilterState.start = '';
-        bcTableFilterState.end = '';
-      }
-      resetBcSortState();
-      refreshBcProvinceTable();
+    radio.addEventListener("change", () => {
+      if (!radio.checked) return;
+      applyBaselinePresetToDatetimeInputs(selectedBaselinePreset());
+      handleBaselineFilterChange();
     });
   });
 
-  const startInput = document.getElementById("tableStartDatetime");
-  const endInput = document.getElementById("tableEndDatetime");
+  const locationLevel = document.getElementById("baselineLocationLevel");
+  const locationValue = document.getElementById("baselineLocationValue");
+  const currentCensusCheckbox = document.getElementById("baselineCurrentCensus");
+  const startInput = document.getElementById("baselineStartDatetime");
+  const endInput = document.getElementById("baselineEndDatetime");
 
-  if (startInput) {
-    startInput.addEventListener("change", function () {
-      bcTableFilterState.start = this.value;
-      resetBcSortState();
-      refreshBcProvinceTable();
+  if (currentCensusCheckbox) {
+    currentCensusCheckbox.addEventListener("change", handleBaselineFilterChange);
+  }
+
+  if (locationLevel) {
+    locationLevel.addEventListener("change", () => {
+      updateBaselineLocationValueOptions();
+      handleBaselineFilterChange();
     });
   }
 
-  if (endInput) {
-    endInput.addEventListener("change", function () {
-      bcTableFilterState.end = this.value;
-      resetBcSortState();
-      refreshBcProvinceTable();
-    });
+  if (locationValue) {
+    locationValue.addEventListener("change", handleBaselineFilterChange);
   }
+
+  [startInput, endInput].forEach((input) => {
+    if (!input) return;
+    input.addEventListener("change", () => {
+      clearBaselinePresetSelection();
+      handleBaselineFilterChange();
+    });
+  });
 }
 
 const OVERVIEW_CHART_IDS = ["enumerationCoverageChart", "vitalEventsChart"];
@@ -995,7 +909,6 @@ const initOverviewTab = async () => {
     return;
   }
   overviewInitialized = true;
-  initNationalOperationalFilters();
   requestNationalOperationalFilterData();
   scheduleOverviewChartResize();
 }
@@ -1006,7 +919,6 @@ const initTableTab = async () => {
   if (tableTabInitialized) return;
   tableTabInitialized = true;
   await initBcProvinceTable();
-  initTableFilters();
 }
 
 // ---------------------------------------------------------------------------
@@ -1061,18 +973,8 @@ const CENSUS_LEVEL_LABELS = {
 };
 
 let chartTabInitialized = false;
-let chartFiltersBound = false;
 let chartFetchRequestId = 0;
 let lastChartPayload = null;
-
-let bcChartFilterState = {
-  location_level: "national",
-  location_value: "",
-  start: "",
-  end: "",
-  preset: "",
-  current: false,
-};
 // Drill-down position: the level currently shown plus the accumulated
 // ancestor filters (province/district/constituency/ward) that produced it.
 let bcChartNav = { level: "province", parents: {} };
@@ -1101,33 +1003,6 @@ const setCensusChartOverlay = (state) => {
     const el = document.getElementById(activeId);
     if (el) el.hidden = false;
   }
-};
-
-const updateChartLocationValueOptions = (level) => {
-  const valueSelect = document.getElementById("chartLocationValue");
-  if (!valueSelect) return;
-
-  const options = NOV_LOCATION_OPTIONS[level] || [];
-  const disableValue = level === "national" || options.length === 0;
-
-  valueSelect.innerHTML = "";
-  if (disableValue) {
-    valueSelect.disabled = true;
-    const option = document.createElement("option");
-    option.value = "";
-    option.textContent = "All National";
-    valueSelect.appendChild(option);
-    return;
-  }
-
-  valueSelect.disabled = false;
-  options.forEach((item, index) => {
-    const option = document.createElement("option");
-    option.value = item;
-    option.textContent = item;
-    if (index === 0) option.selected = true;
-    valueSelect.appendChild(option);
-  });
 };
 
 const renderCensusBreadcrumb = (payload) => {
@@ -1370,14 +1245,7 @@ const fetchCensusChartData = () => {
   Object.entries(bcChartNav.parents).forEach(([key, value]) => {
     if (value) params.set(key, value);
   });
-  if (bcChartFilterState.location_level && bcChartFilterState.location_value) {
-    params.set("location_level", bcChartFilterState.location_level);
-    params.set("location_value", bcChartFilterState.location_value);
-  }
-  if (bcChartFilterState.start) params.set("start", bcChartFilterState.start);
-  if (bcChartFilterState.end) params.set("end", bcChartFilterState.end);
-  if (bcChartFilterState.preset) params.set("preset", bcChartFilterState.preset);
-  params.set("bc_current", bcChartFilterState.current ? "1" : "0");
+  appendBaselineFilterParams(params);
 
   return fetch(`${url}?${params.toString()}`, {
     method: "GET",
@@ -1412,97 +1280,6 @@ const fetchCensusChartData = () => {
       console.error("[baseline-census] census chart fetch failed", err);
       setCensusChartOverlay("error");
     });
-};
-
-const initChartFilters = () => {
-  if (chartFiltersBound) return;
-  chartFiltersBound = true;
-
-  const levelSelect = document.getElementById("chartLocationLevel");
-  const valueSelect = document.getElementById("chartLocationValue");
-  const currentCensusCheckbox = document.getElementById("chartCurrentCensus");
-
-  if (currentCensusCheckbox) {
-    bcChartFilterState.current = currentCensusCheckbox.checked;
-    currentCensusCheckbox.addEventListener("change", function () {
-      bcChartFilterState.current = this.checked;
-      resetChartNav();
-      fetchCensusChartData();
-    });
-  }
-
-  if (levelSelect) {
-    updateChartLocationValueOptions("national");
-    levelSelect.addEventListener("change", function () {
-      updateChartLocationValueOptions(this.value);
-      bcChartFilterState.location_level = this.value;
-      bcChartFilterState.location_value = "";
-      resetChartNav();
-      fetchCensusChartData();
-    });
-  }
-
-  if (valueSelect) {
-    valueSelect.addEventListener("change", function () {
-      bcChartFilterState.location_value = this.value;
-      resetChartNav();
-      fetchCensusChartData();
-    });
-  }
-
-  ["chartTimeAll", "chartTime30", "chartTime7", "chartTime24"].forEach((id) => {
-    const radio = document.getElementById(id);
-    if (!radio) return;
-    radio.addEventListener("change", function () {
-      if (!this.checked) return;
-      const presetMap = {
-        chartTimeAll: "",
-        chartTime30: "30",
-        chartTime7: "7",
-        chartTime24: "24",
-      };
-      const preset = presetMap[id] || "";
-      bcChartFilterState.preset = preset;
-
-      const startInput = document.getElementById("chartStartDatetime");
-      const endInput = document.getElementById("chartEndDatetime");
-      if (preset && startInput && endInput) {
-        const now = new Date();
-        const start = new Date(now);
-        if (preset === "30") start.setDate(start.getDate() - 30);
-        if (preset === "7") start.setDate(start.getDate() - 7);
-        if (preset === "24") start.setHours(start.getHours() - 24);
-        startInput.value = toDateString(start);
-        endInput.value = toDateString(now);
-        bcChartFilterState.start = startInput.value;
-        bcChartFilterState.end = endInput.value;
-      } else {
-        bcChartFilterState.start = "";
-        bcChartFilterState.end = "";
-      }
-      resetChartNav();
-      fetchCensusChartData();
-    });
-  });
-
-  const startInput = document.getElementById("chartStartDatetime");
-  const endInput = document.getElementById("chartEndDatetime");
-
-  if (startInput) {
-    startInput.addEventListener("change", function () {
-      bcChartFilterState.start = this.value;
-      resetChartNav();
-      fetchCensusChartData();
-    });
-  }
-
-  if (endInput) {
-    endInput.addEventListener("change", function () {
-      bcChartFilterState.end = this.value;
-      resetChartNav();
-      fetchCensusChartData();
-    });
-  }
 };
 
 const wireChartBreadcrumbEvents = () => {
@@ -1554,13 +1331,35 @@ const initCensusChartSubtabs = () => {
   });
 };
 
+const activateBaselineCensusTab = (tab) => {
+  const tabLink = document.querySelector(`${SHELL_SELECTOR} [data-tab="${tab}"]`);
+  if (!tabLink) return false;
+  if (!tabLink.classList.contains("active")) {
+    tabLink.click();
+  }
+  return true;
+}
+
+const navigateToCensusChartSubtab = (subtabKey) => {
+  const subtab = censusSubtabByKey(subtabKey);
+  bcChartActiveSubtab = subtab.key;
+  activateBaselineCensusTab("chart");
+  initChartTab()
+    .then(() => {
+      setActiveCensusSubtab(subtab.key);
+      applyBaselineViewportHeight();
+      resizeChartsForTab("chart");
+    })
+    .catch((error) => console.error("[baseline-census] chart navigation failed", error));
+}
+
 const initChartTab = async () => {
   if (chartTabInitialized) {
+    setActiveCensusSubtab(bcChartActiveSubtab);
     resizeChartsForTab("chart");
     return;
   }
   chartTabInitialized = true;
-  initChartFilters();
   initCensusChartSubtabs();
   wireChartBreadcrumbEvents();
   await fetchCensusChartData();
@@ -1570,6 +1369,7 @@ const initChartTab = async () => {
 const initBaselineCensusTab = async (tab) => {
   const normalizedTab = ["table", "chart"].includes(tab) ? tab : "overview";
   const started = perfNow();
+  initBaselineSharedFilters();
   if (normalizedTab === "overview") {
     await initOverviewTab();
     perfLog("tab.init.overview", started);

@@ -14,6 +14,53 @@
 <div class="row dashboard-shell" data-shell="baseline-census">
   <div class="col">
     {% with baseline_active_tab=baseline_active_tab|default:'overview' %}
+    <div class="baseline-shared-filters-row mb-3" id="baselineSharedFilters" data-component="baseline-shared-filters">
+      <div class="baseline-shared-current-census form-check">
+        <input class="form-check-input" type="checkbox" id="baselineCurrentCensus">
+        <label class="form-check-label" for="baselineCurrentCensus">Current Census</label>
+      </div>
+      <div class="baseline-shared-filter-select-wrap">
+        <select id="baselineLocationLevel" class="form-control form-control-sm form-select baseline-shared-filter-select" aria-label="Baseline Census location level">
+          <option value="national" selected>National</option>
+          <option value="province">Province</option>
+          <option value="district">District</option>
+          <option value="constituency">Constituency</option>
+          <option value="ward">Ward</option>
+          <option value="ea">EA</option>
+        </select>
+      </div>
+      <div class="baseline-shared-filter-select-wrap">
+        <select id="baselineLocationValue" class="form-control form-control-sm form-select baseline-shared-filter-select" aria-label="Baseline Census location value" disabled>
+          <option value="">All National</option>
+        </select>
+      </div>
+      <div class="baseline-shared-time-filters" role="radiogroup" aria-label="Baseline Census time filters">
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="baselineGlobalTimeFilter" id="baselineTimeAll" checked>
+          <label class="form-check-label" for="baselineTimeAll">All time</label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="baselineGlobalTimeFilter" id="baselineTime30">
+          <label class="form-check-label" for="baselineTime30">Last 30 days</label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="baselineGlobalTimeFilter" id="baselineTime7">
+          <label class="form-check-label" for="baselineTime7">Last 7 days</label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="baselineGlobalTimeFilter" id="baselineTime24">
+          <label class="form-check-label" for="baselineTime24">Last 24 hours</label>
+        </div>
+      </div>
+      <div class="baseline-shared-date-filter">
+        <label for="baselineStartDatetime" class="mb-0">Start:</label>
+        <input id="baselineStartDatetime" type="date" class="form-control form-control-sm baseline-shared-filter-input">
+      </div>
+      <div class="baseline-shared-date-filter">
+        <label for="baselineEndDatetime" class="mb-0">End:</label>
+        <input id="baselineEndDatetime" type="date" class="form-control form-control-sm baseline-shared-filter-input">
+      </div>
+    </div>
     <!-- Nav tabs -->
     <ul class="nav nav-tabs" id="baselineCensusTabs" role="tablist">
       <li class="nav-item" role="presentation">
@@ -38,52 +85,6 @@
       <div class="tab-pane dashboard-tab-panel fade {% if baseline_active_tab == 'overview' %}show active{% endif %}" id="tab-1" data-tab-panel="overview" role="tabpanel" aria-labelledby="tab-1-tab">
         <div id="national-operational-view" data-component="overview-dashboard" data-filter-url="{% url 'va_analytics:baseline-census-overview-filter-data' %}">
           <div class="national-operational-view-shell">
-            <div class="nov-filters-row mb-3" data-component="filters">
-              <div class="nov-filter-current-census form-check">
-                <input class="form-check-input" type="checkbox" id="novCurrentCensus">
-                <label class="form-check-label" for="novCurrentCensus">Current Census</label>
-              </div>
-              <div class="nov-filter-select-wrap">
-                <select id="novLocationLevel" class="form-control form-control-sm form-select nov-filter-select" aria-label="Location level">
-                  <option value="national" selected>National</option>
-                  <option value="province">Province</option>
-                  <option value="district">District</option>
-                  <option value="constituency">Constituency</option>
-                  <option value="ward">Ward</option>
-                </select>
-              </div>
-              <div class="nov-filter-select-wrap">
-                <select id="novLocationValue" class="form-control form-control-sm form-select nov-filter-select" aria-label="Location value" disabled>
-                  <option value="">All National</option>
-                </select>
-              </div>
-              <div class="nov-filter-radios" role="radiogroup" aria-label="Global time filters">
-                <div class="form-check">
-                  <input class="form-check-input" type="radio" name="novGlobalTimeFilter" id="novTimeAll" checked>
-                  <label class="form-check-label" for="novTimeAll">All time</label>
-                </div>
-                <div class="form-check">
-                  <input class="form-check-input" type="radio" name="novGlobalTimeFilter" id="novTime30">
-                  <label class="form-check-label" for="novTime30">Last 30 days</label>
-                </div>
-                <div class="form-check">
-                  <input class="form-check-input" type="radio" name="novGlobalTimeFilter" id="novTime7">
-                  <label class="form-check-label" for="novTime7">Last 7 days</label>
-                </div>
-                <div class="form-check">
-                  <input class="form-check-input" type="radio" name="novGlobalTimeFilter" id="novTime24">
-                  <label class="form-check-label" for="novTime24">Last 24 hours</label>
-                </div>
-              </div>
-              <div class="nov-filter-datetime">
-                <label for="novStartDatetime" class="mb-0">Start:</label>
-                <input id="novStartDatetime" type="date" class="form-control form-control-sm nov-filter-input">
-              </div>
-              <div class="nov-filter-datetime">
-                <label for="novEndDatetime" class="mb-0">End:</label>
-                <input id="novEndDatetime" type="date" class="form-control form-control-sm nov-filter-input">
-              </div>
-            </div>
             <div class="national-operational-grid">
               <div class="nov-overview-left-col">
                 <div class="nov-overview-left-container">
@@ -101,52 +102,6 @@
       <div class="tab-pane dashboard-tab-panel fade {% if baseline_active_tab == 'table' %}show active{% endif %}" id="tab-table" data-tab-panel="table" role="tabpanel" aria-labelledby="tab-table-tab">
         <div id="baseline-table-view">
           <div class="national-operational-view-shell">
-            <div class="baseline-table-filters-row mb-3" data-component="table-filters">
-              <div class="baseline-table-current-census form-check">
-                <input class="form-check-input" type="checkbox" id="tableCurrentCensus">
-                <label class="form-check-label" for="tableCurrentCensus">Current Census</label>
-              </div>
-              <div class="baseline-table-filter-select-wrap">
-                <select id="tableLocationLevel" class="form-control form-control-sm form-select baseline-table-filter-select" aria-label="Table location level">
-                  <option value="national" selected>National</option>
-                  <option value="province">Province</option>
-                  <option value="district">District</option>
-                  <option value="ward">Ward</option>
-                  <option value="ea">EA</option>
-                </select>
-              </div>
-              <div class="baseline-table-filter-select-wrap">
-                <select id="tableLocationValue" class="form-control form-control-sm form-select baseline-table-filter-select" aria-label="Table location value" disabled>
-                  <option value="">All National</option>
-                </select>
-              </div>
-              <div class="baseline-table-time-filters" role="radiogroup" aria-label="Table time filters">
-                <div class="form-check">
-                  <input class="form-check-input" type="radio" name="tableGlobalTimeFilter" id="tableTimeAll" checked>
-                  <label class="form-check-label" for="tableTimeAll">All time</label>
-                </div>
-                <div class="form-check">
-                  <input class="form-check-input" type="radio" name="tableGlobalTimeFilter" id="tableTime30">
-                  <label class="form-check-label" for="tableTime30">Last 30 days</label>
-                </div>
-                <div class="form-check">
-                  <input class="form-check-input" type="radio" name="tableGlobalTimeFilter" id="tableTime7">
-                  <label class="form-check-label" for="tableTime7">Last 7 days</label>
-                </div>
-                <div class="form-check">
-                  <input class="form-check-input" type="radio" name="tableGlobalTimeFilter" id="tableTime24">
-                  <label class="form-check-label" for="tableTime24">Last 24 hours</label>
-                </div>
-              </div>
-              <div class="baseline-table-date-filter">
-                <label for="tableStartDatetime" class="mb-0">Start:</label>
-                <input id="tableStartDatetime" type="date" class="form-control form-control-sm baseline-table-filter-input">
-              </div>
-              <div class="baseline-table-date-filter">
-                <label for="tableEndDatetime" class="mb-0">End:</label>
-                <input id="tableEndDatetime" type="date" class="form-control form-control-sm baseline-table-filter-input">
-              </div>
-            </div>
             <div id="baselineProvinceTableSlot" data-component-slot data-component="province-table" data-scope="table" data-endpoint="{% url 'va_analytics:baseline-census-province-table-component' %}" data-cache="off">
               <div class="home-panel home-panel-placeholder">Loading census table...</div>
             </div>
@@ -156,52 +111,6 @@
       <div class="tab-pane dashboard-tab-panel fade {% if baseline_active_tab == 'chart' %}show active{% endif %}" id="tab-chart" data-tab-panel="chart" role="tabpanel" aria-labelledby="tab-chart-tab">
         <div id="baseline-chart-view" data-endpoint="{% url 'va_analytics:baseline-census-chart-data' %}">
           <div class="national-operational-view-shell">
-            <div class="baseline-chart-filters-row mb-3" data-component="chart-filters">
-              <div class="baseline-table-current-census form-check">
-                <input class="form-check-input" type="checkbox" id="chartCurrentCensus">
-                <label class="form-check-label" for="chartCurrentCensus">Current Census</label>
-              </div>
-              <div class="baseline-table-filter-select-wrap">
-                <select id="chartLocationLevel" class="form-control form-control-sm form-select baseline-table-filter-select" aria-label="Chart location level">
-                  <option value="national" selected>National</option>
-                  <option value="province">Province</option>
-                  <option value="district">District</option>
-                  <option value="constituency">Constituency</option>
-                  <option value="ward">Ward</option>
-                </select>
-              </div>
-              <div class="baseline-table-filter-select-wrap">
-                <select id="chartLocationValue" class="form-control form-control-sm form-select baseline-table-filter-select" aria-label="Chart location value" disabled>
-                  <option value="">All National</option>
-                </select>
-              </div>
-              <div class="baseline-table-time-filters" role="radiogroup" aria-label="Chart time filters">
-                <div class="form-check">
-                  <input class="form-check-input" type="radio" name="chartGlobalTimeFilter" id="chartTimeAll" checked>
-                  <label class="form-check-label" for="chartTimeAll">All time</label>
-                </div>
-                <div class="form-check">
-                  <input class="form-check-input" type="radio" name="chartGlobalTimeFilter" id="chartTime30">
-                  <label class="form-check-label" for="chartTime30">Last 30 days</label>
-                </div>
-                <div class="form-check">
-                  <input class="form-check-input" type="radio" name="chartGlobalTimeFilter" id="chartTime7">
-                  <label class="form-check-label" for="chartTime7">Last 7 days</label>
-                </div>
-                <div class="form-check">
-                  <input class="form-check-input" type="radio" name="chartGlobalTimeFilter" id="chartTime24">
-                  <label class="form-check-label" for="chartTime24">Last 24 hours</label>
-                </div>
-              </div>
-              <div class="baseline-table-date-filter">
-                <label for="chartStartDatetime" class="mb-0">Start:</label>
-                <input id="chartStartDatetime" type="date" class="form-control form-control-sm baseline-table-filter-input">
-              </div>
-              <div class="baseline-table-date-filter">
-                <label for="chartEndDatetime" class="mb-0">End:</label>
-                <input id="chartEndDatetime" type="date" class="form-control form-control-sm baseline-table-filter-input">
-              </div>
-            </div>
             <div class="baseline-chart-breadcrumb-row mb-2">
               <button type="button" id="baselineChartBack" class="btn btn-sm btn-outline-secondary baseline-chart-back" hidden>&larr; Back</button>
               <nav class="baseline-chart-breadcrumb" id="baselineChartBreadcrumb" aria-label="Census chart drill-down breadcrumb"></nav>

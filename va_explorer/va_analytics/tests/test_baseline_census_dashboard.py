@@ -3,6 +3,7 @@ from datetime import timezone as dt_timezone
 
 import pytest
 from django.contrib.auth.models import Permission
+from django.core.cache import cache
 from django.test import Client
 from django.urls import reverse
 from django.utils import timezone
@@ -13,6 +14,7 @@ from va_explorer.va_data_management.models import (
     Death,
     Household,
     HouseholdMember,
+    ODKFormChoice,
     Pregnancy,
     PregnancyOutcome,
     SRSClusterLocation,
@@ -66,9 +68,9 @@ class TestBaselineCensusDashboardRoute:
         assert 'data-tab="mso_supervision"' not in body
         assert 'data-tab="rumor_overview"' not in body
         assert 'data-tab="rumor_details"' not in body
-        assert 'id="tableLocationLevel"' in body
-        assert 'id="tableLocationValue"' in body
-        assert "baseline-table-filters-row" in body
+        assert 'id="baselineLocationLevel"' in body
+        assert 'id="baselineLocationValue"' in body
+        assert "baseline-shared-filters-row" in body
 
     def test_shell_uses_baseline_census_data_shell(self):
         client = Client()
@@ -182,6 +184,7 @@ class TestBackwardsCompat:
 
 GEOID_A = "01021011002"  # EA with census records
 GEOID_B = "02030011004"  # EA in the target table with no enumeration yet
+GEOID_CODED = "01021011055"  # EA whose vital events use ODK coded geography
 
 
 def _iso(dt):
@@ -262,6 +265,52 @@ def _build_baseline_census_fixture():
     PregnancyOutcome.objects.create(
         key="po-a-1", cluster=cluster_a, submissiondate=recent
     )
+
+
+def _seed_odk_geo_choices():
+    cache.delete("baseline_census:odk_location_choice_lookup:v1")
+    choices = {
+        "province": ("1", "CENTRAL"),
+        "district": ("2", "CHISAMBA"),
+        "constituency": ("3", "CHISAMBA CENTRAL"),
+        "ward": ("4", "CHAMUKA"),
+        "ea": ("5", "EA_" + GEOID_CODED),
+    }
+    for form_name in ("pregnancy", "pregnancy_outcome", "death"):
+        for field_name, (value, label) in choices.items():
+            ODKFormChoice.objects.create(
+                form_name=form_name,
+                field_name=field_name,
+                value=value,
+                label=label,
+            )
+
+
+def _build_coded_vital_events_fixture():
+    now = timezone.now()
+    recent = _iso(now - timedelta(days=5))
+    _seed_odk_geo_choices()
+    SRSEAPopulationTarget.objects.create(
+        geoid=GEOID_CODED,
+        province_name="CENTRAL",
+        district_name="CHISAMBA",
+        constituency_name="CHISAMBA CENTRAL",
+        ward_name="CHAMUKA",
+        household_target=0,
+        population_target=0,
+    )
+    coded_geo = {
+        "province": "01",
+        "district": "2.0",
+        "constituency": "003",
+        "ward": "4",
+        "ea": "5",
+    }
+    Pregnancy.objects.create(key="preg-coded", submissiondate=recent, **coded_geo)
+    Death.objects.bulk_create(
+        [Death(key="death-coded", submissiondate=recent, **coded_geo)]
+    )
+    PregnancyOutcome.objects.create(key="po-coded", submissiondate=recent, **coded_geo)
 
 
 def _client():
@@ -429,31 +478,48 @@ class TestBaselineCensusTableData:
 
         assert set(rows) == {GEOID_B}
 
+    def test_vital_event_counts_resolve_odk_coded_geography(self):
+        _build_coded_vital_events_fixture()
 
-class TestBaselineCensusCheckboxRendering:
-    def test_table_tab_renders_current_census_checkbox_first(self):
+        row = _table_rows(_client())[GEOID_CODED]
+
+        assert row["total_deaths"] == 1
+        assert row["total_pregnancies"] == 1
+        assert row["total_preg_outcomes"] == 1
+
+
+class TestBaselineCensusSharedFilterRendering:
+    def test_dashboard_renders_one_shared_filter_row_above_tabs(self):
         client = Client()
         client.force_login(user=_dashboard_user())
 
         response = client.get(reverse("va_analytics:baseline-census-dashboard"))
         body = response.content.decode()
 
-        assert 'id="tableCurrentCensus"' in body
-        # The checkbox precedes the location-level select in the filter row.
-        assert body.index('id="tableCurrentCensus"') < body.index(
-            'id="tableLocationLevel"'
+        assert body.count("baseline-shared-filters-row") == 1
+        assert "baseline-table-filters-row" not in body
+        assert "baseline-chart-filters-row" not in body
+        assert "nov-filters-row" not in body
+        assert body.index('id="baselineSharedFilters"') < body.index(
+            'id="baselineCensusTabs"'
         )
 
-    def test_overview_tab_renders_current_census_checkbox(self):
+    def test_shared_filter_controls_include_required_union(self):
         client = Client()
         client.force_login(user=_dashboard_user())
 
         response = client.get(reverse("va_analytics:baseline-census-dashboard"))
         body = response.content.decode()
 
-        # The overview tab now carries its own Current Baseline Census checkbox.
-        assert 'id="novCurrentCensus"' in body
-        assert 'id="novCurrentCensus" checked' not in body
+        assert 'id="baselineCurrentCensus"' in body
+        assert 'id="baselineCurrentCensus" checked' not in body
+        assert 'id="baselineStartDatetime"' in body
+        assert 'id="baselineEndDatetime"' in body
+        for level in ("national", "province", "district", "constituency", "ward", "ea"):
+            assert f'<option value="{level}"' in body
+        assert 'id="tableCurrentCensus"' not in body
+        assert 'id="chartCurrentCensus"' not in body
+        assert 'id="novCurrentCensus"' not in body
 
 
 # --- Ward-grouped pagination + ward/grand total summary rows -------------------
@@ -720,6 +786,104 @@ class TestBaselineCensusChartData:
         assert central["pregnancy_coverage"] is None
         assert central["pregnancy_outcome_estimate"] is None
         assert central["pregnancy_outcome_coverage"] is None
+
+    def test_vital_events_resolve_odk_coded_geography_at_each_level(self):
+        _build_coded_vital_events_fixture()
+        client = _client()
+
+        cases = (
+            ({}, "CENTRAL"),
+            ({"level": "district", "province": "CENTRAL"}, "CHISAMBA"),
+            (
+                {
+                    "level": "constituency",
+                    "province": "CENTRAL",
+                    "district": "CHISAMBA",
+                },
+                "CHISAMBA CENTRAL",
+            ),
+            (
+                {
+                    "level": "ward",
+                    "province": "CENTRAL",
+                    "district": "CHISAMBA",
+                    "constituency": "CHISAMBA CENTRAL",
+                },
+                "CHAMUKA",
+            ),
+            (
+                {
+                    "level": "ea",
+                    "province": "CENTRAL",
+                    "district": "CHISAMBA",
+                    "constituency": "CHISAMBA CENTRAL",
+                    "ward": "CHAMUKA",
+                },
+                GEOID_CODED,
+            ),
+        )
+
+        for params, value in cases:
+            row = _chart_row(_chart_payload(client, **params), value)
+            assert row["death_enumerated"] == 1
+            assert row["pregnancy_enumerated"] == 1
+            assert row["pregnancy_outcome_enumerated"] == 1
+
+    def test_vital_events_already_label_values_still_aggregate(self):
+        _build_coded_vital_events_fixture()
+        recent = _iso(timezone.now() - timedelta(days=5))
+        label_geo = {
+            "province": "central",
+            "district": "CHISAMBA",
+            "constituency": "Chisamba Central",
+            "ward": "CHAMUKA",
+            "ea": "EA_" + GEOID_CODED,
+        }
+        Pregnancy.objects.create(key="preg-label", submissiondate=recent, **label_geo)
+
+        central = _chart_row(_chart_payload(_client()), "CENTRAL")
+
+        assert central["pregnancy_enumerated"] == 2
+
+    def test_unmapped_vital_event_geography_is_skipped_without_bogus_rows(self):
+        _build_coded_vital_events_fixture()
+        recent = _iso(timezone.now() - timedelta(days=5))
+        Pregnancy.objects.create(
+            key="preg-unmapped",
+            submissiondate=recent,
+            province="999",
+            district="999",
+            constituency="999",
+            ward="999",
+            ea="999",
+        )
+
+        payload = _chart_payload(_client())
+        central = _chart_row(payload, "CENTRAL")
+
+        assert {row["value"] for row in payload["results"]} == {"CENTRAL"}
+        assert central["pregnancy_enumerated"] == 1
+
+    def test_current_census_filter_applies_after_odk_location_resolution(self):
+        _build_coded_vital_events_fixture()
+        BaselineCensusProvince.objects.create(province_name="CENTRAL", is_current=False)
+        client = _client()
+
+        all_rows = _chart_payload(client)
+        current_rows = _chart_payload(client, bc_current="1")
+
+        assert _chart_row(all_rows, "CENTRAL")["pregnancy_enumerated"] == 1
+        assert current_rows["results"] == []
+
+    def test_inactive_province_filter_applies_after_odk_location_resolution(self):
+        _build_coded_vital_events_fixture()
+        BaselineCensusProvince.objects.create(
+            province_name="CENTRAL", is_current=True, is_active=False
+        )
+
+        payload = _chart_payload(_client())
+
+        assert payload["results"] == []
 
     def test_indicator_param_accepts_supported_values(self):
         _build_baseline_census_fixture()
