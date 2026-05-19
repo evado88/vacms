@@ -167,6 +167,14 @@
   padding: clamp(8px, 1.2vh, 10px) 12px;
 }
 
+#national-operational-view #novKpiCardsContainer .nov-coverage-charts-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--nov-kpi-gap);
+  min-height: 0;
+  min-width: 0;
+}
+
 #national-operational-view #novKpiCardsContainer .nov-coverage-chart-card {
   background: #ffffff;
   border: 1px solid #e2e8f0;
@@ -1025,6 +1033,10 @@
 
   #national-operational-view #novKpiCardsContainer .nov-kpi-left-column {
     grid-template-rows: auto auto;
+  }
+
+  #national-operational-view #novKpiCardsContainer .nov-coverage-charts-row {
+    grid-template-columns: 1fr;
   }
 
   #national-operational-view #novKpiCardsContainer .nov-coverage-chart-card {

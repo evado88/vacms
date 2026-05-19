@@ -94,31 +94,16 @@ const parseNumericOrNull = (value) => {
 const buildEnumerationCoverageSeries = (kpis = {}) => {
   const peopleTotal = parseNumericOrNull(kpis.people?.total);
   const householdsTotal = parseNumericOrNull(kpis.households?.total);
-  const pregnanciesTotal = parseNumericOrNull(kpis.pregnancies?.total);
-  const pregOutcomesTotal = parseNumericOrNull(kpis.preg_outcomes?.total);
-  const deathsTotal = parseNumericOrNull(kpis.deaths?.total);
 
   // Population/household estimates come from the SRS EA population target
-  // table (summed server-side). Pregnancies/outcomes/deaths have no target.
+  // table (summed server-side).
   const populationTarget = parseNumericOrNull(kpis.targets?.population_target);
   const householdTarget = parseNumericOrNull(kpis.targets?.household_target);
 
-  const labels = [
-    "Population",
-    "Household",
-    "Pregnancies",
-    "Pregnancy Outcomes",
-    "Deaths",
-  ];
+  const labels = ["Population", "Household"];
 
-  const estimateData = [populationTarget, householdTarget, null, null, null];
-  const enumeratedData = [
-    peopleTotal ?? 0,
-    householdsTotal ?? 0,
-    pregnanciesTotal ?? 0,
-    pregOutcomesTotal ?? 0,
-    deathsTotal ?? 0,
-  ];
+  const estimateData = [populationTarget, householdTarget];
+  const enumeratedData = [peopleTotal ?? 0, householdsTotal ?? 0];
 
   // Coverage = enumerated / estimate, as a whole percent — matching how the
   // Census Table derives its coverage columns.
@@ -129,12 +114,21 @@ const buildEnumerationCoverageSeries = (kpis = {}) => {
   const coverageData = [
     coveragePct(peopleTotal, populationTarget),
     coveragePct(householdsTotal, householdTarget),
-    null,
-    null,
-    null,
   ];
 
   return { labels, estimateData, enumeratedData, coverageData };
+}
+
+// Vital events (pregnancies, pregnancy outcomes, deaths) have no enumeration
+// target, so this is a plain count series.
+const buildVitalEventsSeries = (kpis = {}) => {
+  const labels = ["Pregnancies", "Pregnancy Outcomes", "Deaths"];
+  const countData = [
+    parseNumericOrNull(kpis.pregnancies?.total) ?? 0,
+    parseNumericOrNull(kpis.preg_outcomes?.total) ?? 0,
+    parseNumericOrNull(kpis.deaths?.total) ?? 0,
+  ];
+  return { labels, countData };
 }
 
 const enumerationCoverageLabelsPlugin = {
@@ -293,6 +287,84 @@ const renderEnumerationCoverageChart = (kpis = {}) => {
   chartInstances.set(canvas, chart);
 }
 
+const renderVitalEventsChart = (kpis = {}) => {
+  const canvas = document.getElementById("vitalEventsChart");
+  if (!canvas || typeof Chart === "undefined") return;
+
+  destroyChartForCanvas(canvas);
+
+  const { labels, countData } = buildVitalEventsSeries(kpis);
+
+  const chart = new Chart(canvas.getContext("2d"), {
+    type: "bar",
+    data: {
+      labels,
+      datasets: [
+        {
+          label: "Recorded",
+          data: countData,
+          backgroundColor: ["#7c3aed", "#0891b2", "#dc2626"],
+          borderRadius: 4,
+          yAxisID: "y",
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: {
+        intersect: false,
+        mode: "index",
+      },
+      layout: {
+        padding: {
+          top: 22,
+        },
+      },
+      plugins: {
+        legend: {
+          display: false,
+        },
+        tooltip: {
+          callbacks: {
+            label(context) {
+              const value = context.raw;
+              if (value === null || value === undefined) return "";
+              return `${context.label}: ${formatCountValue(value)}`;
+            },
+          },
+        },
+      },
+      scales: {
+        x: {
+          grid: {
+            display: false,
+          },
+        },
+        y: {
+          beginAtZero: true,
+          position: "left",
+          title: {
+            display: true,
+            text: "Counts",
+          },
+          ticks: {
+            callback: (value) => formatCountValue(value),
+          },
+        },
+      },
+    },
+    plugins: [enumerationCoverageLabelsPlugin],
+  });
+  chartInstances.set(canvas, chart);
+}
+
+// Renders both overview coverage charts (enumeration coverage + vital events).
+const renderOverviewCoverageCharts = (kpis = {}) => {
+  renderEnumerationCoverageChart(kpis);
+  renderVitalEventsChart(kpis);
+}
+
 const selectedNovPreset = () => {
   if (document.getElementById("novTime30")?.checked) return "30";
   if (document.getElementById("novTime7")?.checked) return "7";
@@ -425,7 +497,7 @@ const updateNationalOperationalKpis = (kpis) => {
   setElementTextById("nov-kpi-30d-deaths", deaths.last_30_days);
   setElementTextById("nov-kpi-total-deaths", deaths.total);
 
-  renderEnumerationCoverageChart(kpis);
+  renderOverviewCoverageCharts(kpis);
 }
 
 let _novKpiInflight = null;
@@ -801,7 +873,7 @@ const resizeChartsForTab = (tab) => {
     return;
   }
   const mapByTab = {
-    overview: ["enumerationCoverageChart"],
+    overview: ["enumerationCoverageChart", "vitalEventsChart"],
   };
   (mapByTab[tab] || []).forEach((id) => {
     const canvas = document.getElementById(id);
@@ -813,7 +885,7 @@ const resizeChartsForTab = (tab) => {
 
 const initOverviewTab = async () => {
   await loadSlotOnce("novKpisComponentSlot");
-  renderEnumerationCoverageChart();
+  renderOverviewCoverageCharts();
 
   if (overviewInitialized) {
     requestNationalOperationalFilterData();
@@ -1433,7 +1505,7 @@ document.addEventListener("dashboard:component-loaded", (event) => {
   if (!slot || !slot.id) return;
 
   if (slot.id === "novKpisComponentSlot" && overviewInitialized) {
-    renderEnumerationCoverageChart();
+    renderOverviewCoverageCharts();
     requestNationalOperationalFilterData();
   }
 });
