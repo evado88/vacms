@@ -1498,6 +1498,10 @@ body {
   font-size: 0.82rem;
 }
 
+.breadcrumb-item + .breadcrumb-item::before {
+  content: ">";
+}
+
 .vacms-page-actions {
   display: flex;
   align-items: center;

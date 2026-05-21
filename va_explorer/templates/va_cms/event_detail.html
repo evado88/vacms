@@ -1,12 +1,16 @@
 {% extends "base.html" %} {% load static i18n %} {% load va_explorer_tags %}
 {% load static %} {% load crispy_forms_tags %}
-{% block title %}Event Details{%endblock %}
+{% block title %}Scheduled VA Interview Details{% endblock %}
+{% block heading %}Scheduled VA Interview Details{% endblock %}
+{% block breadcrumbs %}
+  <nav aria-label="Breadcrumb">
+    <ol class="breadcrumb bg-transparent p-0 mb-0">
+      <li class="breadcrumb-item"><a href="{% url 'cms-event-list' %}">Scheduled Verbal Autopsies</a></li>
+      <li class="breadcrumb-item active" aria-current="page">Scheduled VA Interview Details</li>
+    </ol>
+  </nav>
+{% endblock %}
 {% block content %}
-<div class="row mt-4">
-  <div class="col-12">
-    <h2>Scheduled VA Interview Details</h2>
-  </div>
-</div>
 <div class="row">
   <div class="col-lg-7 col-md-7">
   <div class="mb-3">

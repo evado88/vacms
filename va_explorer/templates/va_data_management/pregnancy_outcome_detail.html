@@ -4,6 +4,14 @@
 
 {% block title %}Pregnancy Outcome #{{ object.id }}{% endblock %}
 {% block heading %}Pregnancy Outcome #{{ object.id }}{% endblock %}
+{% block breadcrumbs %}
+  <nav aria-label="Breadcrumb">
+    <ol class="breadcrumb bg-transparent p-0 mb-0">
+      <li class="breadcrumb-item"><a href="{% url 'va_data_management:pregnancy_outcomes' %}">Pregnancy Outcomes</a></li>
+      <li class="breadcrumb-item active" aria-current="page">Pregnancy Outcome #{{ object.id }}</li>
+    </ol>
+  </nav>
+{% endblock %}
 
 {% block content %}
 <div class="data-management-detail-content">
