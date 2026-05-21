@@ -42,7 +42,7 @@ from va_explorer.home.views import (
     NationalOperationalFilterData,
 )
 from va_explorer.users.models import User
-from va_explorer.utils.mixins import CustomAuthMixin
+from va_explorer.utils.mixins import CsvDownloadPermissionMixin, CustomAuthMixin
 from va_explorer.utils.profiling import timed_block
 from va_explorer.va_analytics.filters import SupervisionFilter
 from va_explorer.va_data_management.models import Death, Pregnancy, PregnancyOutcome
@@ -2191,7 +2191,9 @@ baseline_census_province_table_component_view = (
 
 
 class BaselineCensusTableCsvExport(
-    PermissionRequiredMixin, BaselineCensusProvinceTableComponent
+    CsvDownloadPermissionMixin,
+    PermissionRequiredMixin,
+    BaselineCensusProvinceTableComponent,
 ):
     permission_required = "va_analytics.view_dashboard"
 

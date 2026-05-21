@@ -1,5 +1,6 @@
 from django.contrib import messages
 from django.contrib.auth.mixins import AccessMixin, UserPassesTestMixin
+from django.http import HttpResponseForbidden
 from django.http.response import HttpResponseRedirect
 from django.urls import reverse
 
@@ -22,6 +23,23 @@ class CustomAuthMixin(AccessMixin):
 
     def user_has_valid_password(self, request):
         return request.user.has_valid_password
+
+
+class CsvDownloadPermissionMixin:
+    """Return 403 for authenticated users who aren't Data Managers/Admins.
+
+    Place leftmost in the MRO so that authenticated-but-unauthorized users get
+    a 403, while anonymous users fall through to the downstream auth mixin's
+    login redirect.
+    """
+
+    def dispatch(self, request, *args, **kwargs):
+        user = request.user
+        if getattr(user, "is_authenticated", False) and (
+            not user.can_download_csv_exports
+        ):
+            return HttpResponseForbidden("You are not allowed to download this data.")
+        return super().dispatch(request, *args, **kwargs)
 
 
 class LocationRestrictedQuerySetMixin:

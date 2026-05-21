@@ -58,7 +58,7 @@ from va_explorer.home.services.common import (
 from va_explorer.home.services.map import (
     build_home_combined_map_payload as _build_home_combined_map_payload,
 )
-from va_explorer.utils.mixins import CustomAuthMixin
+from va_explorer.utils.mixins import CsvDownloadPermissionMixin, CustomAuthMixin
 from va_explorer.utils.profiling import timed_block
 from va_explorer.va_data_management.models import (
     CauseCodingIssue,
@@ -3638,7 +3638,10 @@ class RegionalOperationsCsaComponent(
 
 
 class RegionalOperationsCsaCsvExport(
-    RegionalOperationsComponentContextMixin, CustomAuthMixin, View
+    CsvDownloadPermissionMixin,
+    RegionalOperationsComponentContextMixin,
+    CustomAuthMixin,
+    View,
 ):
     _CSV_COLUMNS = (
         ("name", "CSA Name"),

@@ -26,6 +26,9 @@
             {% if filter.is_valid %}
               <a class="btn btn-secondary" href="{% url 'va_data_management:deaths' %}">Reset</a>
             {% endif %}
+            {% if request.user.can_download_csv_exports %}
+              <a class="btn btn-outline-secondary" href="{% url 'va_data_management:deaths_csv' %}{% if request.GET.urlencode %}?{{ request.GET.urlencode }}{% endif %}">Download CSV</a>
+            {% endif %}
           </div>
         </div>
       </form>

@@ -28,6 +28,7 @@ from django.views.generic import (
     UpdateView,
 )  # new
 
+from va_explorer.utils.mixins import CsvDownloadPermissionMixin
 from va_explorer.va_data_management.models import Death
 from va_explorer.vacms.admin_panel import (
     ADMINS_GROUP_NAME,
@@ -162,7 +163,7 @@ class EventListView(ListView):
         return queryset
 
 
-class EventListCsvExport(EventListView):
+class EventListCsvExport(CsvDownloadPermissionMixin, EventListView):
     """Download the (filtered) event list as a CSV.
 
     Subclasses EventListView so it reuses the same permission check

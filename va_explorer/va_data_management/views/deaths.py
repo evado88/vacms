@@ -1,8 +1,12 @@
+import csv
+
 from django.contrib import messages
 from django.contrib.auth.mixins import PermissionRequiredMixin
 from django.contrib.messages.views import SuccessMessageMixin
+from django.http import HttpResponse
 from django.shortcuts import redirect
 from django.urls import reverse, reverse_lazy
+from django.utils import timezone
 from django.views.generic import (
     DeleteView,
     DetailView,
@@ -11,7 +15,12 @@ from django.views.generic import (
     UpdateView,
 )
 
-from va_explorer.utils.mixins import CustomAuthMixin, LocationRestrictedQuerySetMixin
+from va_explorer.utils.mixins import (
+    CsvDownloadPermissionMixin,
+    CustomAuthMixin,
+    LocationRestrictedQuerySetMixin,
+)
+from va_explorer.va_data_management.constants import DEATH_PII_FIELDS, REDACTED_STRING
 from va_explorer.va_data_management.filters import DeathFilter
 from va_explorer.va_data_management.forms import DeathForm
 from va_explorer.va_data_management.models import Death
@@ -55,6 +64,38 @@ class Deaths(
                 self.filter.form.fields.pop(field, None)
         context["filter"] = self.filter
         return context
+
+
+class DeathsCsvExport(CsvDownloadPermissionMixin, Deaths):
+    """Download the (filtered) list of unscheduled VAs as a CSV.
+
+    Reuses the Deaths queryset (location scoping + ``eventid__isnull=True`` +
+    DeathFilter), so the export matches the on-screen list. Restricted to Data
+    Managers/Admins via CsvDownloadPermissionMixin; PII columns are redacted for
+    users without ``can_view_pii``.
+    """
+
+    paginate_by = None
+
+    def get(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        redact = not request.user.can_view_pii
+        field_names = [field.name for field in Death._meta.fields]
+        filename = timezone.now().strftime("unscheduled_vas_%Y%m%d_%H%M%S.csv")
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        writer = csv.writer(response)
+        writer.writerow(field_names)
+        for death in queryset.iterator():
+            row = []
+            for name in field_names:
+                if redact and name in DEATH_PII_FIELDS:
+                    row.append(REDACTED_STRING)
+                    continue
+                value = getattr(death, name)
+                row.append("" if value is None else value)
+            writer.writerow(row)
+        return response
 
 
 class DeathDetail(

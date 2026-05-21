@@ -91,6 +91,11 @@ urlpatterns = [
     # Deaths
     path("deaths", view=views.Deaths.as_view(), name="deaths"),
     path(
+        "deaths/export.csv",
+        view=views.DeathsCsvExport.as_view(),
+        name="deaths_csv",
+    ),
+    path(
         "deaths/detail/<int:id>", view=views.DeathDetail.as_view(), name="death_detail"
     ),
     path("deaths/edit/<int:id>", view=views.DeathEdit.as_view(), name="death_edit"),

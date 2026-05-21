@@ -166,6 +166,16 @@ class User(AbstractUser):
             self.user_permissions.remove(permission)
 
     @property
+    def can_download_csv_exports(self):
+        # Gates the "Download CSV" buttons/endpoints across the dashboards,
+        # event scheduling, and deaths list. Restricted to Data Managers and
+        # Admins (and superusers).
+        return bool(
+            self.is_superuser
+            or self.groups.filter(name__in=["Data Managers", "Admins"]).exists()
+        )
+
+    @property
     def can_download_data(self):
         return self.has_perm("va_analytics.download_data")
 

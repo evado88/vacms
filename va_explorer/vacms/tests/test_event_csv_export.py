@@ -211,3 +211,15 @@ def test_csv_export_forbidden_without_view_rights(client):
     response = client.get(reverse("cms-event-list-csv"))
 
     assert response.status_code == 403
+
+
+def test_csv_export_forbidden_for_non_data_manager_viewer(client):
+    # MSOs can view the VA schedule but are not Data Managers/Admins, so the
+    # CSV export endpoint must reject them even though the list page is allowed.
+    user = UserFactory()
+    user.groups.add(_group("Mortality Surveillance Officer"))
+    client.force_login(user)
+
+    response = client.get(reverse("cms-event-list-csv"))
+
+    assert response.status_code == 403
