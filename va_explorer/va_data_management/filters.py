@@ -40,20 +40,34 @@ class GeoEnumeratorFilterSet(FilterSet):
     district = CharFilter(
         field_name="district",
         lookup_expr="icontains",
-        label="District",
-        widget=TextInput(attrs={"class": "form-text"}),
+        label="",
+        widget=TextInput(
+            attrs={
+                "class": "form-text",
+                "placeholder": "District",
+                "aria-label": "District",
+            }
+        ),
     )
     ward = CharFilter(
         field_name="ward",
         lookup_expr="icontains",
-        label="Ward",
-        widget=TextInput(attrs={"class": "form-text"}),
+        label="",
+        widget=TextInput(
+            attrs={"class": "form-text", "placeholder": "Ward", "aria-label": "Ward"}
+        ),
     )
     enumerator = CharFilter(
         field_name="enumerator",
         lookup_expr="icontains",
-        label="Enumerator",
-        widget=TextInput(attrs={"class": "form-text"}),
+        label="",
+        widget=TextInput(
+            attrs={
+                "class": "form-text",
+                "placeholder": "Enumerator",
+                "aria-label": "Enumerator",
+            }
+        ),
     )
 
     class Meta:
@@ -68,19 +82,37 @@ class VAFilter(FilterSet):
     interviewer = CharFilter(
         field_name="Id10010",
         lookup_expr="icontains",
-        label="Interviewer",
-        widget=TextInput(attrs={"class": "form-text"}),
+        label="",
+        widget=TextInput(
+            attrs={
+                "class": "form-text",
+                "placeholder": "Interviewer",
+                "aria-label": "Interviewer",
+            }
+        ),
     )
     deceased = CharFilter(
         method="filter_deceased",
-        label="Deceased",
-        widget=TextInput(attrs={"class": "form-text"}),
+        label="",
+        widget=TextInput(
+            attrs={
+                "class": "form-text",
+                "placeholder": "Deceased",
+                "aria-label": "Deceased",
+            }
+        ),
     )
     district = CharFilter(
         field_name="district",
         lookup_expr="icontains",
-        label="District",
-        widget=TextInput(attrs={"class": "form-text"}),
+        label="",
+        widget=TextInput(
+            attrs={
+                "class": "form-text",
+                "placeholder": "District",
+                "aria-label": "District",
+            }
+        ),
     )
     start_date = DateFilter(
         field_name="Id10023",
@@ -97,8 +129,10 @@ class VAFilter(FilterSet):
     cause = CharFilter(
         field_name="causes__cause",
         lookup_expr="icontains",
-        label="Cause",
-        widget=TextInput(attrs={"class": "form-text"}),
+        label="",
+        widget=TextInput(
+            attrs={"class": "form-text", "placeholder": "Cause", "aria-label": "Cause"}
+        ),
     )
     only_errors = BooleanFilter(
         method="filter_errors",
@@ -148,8 +182,10 @@ class PregnancyFilter(GeoEnumeratorFilterSet):
     id = CharFilter(
         field_name="id",
         lookup_expr="icontains",
-        label="ID",
-        widget=TextInput(attrs={"class": "form-text"}),
+        label="",
+        widget=TextInput(
+            attrs={"class": "form-text", "placeholder": "ID", "aria-label": "ID"}
+        ),
     )
     start_date = DateFilter(
         field_name="created",
@@ -176,14 +212,22 @@ class HouseholdFilter(GeoEnumeratorFilterSet):
     id = CharFilter(
         field_name="id",
         lookup_expr="icontains",
-        label="ID",
-        widget=TextInput(attrs={"class": "form-text"}),
+        label="",
+        widget=TextInput(
+            attrs={"class": "form-text", "placeholder": "ID", "aria-label": "ID"}
+        ),
     )
     supervisor = CharFilter(
         field_name="supervisor",
         lookup_expr="icontains",
-        label="Supervisor",
-        widget=TextInput(attrs={"class": "form-text"}),
+        label="",
+        widget=TextInput(
+            attrs={
+                "class": "form-text",
+                "placeholder": "Supervisor",
+                "aria-label": "Supervisor",
+            }
+        ),
     )
 
     class Meta:
@@ -198,19 +242,25 @@ class PregnancyOutcomeFilter(GeoEnumeratorFilterSet):
     outcome_type = CharFilter(
         field_name="po_group",
         lookup_expr="icontains",
-        label="Pregnancy Outcome",
-        widget=TextInput(attrs={"class": "form-text"}),
+        label="",
+        widget=TextInput(
+            attrs={
+                "class": "form-text",
+                "placeholder": "Pregnancy Outcome",
+                "aria-label": "Pregnancy Outcome",
+            }
+        ),
     )
     start_date = DateFilter(
         field_name="PO_41",
         lookup_expr="gte",
-        label="Earliest Date of Delivery",
+        label="Earliest Delivery",
         widget=DateInput(attrs={"class": "form-date datepicker"}),
     )
     end_date = DateFilter(
         field_name="PO_41",
         lookup_expr="lte",
-        label="Latest Date of Delivery",
+        label="Latest Delivery",
         widget=DateInput(attrs={"class": "form-date datepicker"}),
     )
 
@@ -226,8 +276,14 @@ class DeathFilter(GeoEnumeratorFilterSet):
     deceased = CharFilter(
         field_name="DE_03",
         lookup_expr="icontains",
-        label="Deceased",
-        widget=TextInput(attrs={"class": "form-text"}),
+        label="",
+        widget=TextInput(
+            attrs={
+                "class": "form-text",
+                "placeholder": "Deceased",
+                "aria-label": "Deceased",
+            }
+        ),
     )
     start_date = DateFilter(
         field_name="DE_06",

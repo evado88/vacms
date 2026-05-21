@@ -1,19 +1,15 @@
 <div>
-  <label class="form-label">Province</label>
-  <input type="text" name="province" value="{{ filters.province }}" class="form-control" />
+  <input type="text" name="province" value="{{ filters.province }}" class="form-control" placeholder="Province" aria-label="Province" />
 </div>
 <div>
-  <label class="form-label">District</label>
-  <input type="text" name="district" value="{{ filters.district }}" class="form-control" />
+  <input type="text" name="district" value="{{ filters.district }}" class="form-control" placeholder="District" aria-label="District" />
 </div>
 <div>
-  <label class="form-label">Interviewer</label>
-  <input type="text" name="interviewer" value="{{ filters.interviewer }}" class="form-control" />
+  <input type="text" name="interviewer" value="{{ filters.interviewer }}" class="form-control" placeholder="Interviewer" aria-label="Interviewer" />
 </div>
 <div>
-  <label class="form-label">Interview Status</label>
-  <select name="interview_status" class="form-select">
-    <option value="">All</option>
+  <select name="interview_status" class="form-select" aria-label="Interview Status">
+    <option value="">Interview Status</option>
     <option value="unscheduled" {% if filters.interview_status == "unscheduled" %}selected{% endif %}>Unscheduled</option>
     {% for value,label in object_list.model.VAInterviewStatus.choices %}
       <option value="{{ value }}" {% if filters.interview_status == value %}selected{% endif %}>{{ label }}</option>

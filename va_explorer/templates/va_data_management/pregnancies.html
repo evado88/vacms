@@ -9,15 +9,12 @@
 
   <div data-list-table>
     <section class="ou-card ou-mb-3">
-      <div class="ou-card-header">
-        <h2 class="ou-card-title">Filters</h2>
-      </div>
       <div class="ou-card-body">
         <small class="ou-filter-note">Filter pregnancies by ID, district, ward, enumerator, or record date range.</small>
         <form method="get" class="ou-filter-row ou-va-filter-row" data-list-filter>
           {% for field in filter.form %}
             <div class="form-group mb-0">
-              {{ field.label_tag }}
+              {% if field.label %}<label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{% endif %}
               {{ field }}
             </div>
           {% endfor %}
@@ -34,9 +31,6 @@
     </section>
 
     <section class="ou-card ou-mb-3">
-      <div class="ou-card-header">
-        <h2 class="ou-card-title">Pregnancies</h2>
-      </div>
       <div class="ou-card-body p-0" data-list-slot data-endpoint="{% url 'va_data_management:pregnancies' %}?component=1">
         {% include "partials/_list_table_component.html" %}
       </div>
