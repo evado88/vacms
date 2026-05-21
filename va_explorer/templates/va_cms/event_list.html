@@ -1,14 +1,25 @@
 {% extends "base.html" %}
+{% load static %}
 {% block title %} All Events{% endblock %}
 {% block heading %} Scheduled Verbal Autopsies {% endblock %}
 {% block content %}
 
-  {% include "partials/filter_bar.html" with note="Filter scheduled verbal autopsies by province, district, interviewer assignment, and interview status." fields_template="va_cms/partials/_event_list_filter_fields.html" actions_template="va_cms/partials/_event_list_filter_actions.html" class_name="ou-mb-3" %}
+  <div data-list-table>
+    {% include "partials/filter_bar.html" with note="Filter scheduled verbal autopsies by province, district, interviewer assignment, and interview status." fields_template="va_cms/partials/_event_list_filter_fields.html" actions_template="va_cms/partials/_event_list_filter_actions.html" class_name="ou-mb-3" list_filter=True %}
 
-  {% include "partials/card.html" with title="Scheduled Events" body_template="va_cms/partials/_event_list_card_body.html" class_name="ou-mb-3" body_class="p-0" %}
+    <section class="ou-card ou-mb-3">
+      <div class="ou-card-header">
+        <h2 class="ou-card-title">Scheduled Events</h2>
+      </div>
+      <div class="ou-card-body p-0" data-list-slot data-endpoint="{% url 'cms-event-list' %}?component=1">
+        {% include "partials/_list_table_component.html" %}
+      </div>
+    </section>
+  </div>
 
-  {% if page_obj.has_other_pages %}
-    {% include "partials/_pagination.html" %}
-  {% endif %}
+{% endblock %}
 
+{% block page_scripts %}
+  {{ block.super }}
+  <script src="{% static 'js/list_table.js' %}"></script>
 {% endblock %}

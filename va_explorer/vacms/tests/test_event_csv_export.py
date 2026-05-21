@@ -202,6 +202,29 @@ def test_csv_includes_death_fields_and_fallbacks(client):
     assert ew["Respondent Phone"] == "0955000333"
 
 
+def test_event_list_component_returns_fragment(client):
+    client.force_login(_viewer())
+    Event.objects.create(
+        event_type=Event.EventType.DEATH,
+        event_status=Event.EventStatus.VA_INTERVIEW_SCHEDULED,
+        va_interview_status=Event.VAInterviewStatus.SCHEDULED,
+        death=_make_death("Fragment Person"),
+        province="Lusaka",
+    )
+
+    url = reverse("cms-event-list")
+
+    full = client.get(url)
+    assert b"<html" in full.content.lower()
+    assert b"Apply Filters" not in full.content
+
+    fragment = client.get(url, {"component": "1"})
+    assert fragment.status_code == 200
+    body = fragment.content.lower()
+    assert b"<html" not in body
+    assert b"<table" in body
+
+
 def test_csv_export_forbidden_without_view_rights(client):
     user = UserFactory()
     user.denied_permissions = ["vacms.view_event", "vacms.change_event"]

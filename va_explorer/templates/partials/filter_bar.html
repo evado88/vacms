@@ -2,6 +2,7 @@
   method="{% if method %}{{ method }}{% else %}get{% endif %}"
   action="{% if action %}{{ action }}{% endif %}"
   class="ou-filter-bar {% if class_name %}{{ class_name }}{% endif %}"
+  {% if list_filter %}data-list-filter{% endif %}
 >
   {% if note %}
     <small class="ou-filter-note">{{ note }}</small>

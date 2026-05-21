@@ -103,6 +103,47 @@ body {
   margin-left: 5px;
 }
 
+/* Census-style AJAX list tables (deaths, pregnancies, outcomes, households, events) */
+.vacms-list-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.vacms-list-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f5f6f7;
+  border-bottom: 2px solid #e0e3e6;
+  padding: 8px 10px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.vacms-list-table thead th a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.vacms-list-table thead th a:hover {
+  text-decoration: underline;
+}
+
+.vacms-list-table tbody td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #eef0f2;
+  vertical-align: middle;
+}
+
+.vacms-list-table tbody tr:hover {
+  background: #f8fbf9;
+}
+
+[data-list-slot] .ou-pagination-nav {
+  margin-top: 12px;
+}
+
 .form-date {
   width: min(100%, 10rem);
 }

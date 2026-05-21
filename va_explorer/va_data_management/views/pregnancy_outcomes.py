@@ -12,7 +12,11 @@ from django.views.generic import (
 )
 from django.views.generic.detail import SingleObjectMixin
 
-from va_explorer.utils.mixins import CustomAuthMixin, LocationRestrictedQuerySetMixin
+from va_explorer.utils.mixins import (
+    AjaxListTableMixin,
+    CustomAuthMixin,
+    LocationRestrictedQuerySetMixin,
+)
 from va_explorer.va_data_management.filters import PregnancyOutcomeFilter
 from va_explorer.va_data_management.forms import PregnancyOutcomeForm
 from va_explorer.va_data_management.models import PregnancyOutcome
@@ -22,10 +26,15 @@ from va_explorer.va_data_management.utils.location_access import (
 
 
 class PregnancyOutcomes(
-    CustomAuthMixin, PermissionRequiredMixin, LocationRestrictedQuerySetMixin, ListView
+    AjaxListTableMixin,
+    CustomAuthMixin,
+    PermissionRequiredMixin,
+    LocationRestrictedQuerySetMixin,
+    ListView,
 ):
     permission_required = "va_data_management.view_pregnancyoutcome"
     template_name = "va_data_management/pregnancy_outcomes.html"
+    list_table_template = "partials/_pregnancyoutcome_table.html"
     paginate_by = 15
     model = PregnancyOutcome
 

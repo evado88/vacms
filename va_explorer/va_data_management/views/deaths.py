@@ -16,6 +16,7 @@ from django.views.generic import (
 )
 
 from va_explorer.utils.mixins import (
+    AjaxListTableMixin,
     CsvDownloadPermissionMixin,
     CustomAuthMixin,
     LocationRestrictedQuerySetMixin,
@@ -31,11 +32,16 @@ from va_explorer.vacms.permissions import user_can_manage_va_schedule
 
 
 class Deaths(
-    CustomAuthMixin, PermissionRequiredMixin, LocationRestrictedQuerySetMixin, ListView
+    AjaxListTableMixin,
+    CustomAuthMixin,
+    PermissionRequiredMixin,
+    LocationRestrictedQuerySetMixin,
+    ListView,
 ):
     permission_required = "va_data_management.view_death"
     model = Death
     template_name = "va_data_management/deaths.html"
+    list_table_template = "partials/_death_table.html"
     paginate_by = 15
 
     _SORT_FIELDS = {

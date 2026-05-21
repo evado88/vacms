@@ -28,7 +28,7 @@ from django.views.generic import (
     UpdateView,
 )  # new
 
-from va_explorer.utils.mixins import CsvDownloadPermissionMixin
+from va_explorer.utils.mixins import AjaxListTableMixin, CsvDownloadPermissionMixin
 from va_explorer.va_data_management.models import Death
 from va_explorer.vacms.admin_panel import (
     ADMINS_GROUP_NAME,
@@ -60,9 +60,10 @@ def user_can_access_admin_panel(user):
 
 # event
 @method_decorator(login_required, name="dispatch")
-class EventListView(ListView):
+class EventListView(AjaxListTableMixin, ListView):
     model = Event
     template_name = "va_cms/event_list.html"
+    list_table_template = "va_cms/partials/_event_list_table.html"
     paginate_by = 25
 
     _SORT_FIELDS = {

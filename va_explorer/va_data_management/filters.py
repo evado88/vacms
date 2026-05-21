@@ -232,13 +232,13 @@ class DeathFilter(GeoEnumeratorFilterSet):
     start_date = DateFilter(
         field_name="DE_06",
         lookup_expr="gte",
-        label="Earliest Date of Death",
+        label="Earliest DOD",
         widget=DateInput(attrs={"class": "form-date datepicker"}),
     )
     end_date = DateFilter(
         field_name="DE_06",
         lookup_expr="lte",
-        label="Latest Date of Death",
+        label="Latest DOD",
         widget=DateInput(attrs={"class": "form-date datepicker"}),
     )
 

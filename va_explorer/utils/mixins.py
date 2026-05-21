@@ -42,6 +42,32 @@ class CsvDownloadPermissionMixin:
         return super().dispatch(request, *args, **kwargs)
 
 
+class AjaxListTableMixin:
+    """Render only the table+pagination partial on the AJAX component refresh.
+
+    When the request carries ``?component=1`` (issued by list_table.js) the view
+    returns just the table fragment; otherwise it renders the full page, which
+    embeds the same fragment on first paint. Subclasses set
+    ``list_table_template`` to their per-model table partial.
+    """
+
+    list_table_template = None
+    component_template = "partials/_list_table_component.html"
+
+    def is_component_request(self):
+        return self.request.GET.get("component") == "1"
+
+    def get_template_names(self):
+        if self.is_component_request():
+            return [self.component_template]
+        return [self.template_name]
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["list_table_template"] = self.list_table_template
+        return context
+
+
 class LocationRestrictedQuerySetMixin:
     """Applies ``restrict_queryset_to_user_locations`` in ``get_queryset``.
 

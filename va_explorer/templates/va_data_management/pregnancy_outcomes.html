@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load static %}
 
 {% block title %}Pregnancy Outcomes{% endblock %}
 {% block heading %}Pregnancy Outcomes{% endblock %}
@@ -6,35 +7,44 @@
 {% block content %}
   {% include 'partials/_pregnancyoutcome_update_stats.html' %}
 
-  <section class="ou-card ou-mb-3">
-    <div class="ou-card-header">
-      <h2 class="ou-card-title">Filters</h2>
-    </div>
-    <div class="ou-card-body">
-      <small class="ou-filter-note">Filter pregnancy outcomes by district, ward, enumerator, outcome type, or delivery date range.</small>
-      <form method="get" class="ou-filter-row ou-va-filter-row">
-        {% for field in filter.form %}
-          <div class="form-group mb-0">
-            {{ field.label_tag }}
-            {{ field }}
+  <div data-list-table>
+    <section class="ou-card ou-mb-3">
+      <div class="ou-card-header">
+        <h2 class="ou-card-title">Filters</h2>
+      </div>
+      <div class="ou-card-body">
+        <small class="ou-filter-note">Filter pregnancy outcomes by district, ward, enumerator, outcome type, or delivery date range.</small>
+        <form method="get" class="ou-filter-row ou-va-filter-row" data-list-filter>
+          {% for field in filter.form %}
+            <div class="form-group mb-0">
+              {{ field.label_tag }}
+              {{ field }}
+            </div>
+          {% endfor %}
+          <div class="form-group mb-0 ou-va-filter-actions">
+            <label class="invisible d-block">&nbsp;</label>
+            <div class="ou-form-actions">
+              {% if filter.is_valid %}
+                <a class="btn btn-secondary" href="{% url 'va_data_management:pregnancy_outcomes' %}">Reset</a>
+              {% endif %}
+            </div>
           </div>
-        {% endfor %}
-        <div class="form-group mb-0 ou-va-filter-actions">
-          <label class="invisible d-block">&nbsp;</label>
-          <div class="ou-form-actions">
-            <button class="btn btn-primary" type="submit">Apply Filters</button>
-            {% if filter.is_valid %}
-              <a class="btn btn-secondary" href="{% url 'va_data_management:pregnancy_outcomes' %}">Reset</a>
-            {% endif %}
-          </div>
-        </div>
-      </form>
-    </div>
-  </section>
+        </form>
+      </div>
+    </section>
 
-  {% include "partials/card.html" with title="Pregnancy Outcomes" body_template="va_data_management/partials/_pregnancy_outcomes_table_card_body.html" class_name="ou-mb-3" body_class="p-0" %}
+    <section class="ou-card ou-mb-3">
+      <div class="ou-card-header">
+        <h2 class="ou-card-title">Pregnancy Outcomes</h2>
+      </div>
+      <div class="ou-card-body p-0" data-list-slot data-endpoint="{% url 'va_data_management:pregnancy_outcomes' %}?component=1">
+        {% include "partials/_list_table_component.html" %}
+      </div>
+    </section>
+  </div>
+{% endblock %}
 
-  {% if page_obj.has_other_pages %}
-    {% include "partials/_pagination.html" %}
-  {% endif %}
+{% block page_scripts %}
+  {{ block.super }}
+  <script src="{% static 'js/list_table.js' %}"></script>
 {% endblock %}

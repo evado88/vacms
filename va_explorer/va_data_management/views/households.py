@@ -13,7 +13,11 @@ from django.views.generic import (
 )
 from django.views.generic.detail import SingleObjectMixin
 
-from va_explorer.utils.mixins import CustomAuthMixin, LocationRestrictedQuerySetMixin
+from va_explorer.utils.mixins import (
+    AjaxListTableMixin,
+    CustomAuthMixin,
+    LocationRestrictedQuerySetMixin,
+)
 from va_explorer.va_data_management.filters import HouseholdFilter
 from va_explorer.va_data_management.forms import HouseholdForm
 from va_explorer.va_data_management.models import Household
@@ -30,11 +34,16 @@ class HouseholdAccessMixin(LocationRestrictedQuerySetMixin, SingleObjectMixin):
 
 
 class Households(
-    CustomAuthMixin, PermissionRequiredMixin, LocationRestrictedQuerySetMixin, ListView
+    AjaxListTableMixin,
+    CustomAuthMixin,
+    PermissionRequiredMixin,
+    LocationRestrictedQuerySetMixin,
+    ListView,
 ):
     permission_required = "va_data_management.view_household"
     model = Household
     template_name = "va_data_management/households.html"
+    list_table_template = "partials/_household_table.html"
     paginate_by = 15
     location_field_mapping = {
         "province": "province",

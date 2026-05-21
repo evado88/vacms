@@ -11,7 +11,11 @@ from django.views.generic import (
 )
 from django_filters.views import FilterView
 
-from va_explorer.utils.mixins import CustomAuthMixin, LocationRestrictedQuerySetMixin
+from va_explorer.utils.mixins import (
+    AjaxListTableMixin,
+    CustomAuthMixin,
+    LocationRestrictedQuerySetMixin,
+)
 from va_explorer.va_data_management.filters import PregnancyFilter
 from va_explorer.va_data_management.forms import PregnancyForm
 from va_explorer.va_data_management.models import Pregnancy
@@ -21,6 +25,7 @@ from va_explorer.va_data_management.utils.location_access import (
 
 
 class Pregnancies(
+    AjaxListTableMixin,
     CustomAuthMixin,
     PermissionRequiredMixin,
     LocationRestrictedQuerySetMixin,
@@ -28,6 +33,7 @@ class Pregnancies(
 ):
     permission_required = "va_data_management.view_pregnancy"
     template_name = "va_data_management/pregnancies.html"
+    list_table_template = "partials/_pregnancy_table.html"
     filterset_class = PregnancyFilter
     paginate_by = 15
     model = Pregnancy
