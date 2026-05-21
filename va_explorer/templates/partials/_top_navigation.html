@@ -18,9 +18,9 @@
     </button>
 
     <!-- Top navigation content -->
-    <div class="collapse navbar-collapse" id="topNavContent">
+    <div class="collapse navbar-collapse top-nav-collapse" id="topNavContent">
       <!-- Spacer to push items to the right -->
-      <div class="navbar-nav mr-auto">
+      <div class="navbar-nav mr-auto top-nav-spacer">
         <!-- Breadcrumb or current page indicator could go here -->
         <span class="navbar-text">
           {% block page_breadcrumb %}
@@ -30,7 +30,7 @@
       </div>
 
       <!-- Right side items -->
-      <ul class="navbar-nav ml-auto">
+      <ul class="navbar-nav ml-auto top-nav-right-group">
         <!-- Current time display -->
         {% comment %} <li class="nav-item d-none d-lg-block">
           <span class="navbar-text text-light mr-3">
@@ -39,6 +39,33 @@
           </span>
         </li> {% endcomment %}
 
+
+        <li class="nav-item top-nav-dashboard-item">
+          <a
+            class="nav-link {% if request.resolver_match.url_name == 'index' and request.resolver_match.namespace == 'home' %}active{% endif %}"
+            href="{% url 'home:index' %}"
+          >
+            Operations
+          </a>
+        </li>
+        {% if perms.va_analytics.view_dashboard %}
+        <li class="nav-item top-nav-dashboard-item">
+          <a
+            class="nav-link {% if request.resolver_match.url_name == 'outcomes-dashboard' %}active{% endif %}"
+            href="{% url 'va_analytics:outcomes-dashboard' %}?tab=pregnancies"
+          >
+            Outcomes
+          </a>
+        </li>
+        <li class="nav-item top-nav-dashboard-item">
+          <a
+            class="nav-link {% if request.resolver_match.url_name == 'baseline-census-dashboard' %}active{% endif %}"
+            href="{% url 'va_analytics:baseline-census-dashboard' %}"
+          >
+            Census
+          </a>
+        </li>
+        {% endif %}
 
         <!-- User Management Dropdown styled as nav link -->
         <li class="nav-item dropdown">

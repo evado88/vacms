@@ -7,6 +7,7 @@
 {% block heading %}Verbal Autopsy #{{ object.id }}{% endblock %}
 
 {% block content %}
+<div class="data-management-detail-content">
 {% if duplicate and AUTO_DETECT_DUPLICATES %}
 <div class="row mt-4">
   <div class="alert alert-warning" role="alert">
@@ -170,7 +171,8 @@
       </div>
     </div>
 
-  {% endif %}
+{% endif %}
+</div>
 </div>
 
 <div class="flt-action-backdrop"></div>

@@ -69,6 +69,7 @@ from va_explorer.va_data_management.models import (
     ODKFormChoice,
     Pregnancy,
     PregnancyOutcome,
+    VerbalAutopsy,
 )
 from va_explorer.va_data_management.utils.csa_names import (
     format_csa_display_name,
@@ -1894,6 +1895,33 @@ class RegionalOperationsComponentContextMixin:
         name = re.sub(r"\s+\d+$", "", name).strip()
         return name or "Unassigned MSO"
 
+    _MSO_JUNK_NORMS = {"", "unknown", "unassigned mso", "facility"}
+
+    @classmethod
+    def _is_junk_mso_norm(cls, norm):
+        # norm is already lowercased / punctuation-stripped by normalize_person_name
+        if not norm or norm in cls._MSO_JUNK_NORMS:
+            return True
+        # "facility z", "facility a", "facility 1", etc.
+        return bool(re.match(r"^facility(\s+\S+)?$", norm))
+
+    @staticmethod
+    def _pick_canonical_mso_display(variant_counts):
+        """Choose the best display name among casing variants sharing a norm.
+
+        Prefer mixed-case over ALL-CAPS/all-lower, then most frequent, then
+        longest, then lexicographic (deterministic).
+        """
+
+        def rank(item):
+            display, count = item
+            all_caps = display == display.upper()
+            all_lower = display == display.lower()
+            mixed = not all_caps and not all_lower
+            return (0 if mixed else 1, -count, -len(display), display)
+
+        return sorted(variant_counts.items(), key=rank)[0][0]
+
     @staticmethod
     def _normalize_name_search_text(value):
         # Keep legacy behavior for non-CSA name matching (e.g., MSO token normalization).
@@ -1974,14 +2002,17 @@ class RegionalOperationsComponentContextMixin:
         )
         return geo if geo in self.geo_filter_values else ""
 
-    def _normalized_preset(self):
-        preset_raw = (self.request.GET.get("time_preset") or "all").strip().lower()
-        if preset_raw in self.ui_id_to_preset:
-            return self.ui_id_to_preset[preset_raw]
-        return preset_raw if preset_raw in {"all", "30", "7", "24"} else "all"
+    def _normalized_preset(self, default="all"):
+        preset_raw = (self.request.GET.get("time_preset") or default).strip().lower()
+        # Match UI ids case-insensitively ("timeAll" -> "timeall") so an explicit
+        # time_preset is honored regardless of the default.
+        ui_map = {key.lower(): value for key, value in self.ui_id_to_preset.items()}
+        if preset_raw in ui_map:
+            return ui_map[preset_raw]
+        return preset_raw if preset_raw in {"all", "30", "7", "24"} else default
 
-    def _resolve_time_window(self):
-        selected_preset = self._normalized_preset()
+    def _resolve_time_window(self, default_preset="all"):
+        selected_preset = self._normalized_preset(default_preset)
         start_value = (self.request.GET.get("start_date") or "").strip()
         end_value = (self.request.GET.get("end_date") or "").strip()
 
@@ -2323,6 +2354,32 @@ class RegionalOperationsComponentContextMixin:
         )
         return mapping
 
+    def _csa_home_locations(self, province_scope, selected_geo):
+        # Most-recent all-time tracker row per enumerator (PG DISTINCT ON),
+        # used to place zero-coverage CSAs in their last-known geography.
+        qs = (
+            CSADailyTracker.objects.filter(
+                self._province_access_q("province", province_scope)
+            )
+            .filter(self._province_filter_q("province", selected_geo))
+            .exclude(enumerator__isnull=True)
+            .exclude(enumerator__exact="")
+            .order_by("enumerator", "-today", "-id")
+            .distinct("enumerator")
+            .values("enumerator", "province", "district", "ward")
+        )
+        home = {}
+        for row in qs:
+            name = self._format_csa_display_name(row.get("enumerator"))
+            if not name:
+                continue
+            home[name] = (
+                self._resolve_choice_label("province", row.get("province")),
+                self._resolve_choice_label("district", row.get("district")),
+                self._resolve_choice_label("ward", row.get("ward")),
+            )
+        return home
+
     def _build_csa_rows(
         self,
         selected_geo,
@@ -2393,8 +2450,32 @@ class RegionalOperationsComponentContextMixin:
             entry["pregnancy_outcomes"] += outcomes
             entry["events"] += deaths + pregnancies + outcomes
 
-        # If no tracker records exist there is nothing to display; skip the
-        # Pregnancy query entirely rather than running a second DB query.
+        # Roster injection: add zero-coverage rows for CSAs in the supervisor
+        # mapping who have no tracker activity in the selected period, so the
+        # dashboard shows the full district/province/ward roster.
+        csa_home = self._csa_home_locations(province_scope, selected_geo)
+        for row in CSASupervisorTargetMap.objects.values(
+            "csa_display_name",
+            "csa_name_normalized",
+        ):
+            csa_name = self._format_csa_display_name(row.get("csa_display_name"))
+            if not csa_name:
+                continue
+            home = csa_home.get(csa_name)
+            if not home:
+                continue
+            province_label, district_label, ward_label = home
+            group_key = (csa_name, province_label, district_label, ward_label)
+            if group_key in counts_by_csa:
+                continue
+            entry = counts_by_csa[group_key]
+            entry["name"] = csa_name
+            entry["province"] = province_label
+            entry["district"] = district_label
+            entry["ward"] = ward_label
+
+        # If neither tracker records nor roster entries exist, there is nothing
+        # to display; skip the Pregnancy query to save a DB round trip.
         if not counts_by_csa:
             return []
 
@@ -2530,9 +2611,13 @@ class RegionalOperationsComponentContextMixin:
 
         # Single VA queryset pass: fetch base fields AND duration fields together to
         # avoid a second full-table VA scan later for duration outlier calculations.
+        # norm_variants maps a normalized name -> Counter of observed display
+        # casings, used to pick one canonical display name per person so casing
+        # duplicates ("Lweendo Namitondo" vs "LWEENDO NAMITONDO") collapse.
         va_to_mso_name = {}
         base_va_records = []
         duration_records = []
+        norm_variants = defaultdict(Counter)
         for va_row in va_queryset.values(
             "id",
             "Id10010",
@@ -2545,6 +2630,9 @@ class RegionalOperationsComponentContextMixin:
         ):
             mso_name = self._mso_name_from_va_row(va_row)
             mso_name_norm = self.normalize_person_name(mso_name)
+            if self._is_junk_mso_norm(mso_name_norm):
+                continue
+            norm_variants[mso_name_norm][mso_name] += 1
             province_value = (
                 va_row.get("province")
                 if va_row.get("province") not in (None, "")
@@ -2572,13 +2660,84 @@ class RegionalOperationsComponentContextMixin:
                 }
             )
 
+        # Collect the all-time MSO roster (VAs + case-management assignments) so
+        # workers with zero VAs in the selected period still appear. Accumulate
+        # name variants and a preferred (valid) province per normalized name.
+        roster_province_by_norm = {}
+
+        def _record_roster(norm, name, province_label):
+            norm_variants[norm][name] += 1
+            province = province_label or "—"
+            current = roster_province_by_norm.get(norm)
+            if current is None or (current == "—" and province != "—"):
+                roster_province_by_norm[norm] = province
+
+        for row in (
+            VerbalAutopsy.objects.filter(
+                self._province_access_q("province", province_scope)
+            )
+            .filter(self._province_filter_q("province", selected_geo))
+            .exclude(Id10010__isnull=True)
+            .exclude(Id10010__exact="")
+            .order_by("Id10010", "-Id10012", "-id")
+            .distinct("Id10010")
+            .values("Id10010", "province")
+        ):
+            name = self._format_mso_display_name(row.get("Id10010"))
+            norm = self.normalize_person_name(name)
+            if self._is_junk_mso_norm(norm):
+                continue
+            _record_roster(
+                norm, name, self._resolve_choice_label("province", row.get("province"))
+            )
+
+        for raw_name, province_value in (
+            Event.objects.filter(
+                self._province_access_q_with_codes("province", province_scope)
+            )
+            .filter(self._province_filter_q("province", selected_geo))
+            .exclude(va_interview_staff__name__isnull=True)
+            .exclude(va_interview_staff__name__exact="")
+            .values_list("va_interview_staff__name", "province")
+            .distinct()
+        ):
+            name = self._format_mso_display_name(raw_name)
+            norm = self.normalize_person_name(name)
+            if self._is_junk_mso_norm(norm):
+                continue
+            _record_roster(
+                norm, name, self._resolve_choice_label("province", province_value)
+            )
+
+        # Pick one canonical display name per normalized name so casing variants
+        # collapse into a single row, then remap every name-bearing record.
+        canonical_by_norm = {
+            norm: self._pick_canonical_mso_display(variants)
+            for norm, variants in norm_variants.items()
+        }
+
+        def _canon(norm):
+            return canonical_by_norm.get(norm) or norm.title()
+
+        for rec in base_va_records:
+            rec["name"] = _canon(rec["mso_name_norm"])
+        for rec in duration_records:
+            rec["name"] = _canon(rec["mso_name_norm"])
+        va_to_mso_name = {
+            vid: _canon(self.normalize_person_name(name))
+            for vid, name in va_to_mso_name.items()
+        }
+
         if base_va_records:
             df_base_va = pd.DataFrame.from_records(base_va_records)
             df_va_totals = df_base_va.groupby(
                 ["name", "mso_name_norm"], as_index=False
             ).agg(
                 va_total=("va_id", "count"),
-                province=("province", "first"),
+                province=(
+                    "province",
+                    lambda s: next((p for p in s if p and p != "—"), "—"),
+                ),
             )
         else:
             df_base_va = pd.DataFrame(
@@ -2596,6 +2755,30 @@ class RegionalOperationsComponentContextMixin:
             )
 
         df_mso = df_va_totals.copy()
+
+        # Inject roster rows for people not already present from in-period VAs.
+        va_norms = (
+            set(df_mso["mso_name_norm"].dropna().tolist())
+            if not df_mso.empty
+            else set()
+        )
+        roster_rows = []
+        for norm, province in roster_province_by_norm.items():
+            if norm in va_norms:
+                continue
+            roster_rows.append(
+                {
+                    "name": _canon(norm),
+                    "province": province,
+                    "mso_name_norm": norm,
+                    "va_total": 0,
+                }
+            )
+
+        if roster_rows:
+            df_roster = pd.DataFrame.from_records(roster_rows)
+            df_mso = pd.concat([df_mso, df_roster], ignore_index=True)
+
         mso_names = sorted(df_mso["name"].dropna().unique().tolist())
         df_mso["mso_name_norm"] = df_mso["name"].apply(self.normalize_person_name)
         mso_name_norm_to_name = {
@@ -3053,6 +3236,17 @@ class RegionalOperationsComponentContextMixin:
         )
         final_rows = []
         for raw_row in df_mso.to_dict("records"):
+            name = self._format_mso_display_name(raw_row.get("name"))
+            norm = self.normalize_person_name(name)
+            province = raw_row.get("province") or "—"
+            # Drop junk/placeholder names and rows with no valid province; their
+            # metrics have already been merged into the canonical, valid-province
+            # row for the same person (if one exists).
+            if self._is_junk_mso_norm(norm):
+                continue
+            if not province or province == "—":
+                continue
+
             mean_value = raw_row.get("mean_death_to_va_complete", "")
             if pd.isna(mean_value) or mean_value in (None, ""):
                 mean_value = ""
@@ -3060,8 +3254,8 @@ class RegionalOperationsComponentContextMixin:
                 mean_value = round(float(mean_value), 1)
 
             row = {
-                "name": self._format_mso_display_name(raw_row.get("name")),
-                "province": raw_row.get("province") or "—",
+                "name": name,
+                "province": province,
                 "death_events": 0,
                 "va_scheduled": 0,
                 "va_not_complete": 0,
@@ -3078,10 +3272,10 @@ class RegionalOperationsComponentContextMixin:
             final_rows.append(row)
         return final_rows
 
-    def _resolve_regional_params(self):
+    def _resolve_regional_params(self, default_preset="all"):
         """Resolve all request parameters shared by both CSA and MSO contexts."""
         selected_geo = self._normalized_geo()
-        time_window = self._resolve_time_window()
+        time_window = self._resolve_time_window(default_preset)
         province_scope = self._allowed_province_names()
         return {
             "selected_geo": selected_geo,
@@ -3141,6 +3335,17 @@ class RegionalOperationsComponentContextMixin:
             province_scope,
             time_window["selected_preset"],
         )
+        # Drop dead roster rows: no valid supervisor AND inactive AND zero visits.
+        csa_rows = [
+            row
+            for row in csa_rows
+            if not (
+                str(row.get("supervisor") or "").strip() in ("", "—")
+                and str(row.get("status") or "").strip().lower()
+                == CSASupervisorTargetMap.STATUS_INACTIVE
+                and self._to_int(row.get("visits")) == 0
+            )
+        ]
         if selected_geo and selected_geo != "national":
             csa_rows = [
                 row
@@ -3301,9 +3506,11 @@ class RegionalOperationsComponentContextMixin:
         }
 
     def get_regional_operations_context(self):
-        params = self._resolve_regional_params()
-        selected_geo = params["selected_geo"]
-        time_window = params["time_window"]
+        # CSA tab defaults to the last 7 days; MSO tab keeps the all-time default.
+        csa_params = self._resolve_regional_params(default_preset="7")
+        mso_params = self._resolve_regional_params(default_preset="all")
+        selected_geo = csa_params["selected_geo"]
+        time_window = csa_params["time_window"]
         selected_time_preset = time_window["selected_time_preset"]
         ctx = {
             "geography_options": self.geography_options,
@@ -3317,8 +3524,8 @@ class RegionalOperationsComponentContextMixin:
             "selected_start_date": time_window["start_value"],
             "selected_end_date": time_window["end_value"],
         }
-        ctx.update(self._get_csa_context(params))
-        ctx.update(self._get_mso_context(params))
+        ctx.update(self._get_csa_context(csa_params))
+        ctx.update(self._get_mso_context(mso_params))
         return ctx
 
     def get_context_data(self, **kwargs):
@@ -3400,7 +3607,10 @@ class RegionalOperationsFiltersComponent(
         context = super(RegionalOperationsComponentContextMixin, self).get_context_data(
             **kwargs
         )
-        params = self._resolve_regional_params()
+        filter_scope = (self.request.GET.get("filter_scope") or "").strip().lower()
+        # CSA filter defaults to the last 7 days; MSO filter keeps all-time.
+        default_preset = "all" if filter_scope == "mso" else "7"
+        params = self._resolve_regional_params(default_preset=default_preset)
         time_window = params["time_window"]
         context["geography_options"] = self.geography_options
         context["time_presets"] = self.time_presets
@@ -3408,7 +3618,6 @@ class RegionalOperationsFiltersComponent(
         context["selected_time_preset"] = time_window["selected_time_preset"]
         context["selected_start_date"] = time_window["start_value"]
         context["selected_end_date"] = time_window["end_value"]
-        filter_scope = (self.request.GET.get("filter_scope") or "").strip().lower()
         context["filter_suffix"] = "_mso" if filter_scope == "mso" else ""
         return context
 
@@ -3422,7 +3631,8 @@ class RegionalOperationsCsaComponent(
         context = super(RegionalOperationsComponentContextMixin, self).get_context_data(
             **kwargs
         )
-        params = self._resolve_regional_params()
+        # CSA tab defaults to the last 7 days when no time filter is supplied.
+        params = self._resolve_regional_params(default_preset="7")
         context.update(self._get_csa_context(params))
         return context
 

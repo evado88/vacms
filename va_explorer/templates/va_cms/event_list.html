@@ -5,37 +5,6 @@
 
   {% include "partials/filter_bar.html" with note="Filter scheduled verbal autopsies by province, district, interviewer assignment, and interview status." fields_template="va_cms/partials/_event_list_filter_fields.html" actions_template="va_cms/partials/_event_list_filter_actions.html" class_name="ou-mb-3" %}
 
-  {% if scheduled_by_interviewer %}
-  <div class="card ou-mb-3">
-    <div class="card-header d-flex align-items-center justify-content-between"
-         style="cursor:pointer;" data-toggle="collapse" data-target="#scheduledByInterviewerBody"
-         aria-expanded="true" aria-controls="scheduledByInterviewerBody">
-      <span class="font-weight-bold">Scheduled VAs by Interviewer</span>
-      <span class="text-muted small">&#9650;</span>
-    </div>
-    <div id="scheduledByInterviewerBody" class="collapse show">
-      <div class="card-body p-0">
-        <table class="table table-sm table-striped mb-0">
-          <thead class="thead-light">
-            <tr>
-              <th>VA Interviewer</th>
-              <th class="text-right">Scheduled VAs</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for row in scheduled_by_interviewer %}
-            <tr>
-              <td>{{ row.va_interview_staff__name|default:row.va_interview_staff__email|default:"Unassigned" }}</td>
-              <td class="text-right">{{ row.scheduled_count }}</td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-  {% endif %}
-
   {% include "partials/card.html" with title="Scheduled Events" body_template="va_cms/partials/_event_list_card_body.html" class_name="ou-mb-3" body_class="p-0" %}
 
   {% if page_obj.has_other_pages %}

@@ -954,6 +954,14 @@
   overflow-x: hidden;
   overflow-y: auto;
 }
+#vaCodSection .topCausesContainer figure {
+  margin: 0;
+  max-width: 100%;
+}
+#vaCodSection .topCausesContainer svg {
+  display: block;
+  max-width: 100%;
+}
 .outcomesBottomKpis {
   margin-top: 0.5rem;
   gap: 0.5rem;

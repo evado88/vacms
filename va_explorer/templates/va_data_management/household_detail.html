@@ -6,6 +6,7 @@
 {% block heading %}Household #{{ object.id }}{% endblock %}
 
 {% block content %}
+<div class="data-management-detail-content">
 <ul class="nav nav-tabs tab-spacing" id="myTab" role="tablist">
   <li class="nav-item">
     <a class="nav-link active" id="record-tab" data-toggle="tab" href="#record" role="tab" aria-controls="record" aria-selected="true">Household</a>
@@ -199,6 +200,7 @@
       </div>
     </div>
   {% endif %}
+</div>
 </div>
 
 <div class="flt-action-backdrop"></div>

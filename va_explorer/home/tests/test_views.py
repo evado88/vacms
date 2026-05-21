@@ -1289,12 +1289,14 @@ def test_regional_operations_mso_populated_when_events_unlinked(user: User):
         Id10012="2024-02-01",
         Id10011="09:00:00",
         Id10481="2024-02-01 10:00:00",
+        province="Lusaka",
     )
     VerbalAutopsyFactory.create(
         Id10010="MSO Alpha",
         Id10012="2024-02-02",
         Id10011="09:00:00",
         Id10481="2024-02-02 09:20:00",
+        province="Lusaka",
     )
 
     # Unlinked events: no VA and no Death link.
@@ -1326,6 +1328,49 @@ def test_regional_operations_mso_populated_when_events_unlinked(user: User):
     mso_stats = response.context["mso_stats"]
     assert len(mso_stats) > 0
     assert any(row.get("va_total", 0) > 0 for row in mso_stats)
+
+
+def test_mso_dedups_casing_sums_metrics_and_drops_junk(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    # Same person recorded in two casings -> collapses to one canonical row
+    # (mixed-case wins) whose VA total is the sum of every casing variant.
+    VerbalAutopsyFactory.create(
+        Id10010="Lweendo Namitondo", Id10012="2024-02-01", province="Lusaka"
+    )
+    VerbalAutopsyFactory.create(
+        Id10010="LWEENDO NAMITONDO", Id10012="2024-02-02", province="Lusaka"
+    )
+    VerbalAutopsyFactory.create(
+        Id10010="LWEENDO NAMITONDO", Id10012="2024-02-03", province="Lusaka"
+    )
+
+    # Junk/placeholder names that must never appear in the table.
+    for junk in ("Unassigned MSO", "Facility", "Facility Z", "Facility 1", "Unknown"):
+        VerbalAutopsyFactory.create(
+            Id10010=junk, Id10012="2024-02-04", province="Lusaka"
+        )
+
+    response = client.get(
+        "/regional-operations/components/mso/",
+        {"time_preset": "timeAll"},
+        follow=True,
+    )
+    assert response.status_code == 200
+
+    rows = response.context["mso_stats"]
+    names = [row["name"] for row in rows]
+
+    # Exactly one canonical, mixed-case row with merged totals.
+    assert names.count("Lweendo Namitondo") == 1
+    assert "LWEENDO NAMITONDO" not in names
+    lweendo = next(row for row in rows if row["name"] == "Lweendo Namitondo")
+    assert lweendo["va_total"] == 3
+
+    # No junk rows survive.
+    for junk in ("Unassigned MSO", "Facility", "Facility Z", "Facility 1", "Unknown"):
+        assert junk not in names
 
 
 def test_mso_uses_only_va_base_names_and_fuzzy_maps_event_aggregates(user: User):
@@ -1416,14 +1461,23 @@ def test_mso_component_filters_by_province_search(user: User):
     assert [row["province"] for row in response.context["mso_stats"]] == ["Lusaka"]
 
 
-def test_regional_operations_filters_default_to_all_time(user: User):
+def test_regional_operations_filter_defaults_per_tab(user: User):
     client = Client()
     client.force_login(user=user)
 
-    response = client.get("/regional-operations/components/filters/", follow=True)
+    # CSA filter (no scope) defaults to the last 7 days.
+    csa_response = client.get("/regional-operations/components/filters/", follow=True)
+    assert csa_response.status_code == 200
+    assert csa_response.context["selected_time_preset"] == "time7"
 
-    assert response.status_code == 200
-    assert response.context["selected_time_preset"] == "timeAll"
+    # MSO filter keeps the all-time default.
+    mso_response = client.get(
+        "/regional-operations/components/filters/",
+        {"filter_scope": "mso"},
+        follow=True,
+    )
+    assert mso_response.status_code == 200
+    assert mso_response.context["selected_time_preset"] == "timeAll"
 
 
 # Get the about page and make sure it returns successfully
@@ -1579,7 +1633,11 @@ def test_csa_component_handles_unmatched_mapping_safely(user: User):
         num_outcome="1",
     )
 
-    response = client.get("/regional-operations/components/csa/", follow=True)
+    response = client.get(
+        "/regional-operations/components/csa/",
+        {"time_preset": "timeAll"},
+        follow=True,
+    )
     assert response.status_code == 200
 
     rows = response.context["csa_stats"]
@@ -1683,10 +1741,20 @@ def test_csa_totals_reflect_active_filters(user: User):
 
 
 @time_machine.travel(dt.datetime(2026, 4, 26, 12, 0, tzinfo=eastern_tz))
-def test_csa_component_default_all_time_shows_available_tracker_rows(user: User):
+def test_csa_component_defaults_to_last_seven_days(user: User):
     client = Client()
     client.force_login(user=user)
 
+    # Within the last 7 days (2026-04-20..04-26): shown by the default window.
+    CSADailyTracker.objects.create(
+        key="recent-default-row",
+        enumerator="Recent_CSA_1",
+        province="Lusaka",
+        district="Lusaka",
+        ward="Ward 1",
+        today="2026-04-22",
+    )
+    # Older than 7 days: hidden by the default 7-day window.
     CSADailyTracker.objects.create(
         key="older-default-row",
         enumerator="Older_CSA_1",
@@ -1699,7 +1767,9 @@ def test_csa_component_default_all_time_shows_available_tracker_rows(user: User)
     response = client.get("/regional-operations/components/csa/", follow=True)
 
     assert response.status_code == 200
-    assert any(row["name"] == "Older CSA" for row in response.context["csa_stats"])
+    names = [row["name"] for row in response.context["csa_stats"]]
+    assert "Recent CSA" in names
+    assert "Older CSA" not in names
 
 
 @time_machine.travel(dt.datetime(2026, 3, 29, 12, 0, tzinfo=eastern_tz))

@@ -238,3 +238,58 @@ body {
         padding: 20px;
     }
 }
+
+.vacms-flash-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1080;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: none;
+  animation: vacms-flash-fade-in 150ms ease-out;
+}
+
+.vacms-flash-overlay.vacms-flash-hide {
+  animation: vacms-flash-fade-out 250ms ease-in forwards;
+}
+
+.vacms-flash-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.vacms-flash-stack {
+  position: relative;
+  margin-top: 80px;
+  width: min(560px, calc(100% - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+.vacms-flash-alert {
+  margin: 0;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.vacms-flash-close {
+  margin-left: auto;
+}
+
+@keyframes vacms-flash-fade-in {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes vacms-flash-fade-out {
+  to { opacity: 0; transform: translateY(-8px); }
+}

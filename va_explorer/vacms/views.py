@@ -7,7 +7,7 @@ from django import forms
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.db.models import Count, Q
+from django.db.models import Q
 from django.http import (
     HttpResponseForbidden,
     JsonResponse,
@@ -114,26 +114,6 @@ class EventListView(ListView):
         )
         context["not_done_events"] = base_queryset.filter(
             va_interview_status=Event.VAInterviewStatus.NOT_DONE
-        )
-
-        # Aggregate scheduled VA events by VA interviewer so supervisors can
-        # see workload distribution at a glance.  Uses the full unfiltered
-        # base queryset (respects province/district/interviewer/status filters
-        # already applied by _apply_filters).
-        context["scheduled_by_interviewer"] = (
-            Event.objects.filter(
-                id__in=base_queryset.filter(
-                    va_interview_status=Event.VAInterviewStatus.SCHEDULED,
-                    va_interview_staff__isnull=False,
-                ).values_list("id", flat=True)
-            )
-            .values(
-                "va_interview_staff__id",
-                "va_interview_staff__name",
-                "va_interview_staff__email",
-            )
-            .annotate(scheduled_count=Count("id"))
-            .order_by("-scheduled_count", "va_interview_staff__name")
         )
         return context
 
