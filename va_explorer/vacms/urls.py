@@ -8,6 +8,7 @@ from va_explorer.vacms.views import (
     EventLinkDataView,
     EventLinkVA,
     EventListCompletedView,
+    EventListCsvExport,
     EventListScheduledView,
     EventListView,
     EventScheduleDataCollectionView,
@@ -18,6 +19,11 @@ from va_explorer.vacms.views import (
 urlpatterns = [
     # event
     path("event/list", EventListView.as_view(), name="cms-event-list"),
+    path(
+        "event/list/export.csv",
+        EventListCsvExport.as_view(),
+        name="cms-event-list-csv",
+    ),
     path(
         "event/scheduled/list",
         EventListScheduledView.as_view(),

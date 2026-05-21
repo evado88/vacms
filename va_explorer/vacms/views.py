@@ -1,3 +1,4 @@
+import csv
 import json
 import subprocess
 import sys
@@ -9,6 +10,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db.models import Q
 from django.http import (
+    HttpResponse,
     HttpResponseForbidden,
     JsonResponse,
     StreamingHttpResponse,
@@ -141,7 +143,15 @@ class EventListView(ListView):
                 | Q(household__district__icontains=filters["district"])
             )
         if filters["interview_status"]:
-            queryset = queryset.filter(va_interview_status=filters["interview_status"])
+            if filters["interview_status"] == "unscheduled":
+                queryset = queryset.filter(
+                    Q(event_status__lt=Event.EventStatus.VA_INTERVIEW_SCHEDULED)
+                    | Q(event_status__isnull=True)
+                )
+            else:
+                queryset = queryset.filter(
+                    va_interview_status=filters["interview_status"]
+                )
         if filters["interviewer"]:
             queryset = queryset.filter(
                 Q(va_interview_staff__name__icontains=filters["interviewer"])
@@ -150,6 +160,82 @@ class EventListView(ListView):
 
         self._filters_context = filters
         return queryset
+
+
+class EventListCsvExport(EventListView):
+    """Download the (filtered) event list as a CSV.
+
+    Subclasses EventListView so it reuses the same permission check
+    (dispatch), filtering (_apply_filters), and sort handling — keeping the
+    export exactly in sync with what the list page shows.
+    """
+
+    _CSV_COLUMNS = (
+        ("id", "ID"),
+        ("deceased_name", "Deceased Name"),
+        ("death_id", "Death ID"),
+        ("key", "Key"),
+        ("interviewer", "Interviewer"),
+        ("province", "Province"),
+        ("district", "District"),
+        ("event_type", "Event Type"),
+        ("event_status", "Event Status"),
+        ("va_interview_status", "VA Interview Status"),
+        ("interview_scheduled_date", "VA Interview Scheduled Date"),
+        ("interview_complete_date", "VA Interview Complete Date"),
+        ("supervisor", "Supervisor"),
+        ("respondent_name", "Respondent Name"),
+        ("respondent_phone", "Respondent Phone"),
+        ("va_not_done_reason", "Not Done Reason"),
+    )
+
+    def get(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        filename = timezone.now().strftime("scheduled_vas_%Y%m%d_%H%M%S.csv")
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        writer = csv.writer(response)
+        writer.writerow([label for _, label in self._CSV_COLUMNS])
+        for event in queryset.iterator():
+            writer.writerow(self._row_for(event))
+        return response
+
+    @staticmethod
+    def _row_for(event):
+        staff = event.va_interview_staff
+        interviewer = (
+            (staff.name or staff.get_full_name() or staff.email)
+            if staff
+            else "Unassigned"
+        )
+        death = event.death
+        supervisor = event.supervisor or (death.supervisor if death else "") or ""
+        respondent_name = event.respondent_name or (death.DE_19 if death else "") or ""
+        respondent_phone = (
+            event.respondent_phone or (death.DE_26 if death else "") or ""
+        )
+        return [
+            event.id,
+            death.DE_03 if death else "",
+            event.death_id or "",
+            death.key if death else "",
+            interviewer,
+            event.record_province or "",
+            event.record_district or "",
+            event.get_event_type_display() if event.event_type is not None else "",
+            event.get_event_status_display() if event.event_status is not None else "",
+            event.get_va_interview_status_display() or "",
+            event.interview_scheduled_date or "",
+            event.interview_complete_date or "",
+            supervisor,
+            respondent_name,
+            respondent_phone,
+            (
+                event.get_va_not_done_reason_display()
+                if event.va_not_done_reason
+                else ""
+            ),
+        ]
 
 
 class EventListScheduledView(ListView):
@@ -194,7 +280,6 @@ def EventCreateDeathView(request, death):
         return HttpResponseForbidden("You are not allowed to manage VA schedules.")
 
     if request.method == "POST":
-
         form = ScheduleDeathForm(request.POST)
 
         if form.is_valid():
@@ -238,7 +323,6 @@ def EventCreateDeathView(request, death):
             # Form is invalid, re-render with errors
             return render(request, "va_cms/event_death_create.html", {"form": form})
     else:
-
         initials = {"id": death}
 
         try:

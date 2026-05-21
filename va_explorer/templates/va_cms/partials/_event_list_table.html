@@ -17,7 +17,7 @@
     {% for event in object_list %}
       <tr>
         <td>{{ event.id }}</td>
-        <td>{{ event.va_interview_staff.name|default:event.va_interview_staff.get_full_name|default:"Unassigned" }}</td>
+        <td>{% if event.va_interview_staff %}{{ event.va_interview_staff.name|default:event.va_interview_staff.get_full_name|default:event.va_interview_staff.email }}{% else %}Unassigned{% endif %}</td>
         <td>{{ event.record_province|default:"-" }}</td>
         <td>{{ event.record_district|default:"-" }}</td>
         <td>{{ event.get_event_status_display }}</td>
