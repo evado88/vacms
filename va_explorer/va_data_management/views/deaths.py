@@ -107,6 +107,7 @@ class DeathsCsvExport(CsvDownloadPermissionMixin, Deaths):
         response["Content-Disposition"] = f'attachment; filename="{filename}"'
         writer = csv.writer(response)
         writer.writerow(field_names)
+        row_count = 0
         for death in queryset.iterator():
             row = []
             for name in field_names:
@@ -116,6 +117,19 @@ class DeathsCsvExport(CsvDownloadPermissionMixin, Deaths):
                 value = getattr(death, name)
                 row.append("" if value is None else value)
             writer.writerow(row)
+            row_count += 1
+
+        from va_explorer.users.models import UserActivity
+
+        UserActivity.log(
+            UserActivity.DATA_EXPORT,
+            user=request.user,
+            request=request,
+            module="death",
+            target_type="death",
+            details=f"Exported {row_count} unscheduled VA/death record(s) as csv.",
+            extra={"format": "csv", "rows": row_count, "redacted": redact},
+        )
         return response
 
 

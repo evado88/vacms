@@ -79,6 +79,21 @@ def _normalize_export_format(raw_value, dataset):
     return fmt if fmt in {"csv", "json"} else "csv"
 
 
+def _log_export(request, dataset, row_count, fmt):
+    """Record a data-export audit entry. Never raises (see UserActivity.log)."""
+    from va_explorer.users.models import UserActivity
+
+    UserActivity.log(
+        UserActivity.DATA_EXPORT,
+        user=getattr(request, "user", None),
+        request=request,
+        module=dataset,
+        target_type=dataset,
+        details=f"Exported {row_count} {dataset} record(s) as {fmt}.",
+        extra={"format": fmt, "rows": int(row_count)},
+    )
+
+
 def _build_zip_response(filename, body):
     response = HttpResponse(content_type="application/zip")
     response["Content-Disposition"] = f"attachment; filename={filename}"
@@ -245,6 +260,7 @@ def _export_rumor_surveillance(request, start_date, end_date, loc_query):
                         mask |= dataset_df[level].isin(names)
                 dataset_df = dataset_df[mask]
 
+    _log_export(request, "rumor_surveillance", len(dataset_df), "csv")
     return _build_zip_response(
         filename="rumor_surveillance.csv.zip",
         body=("rumor_surveillance_download.csv", dataset_df.to_csv(index=False)),
@@ -315,6 +331,7 @@ def _export_non_va_dataset(request, dataset, params):
             if field in dataset_df.columns:
                 dataset_df[field] = REDACTED_STRING
 
+    _log_export(request, dataset, len(dataset_df), "csv")
     return _build_zip_response(
         filename=f"{dataset}.csv.zip",
         body=(filename, dataset_df.to_csv(index=False)),
@@ -529,6 +546,7 @@ class VaApi(CustomAuthMixin, View):
             )
         else:
             response = HttpResponse()
+        _log_export(request, "verbal_autopsy", int(va_df.shape[0]), fmt)
         return response
 
 

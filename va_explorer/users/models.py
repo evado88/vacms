@@ -1,4 +1,4 @@
-import contextlib
+import logging
 import os
 import platform
 import uuid
@@ -27,6 +27,8 @@ from va_explorer.va_data_management.utils.location_access import (
 )
 
 from .constants import FEEDBACK_MODULE_FEATURES
+
+logger = logging.getLogger(__name__)
 
 
 # Return a new FileSystemStorage instance at call time so Django serializes
@@ -468,16 +470,110 @@ def generate_unique_worker_id():
 
 
 class UserActivity(models.Model):
+    """Append-only audit trail of significant system actions.
+
+    Originally captured only authentication + page-view events; it now backs the
+    Admin Panel "System Audit Trail" tab and records user/permission changes,
+    data imports, exports/downloads and background-task events. Always write via
+    :meth:`log` so request context is captured consistently and failures never
+    break the caller's workflow.
+    """
+
+    # --- Action categories (used for grouping + readable "Category > Action") ---
+    CATEGORY_AUTH = "auth"
+    CATEGORY_USER = "user"
+    CATEGORY_DATA = "data"
+    CATEGORY_FORM = "form"
+    CATEGORY_SYSTEM = "system"
+
+    CATEGORY_CHOICES = [
+        (CATEGORY_AUTH, "Authentication"),
+        (CATEGORY_USER, "User"),
+        (CATEGORY_DATA, "Data"),
+        (CATEGORY_FORM, "Form"),
+        (CATEGORY_SYSTEM, "System"),
+    ]
+
+    # --- Actions ---
+    # Auth
     LOGIN = "login"
     LOGOUT = "logout"
     PAGE_VIEW = "page_view"
     LOGIN_FAILED = "login_failed"
+    # User
+    PERMISSION_CHANGED = "permission_changed"
+    ROLE_CHANGED = "role_changed"
+    PROFILE_UPDATED = "profile_updated"
+    # Data
+    DATA_CREATE = "data_create"
+    DATA_UPDATE = "data_update"
+    DATA_DELETE = "data_delete"
+    DATA_IMPORT = "data_import"
+    DATA_EXPORT = "data_export"
+    # Form
+    FORM_PUBLISH = "form_publish"
+    FORM_DRAFT = "form_draft"
+    FORM_DOWNLOAD = "form_download"
+    # System
+    SETTINGS_CHANGED = "settings_changed"
+    TASK_STARTED = "task_started"
+    TASK_COMPLETED = "task_completed"
+    TASK_FAILED = "task_failed"
 
     ACTION_CHOICES = [
-        (LOGIN, "Login"),
-        (LOGOUT, "Logout"),
+        (LOGIN, "Log in"),
+        (LOGOUT, "Log out"),
         (PAGE_VIEW, "Page View"),
-        (LOGIN_FAILED, "Failed Login Attempt"),
+        (LOGIN_FAILED, "Failed login"),
+        (PERMISSION_CHANGED, "Permission changed"),
+        (ROLE_CHANGED, "Role changed"),
+        (PROFILE_UPDATED, "Profile updated"),
+        (DATA_CREATE, "Create record"),
+        (DATA_UPDATE, "Update record"),
+        (DATA_DELETE, "Delete record"),
+        (DATA_IMPORT, "Import data"),
+        (DATA_EXPORT, "Export/download data"),
+        (FORM_PUBLISH, "Publish draft"),
+        (FORM_DRAFT, "Create or update draft"),
+        (FORM_DOWNLOAD, "Download submissions"),
+        (SETTINGS_CHANGED, "Settings changed"),
+        (TASK_STARTED, "Background task started"),
+        (TASK_COMPLETED, "Background task completed"),
+        (TASK_FAILED, "Background task failed"),
+    ]
+
+    # Map each action to its category so callers usually don't pass it explicitly.
+    CATEGORY_FOR_ACTION = {
+        LOGIN: CATEGORY_AUTH,
+        LOGOUT: CATEGORY_AUTH,
+        PAGE_VIEW: CATEGORY_AUTH,
+        LOGIN_FAILED: CATEGORY_AUTH,
+        PERMISSION_CHANGED: CATEGORY_USER,
+        ROLE_CHANGED: CATEGORY_USER,
+        PROFILE_UPDATED: CATEGORY_USER,
+        DATA_CREATE: CATEGORY_DATA,
+        DATA_UPDATE: CATEGORY_DATA,
+        DATA_DELETE: CATEGORY_DATA,
+        DATA_IMPORT: CATEGORY_DATA,
+        DATA_EXPORT: CATEGORY_DATA,
+        FORM_PUBLISH: CATEGORY_FORM,
+        FORM_DRAFT: CATEGORY_FORM,
+        FORM_DOWNLOAD: CATEGORY_FORM,
+        SETTINGS_CHANGED: CATEGORY_SYSTEM,
+        TASK_STARTED: CATEGORY_SYSTEM,
+        TASK_COMPLETED: CATEGORY_SYSTEM,
+        TASK_FAILED: CATEGORY_SYSTEM,
+    }
+
+    # --- Status ---
+    STATUS_SUCCESS = "success"
+    STATUS_FAILURE = "failure"
+    STATUS_INFO = "info"
+
+    STATUS_CHOICES = [
+        (STATUS_SUCCESS, "Success"),
+        (STATUS_FAILURE, "Failure"),
+        (STATUS_INFO, "Info"),
     ]
 
     user = models.ForeignKey(
@@ -489,7 +585,19 @@ class UserActivity(models.Model):
     )
     # Snapshot so the record survives user deletion or email changes
     user_email = models.EmailField(blank=True)
-    action = models.CharField(max_length=20, choices=ACTION_CHOICES, db_index=True)
+    action = models.CharField(max_length=40, choices=ACTION_CHOICES, db_index=True)
+    action_category = models.CharField(
+        max_length=20, choices=CATEGORY_CHOICES, blank=True, db_index=True
+    )
+    module = models.CharField(max_length=64, blank=True, db_index=True)
+    target_type = models.CharField(max_length=64, blank=True)
+    target_id = models.CharField(max_length=64, blank=True)
+    target_display = models.CharField(max_length=255, blank=True)
+    details = models.TextField(blank=True)
+    status = models.CharField(
+        max_length=10, choices=STATUS_CHOICES, default=STATUS_SUCCESS, db_index=True
+    )
+    error_message = models.TextField(blank=True)
     path = models.TextField(blank=True)
     method = models.CharField(max_length=10, blank=True)
     ip_address = models.GenericIPAddressField(null=True, blank=True)
@@ -503,12 +611,43 @@ class UserActivity(models.Model):
         indexes = [
             models.Index(fields=["user", "-timestamp"]),
             models.Index(fields=["action", "-timestamp"]),
+            models.Index(fields=["action_category", "-timestamp"]),
+            models.Index(fields=["status", "-timestamp"]),
+            models.Index(fields=["module", "-timestamp"]),
         ]
         verbose_name = "User Activity"
         verbose_name_plural = "User Activities"
 
+    @property
+    def category_label(self):
+        category = self.action_category or self.CATEGORY_FOR_ACTION.get(self.action, "")
+        return dict(self.CATEGORY_CHOICES).get(category, "")
+
+    @property
+    def display_label(self):
+        """Readable ``"User > Log in"`` style label for the audit table."""
+        action_label = self.get_action_display()
+        category = self.category_label
+        return f"{category} › {action_label}" if category else action_label
+
     @classmethod
-    def log(cls, action, *, user=None, request=None, extra=None):
+    def log(
+        cls,
+        action,
+        *,
+        user=None,
+        request=None,
+        extra=None,
+        action_category=None,
+        module="",
+        target_type="",
+        target_id="",
+        target_display="",
+        details="",
+        status=None,
+        error_message="",
+    ):
+        """Record an audit entry. Never raises — failures are logged, not propagated."""
         from va_explorer.utils.request_helpers import get_client_ip
 
         user_email = ""
@@ -533,17 +672,33 @@ class UserActivity(models.Model):
             ):
                 user_email = request.user.email or ""
 
-        with contextlib.suppress(Exception):
+        category = action_category or cls.CATEGORY_FOR_ACTION.get(action, "")
+
+        try:
             cls.objects.create(
                 user=user,
                 user_email=user_email,
                 action=action,
+                action_category=category,
+                module=(module or "")[:64],
+                target_type=(target_type or "")[:64],
+                target_id=(str(target_id) if target_id is not None else "")[:64],
+                target_display=(target_display or "")[:255],
+                details=details or "",
+                status=status or cls.STATUS_SUCCESS,
+                error_message=error_message or "",
                 path=path,
                 method=method,
                 ip_address=ip_address,
                 user_agent=user_agent,
                 session_key=session_key,
                 extra=extra or {},
+            )
+        except Exception:
+            # Audit logging must never break the main user workflow, but the
+            # failure should still be visible in the application logs.
+            logger.exception(
+                "Failed to write UserActivity audit entry for action=%s", action
             )
 
 
