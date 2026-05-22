@@ -364,6 +364,7 @@ def test_va_subtab_nav_renders(settings, view_datacleanup_group):
         b"cleanup-va-coding-issues",
         b"cleanup-va-indeterminate",
         b"cleanup-va-errors",
+        b"cleanup-va-missing-gps",
     ):
         assert pane in response.content
 
@@ -414,3 +415,19 @@ def test_invalid_va_subtab_falls_back_to_duplicates(settings, view_datacleanup_g
 
     assert response.status_code == 200
     assert response.context["active_va_subtab"] == "duplicates"
+
+
+def test_va_missing_gps_subtab_lists_only_blank_geopoint(
+    settings, view_datacleanup_group
+):
+    client = _va_cleanup_client(view_datacleanup_group, settings)
+    blank = VerbalAutopsyFactory.create()  # geopoint defaults to blank
+    located = VerbalAutopsyFactory.create(geopoint="-15.0 28.0 1000 5")
+
+    response = client.get("/va_data_cleanup/?tab=verbal-autopsy&va_subtab=missing-gps")
+
+    assert response.status_code == 200
+    assert response.context["va_missing_gps_count"] == 1
+    row_ids = {row["id"] for row in response.context["va_missing_gps_rows"]}
+    assert row_ids == {blank.id}
+    assert located.id not in row_ids

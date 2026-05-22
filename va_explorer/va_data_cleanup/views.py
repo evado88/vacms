@@ -5,7 +5,7 @@ from django.contrib.auth.mixins import PermissionRequiredMixin
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
-from django.db.models import CharField
+from django.db.models import CharField, Q
 from django.db.models import Value as V
 from django.db.models.functions import Concat
 from django.http import Http404, HttpResponse
@@ -28,7 +28,7 @@ from .models import DataCleanup
 
 User = get_user_model()
 VA_SUBTAB_PER_PAGE = 10
-VA_SUBTABS = {"duplicates", "coding-issues", "indeterminate", "errors"}
+VA_SUBTABS = {"duplicates", "coding-issues", "indeterminate", "errors", "missing-gps"}
 
 
 def _paginate(request, queryset, page_param, per_page=VA_SUBTAB_PER_PAGE):
@@ -255,11 +255,17 @@ class DataCleanupIndexView(CustomAuthMixin, PermissionRequiredMixin, ListView):
         error_vas = (
             user_vas.filter(coding_issues__severity="error").order_by("id").distinct()
         )
+        # "Missing GPS" = geopoint never captured (empty/whitespace), matching the
+        # download_va_with_cod_csv "missing" classification (not "invalid").
+        missing_gps_vas = user_vas.filter(
+            Q(geopoint__isnull=True) | Q(geopoint__regex=r"^\s*$")
+        ).order_by("id")
 
         # Counts feed the sub-tab badges (cheap; no row building).
         context["va_coding_issue_count"] = uncoded_vas.count()
         context["va_indeterminate_count"] = indeterminate_vas.count()
         context["va_error_count"] = error_vas.count()
+        context["va_missing_gps_count"] = missing_gps_vas.count()
 
         subtab_sources = {
             "coding-issues": (uncoded_vas, "ci_page", "va_coding_issue_rows"),
@@ -269,10 +275,12 @@ class DataCleanupIndexView(CustomAuthMixin, PermissionRequiredMixin, ListView):
                 "va_indeterminate_cod_rows",
             ),
             "errors": (error_vas, "err_page", "va_error_rows"),
+            "missing-gps": (missing_gps_vas, "gps_page", "va_missing_gps_rows"),
         }
         context["va_coding_issue_rows"] = []
         context["va_indeterminate_cod_rows"] = []
         context["va_error_rows"] = []
+        context["va_missing_gps_rows"] = []
         if active_va_subtab in subtab_sources:
             queryset, page_param, rows_key = subtab_sources[active_va_subtab]
             page = _paginate(

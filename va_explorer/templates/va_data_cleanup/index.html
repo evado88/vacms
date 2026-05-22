@@ -263,6 +263,9 @@
           <li class="nav-item">
             <a class="nav-link {% if active_va_subtab == 'errors' %}active{% endif %}" href="?tab=verbal-autopsy&va_subtab=errors">Errors <span class="badge badge-light">{{ va_error_count }}</span></a>
           </li>
+          <li class="nav-item">
+            <a class="nav-link {% if active_va_subtab == 'missing-gps' %}active{% endif %}" href="?tab=verbal-autopsy&va_subtab=missing-gps">Missing GPS <span class="badge badge-light">{{ va_missing_gps_count }}</span></a>
+          </li>
         </ul>
 
         <div class="tab-content pt-3" id="cleanupVASubtabsContent">
@@ -350,6 +353,21 @@
               {% include "va_data_cleanup/partials/_va_issue_table.html" with rows=va_error_rows empty_message="No VAs with coding errors were found." %}
             </section>
             {% if active_va_subtab == 'errors' and va_subtab_page %}
+              {% include "partials/_pagination_named.html" with page_obj=va_subtab_page page_param=va_subtab_page_param %}
+            {% endif %}
+          </section>
+
+          <section class="tab-pane fade {% if active_va_subtab == 'missing-gps' %}show active{% endif %}" id="cleanup-va-missing-gps" role="tabpanel" aria-labelledby="cleanup-va-missing-gps-tab">
+            <section class="ou-card ou-mb-3">
+              <div class="ou-card-header">
+                <h2 class="ou-card-title">VAs Missing GPS Coordinates</h2>
+              </div>
+              <div class="ou-card-body pb-0">
+                <p class="ou-text-muted mb-0">These verbal autopsies have no geopoint captured, so they export without coordinates. Chase them for GPS backfill from the original forms.</p>
+              </div>
+              {% include "va_data_cleanup/partials/_va_issue_table.html" with rows=va_missing_gps_rows empty_message="No VAs are missing GPS coordinates." %}
+            </section>
+            {% if active_va_subtab == 'missing-gps' and va_subtab_page %}
               {% include "partials/_pagination_named.html" with page_obj=va_subtab_page page_param=va_subtab_page_param %}
             {% endif %}
           </section>
