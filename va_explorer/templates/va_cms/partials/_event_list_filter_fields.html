@@ -7,12 +7,3 @@
 <div>
   <input type="text" name="interviewer" value="{{ filters.interviewer }}" class="form-control" placeholder="Interviewer" aria-label="Interviewer" />
 </div>
-<div>
-  <select name="interview_status" class="form-select" aria-label="Interview Status">
-    <option value="">Interview Status</option>
-    <option value="unscheduled" {% if filters.interview_status == "unscheduled" %}selected{% endif %}>Unscheduled</option>
-    {% for value,label in object_list.model.VAInterviewStatus.choices %}
-      <option value="{{ value }}" {% if filters.interview_status == value %}selected{% endif %}>{{ label }}</option>
-    {% endfor %}
-  </select>
-</div>

@@ -8,7 +8,7 @@ from django import forms
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.db.models import Q
+from django.db.models import Count, Q
 from django.http import (
     HttpResponse,
     HttpResponseForbidden,
@@ -64,6 +64,7 @@ class EventListView(AjaxListTableMixin, ListView):
     model = Event
     template_name = "va_cms/event_list.html"
     list_table_template = "va_cms/partials/_event_list_table.html"
+    component_template = "va_cms/partials/_event_list_component.html"
     paginate_by = 25
 
     _SORT_FIELDS = {
@@ -100,36 +101,41 @@ class EventListView(AjaxListTableMixin, ListView):
             return HttpResponseForbidden("You are not allowed to view VA schedules.")
         return super().dispatch(request, *args, **kwargs)
 
+    #: status tabs shown on the event list, in display order
+    STATUS_TABS = (
+        (Event.VAInterviewStatus.SCHEDULED, "Scheduled"),
+        (Event.VAInterviewStatus.COMPLETED, "Completed"),
+        (Event.VAInterviewStatus.NOT_DONE, "Not Done"),
+        (Event.VAInterviewStatus.POSTPONED, "Postponed"),
+    )
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context["filters"] = self._filters_context
         context["user_can_manage_schedule"] = user_can_manage_va_schedule(
             self.request.user
         )
-        base_queryset = self.object_list
-        context["scheduled_events"] = base_queryset.filter(
-            va_interview_status__in=(
-                Event.VAInterviewStatus.SCHEDULED,
-                Event.VAInterviewStatus.POSTPONED,
-            )
-        )
-        context["completed_events"] = base_queryset.filter(
-            va_interview_status=Event.VAInterviewStatus.COMPLETED
-        )
-        context["not_done_events"] = base_queryset.filter(
-            va_interview_status=Event.VAInterviewStatus.NOT_DONE
-        )
+        # Per-tab counts respect the geo/interviewer filters but not the status
+        # itself, so each tab shows its own total under the active filters.
+        base = self._apply_geo_interviewer(Event.objects.all(), self._filters_context)
+        counts = {
+            row["va_interview_status"]: row["c"]
+            for row in base.values("va_interview_status").annotate(c=Count("id"))
+        }
+        active_status = self._filters_context["interview_status"]
+        context["status_tabs"] = [
+            {
+                "value": value,
+                "label": label,
+                "count": counts.get(value, 0),
+                "active": value == active_status,
+            }
+            for value, label in self.STATUS_TABS
+        ]
+        context["active_status"] = active_status
         return context
 
-    def _apply_filters(self, queryset):
-        params = self.request.GET
-        filters = {
-            "province": params.get("province", "").strip(),
-            "district": params.get("district", "").strip(),
-            "interview_status": params.get("interview_status", "").strip(),
-            "interviewer": params.get("interviewer", "").strip(),
-        }
-
+    def _apply_geo_interviewer(self, queryset, filters):
         if filters["province"]:
             queryset = queryset.filter(
                 Q(death__province__icontains=filters["province"])
@@ -144,21 +150,34 @@ class EventListView(AjaxListTableMixin, ListView):
                 | Q(pregnancy_outcome__district__icontains=filters["district"])
                 | Q(household__district__icontains=filters["district"])
             )
-        if filters["interview_status"]:
-            if filters["interview_status"] == "unscheduled":
-                queryset = queryset.filter(
-                    Q(event_status__lt=Event.EventStatus.VA_INTERVIEW_SCHEDULED)
-                    | Q(event_status__isnull=True)
-                )
-            else:
-                queryset = queryset.filter(
-                    va_interview_status=filters["interview_status"]
-                )
         if filters["interviewer"]:
             queryset = queryset.filter(
                 Q(va_interview_staff__name__icontains=filters["interviewer"])
                 | Q(va_interview_staff__email__icontains=filters["interviewer"])
             )
+        return queryset
+
+    def _apply_filters(self, queryset):
+        params = self.request.GET
+        # Default to the Scheduled tab so completed/not-done/postponed events
+        # drop off the default list once their status changes.
+        filters = {
+            "province": params.get("province", "").strip(),
+            "district": params.get("district", "").strip(),
+            "interview_status": params.get("interview_status", "").strip()
+            or Event.VAInterviewStatus.SCHEDULED,
+            "interviewer": params.get("interviewer", "").strip(),
+        }
+
+        queryset = self._apply_geo_interviewer(queryset, filters)
+
+        if filters["interview_status"] == "unscheduled":
+            queryset = queryset.filter(
+                Q(event_status__lt=Event.EventStatus.VA_INTERVIEW_SCHEDULED)
+                | Q(event_status__isnull=True)
+            )
+        else:
+            queryset = queryset.filter(va_interview_status=filters["interview_status"])
 
         self._filters_context = filters
         return queryset

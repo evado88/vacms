@@ -37,10 +37,10 @@
     var endpoint = slot.getAttribute("data-endpoint");
     if (!endpoint) return;
 
-    var state = { order_by: "", page: "1" };
+    var state = { order_by: "", page: "1", interview_status: "" };
     var timer = null;
 
-    function buildUrl() {
+    function collectParams() {
       var params = new URLSearchParams();
       if (form) {
         new FormData(form).forEach(function (value, key) {
@@ -48,14 +48,33 @@
           if (v) params.set(key, v);
         });
       }
+      if (state.interview_status) {
+        params.set("interview_status", state.interview_status);
+      }
       if (state.order_by) params.set("order_by", state.order_by);
       if (state.page && state.page !== "1") params.set("page", state.page);
+      return params;
+    }
+
+    function buildUrl() {
+      var params = collectParams();
       // endpoint already carries ?component=1
       var join = endpoint.indexOf("?") === -1 ? "?" : "&";
       return endpoint + join + params.toString();
     }
 
+    function syncDownloadLink() {
+      var link = root.querySelector("[data-list-download]");
+      if (!link) return;
+      var params = collectParams();
+      params.delete("page");
+      var base = (link.getAttribute("href") || "").split("?")[0];
+      var query = params.toString();
+      link.setAttribute("href", query ? base + "?" + query : base);
+    }
+
     function refresh() {
+      syncDownloadLink();
       fetch(buildUrl(), {
         method: "GET",
         headers: { "X-Requested-With": "XMLHttpRequest" },
@@ -112,6 +131,10 @@
       }
       event.preventDefault();
       var params = new URLSearchParams(link.getAttribute("href").slice(1));
+      if (params.has("interview_status")) {
+        state.interview_status = params.get("interview_status");
+        state.page = "1";
+      }
       if (params.has("order_by")) {
         state.order_by = params.get("order_by");
         state.page = "1";

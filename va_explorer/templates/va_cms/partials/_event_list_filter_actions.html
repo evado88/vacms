@@ -1,2 +1,2 @@
 <a href="{% url 'cms-event-list' %}" class="btn btn-secondary">Reset</a>
-{% if request.user.can_download_csv_exports %}<a href="{% url 'cms-event-list-csv' %}{% if request.GET.urlencode %}?{{ request.GET.urlencode }}{% endif %}" class="btn btn-outline-secondary">Download CSV</a>{% endif %}
+{% if request.user.can_download_csv_exports %}<a href="{% url 'cms-event-list-csv' %}{% if request.GET.urlencode %}?{{ request.GET.urlencode }}{% endif %}" class="btn btn-outline-secondary" data-list-download>Download CSV</a>{% endif %}

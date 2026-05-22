@@ -144,6 +144,35 @@ body {
   margin-top: 12px;
 }
 
+.vacms-list-tabs {
+  background: transparent;
+  margin: 0;
+  padding: 0 8px;
+}
+
+.vacms-list-tabs .nav-link {
+  cursor: pointer;
+}
+
+.app-page-container .vacms-list-tabs.nav-tabs .nav-link {
+  background: var(--vacms-card);
+  border-color: var(--vacms-border-strong) var(--vacms-border-strong) var(--vacms-card);
+  font-weight: 600;
+}
+
+.app-page-container .vacms-list-tabs.nav-tabs .nav-link.active {
+  background: linear-gradient(180deg, #dff7e8 0%, #f5fff8 100%);
+  border-color: #e9ecef #e9ecef var(--vacms-border-strong);
+}
+
+.vacms-list-tabs .nav-link .badge {
+  margin-left: 4px;
+}
+
+.vacms-list-table-card {
+  margin-top: -1px;
+}
+
 .form-date {
   width: min(100%, 10rem);
 }

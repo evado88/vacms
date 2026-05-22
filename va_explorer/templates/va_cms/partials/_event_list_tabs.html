@@ -1,0 +1,12 @@
+<ul class="nav nav-tabs vacms-list-tabs" role="tablist">
+  {% for tab in status_tabs %}
+    <li class="nav-item" role="presentation">
+      <a class="nav-link {% if tab.active %}active{% endif %}"
+         href="?interview_status={{ tab.value }}"
+         role="tab"
+         aria-selected="{% if tab.active %}true{% else %}false{% endif %}">
+        {{ tab.label }} <span class="badge badge-light">{{ tab.count }}</span>
+      </a>
+    </li>
+  {% endfor %}
+</ul>
