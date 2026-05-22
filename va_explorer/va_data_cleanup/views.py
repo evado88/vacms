@@ -4,6 +4,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.mixins import PermissionRequiredMixin
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import PermissionDenied
+from django.core.paginator import Paginator
 from django.db.models import CharField
 from django.db.models import Value as V
 from django.db.models.functions import Concat
@@ -26,7 +27,14 @@ from ..va_data_management.utils.date_parsing import parse_date
 from .models import DataCleanup
 
 User = get_user_model()
-MAX_VA_TABLE_ROWS = 5
+VA_SUBTAB_PER_PAGE = 10
+VA_SUBTABS = {"duplicates", "coding-issues", "indeterminate", "errors"}
+
+
+def _paginate(request, queryset, page_param, per_page=VA_SUBTAB_PER_PAGE):
+    """Return the requested Django ``Page`` for ``queryset`` using ``page_param``."""
+    paginator = Paginator(queryset, per_page)
+    return paginator.get_page(request.GET.get(page_param))
 
 
 def _dq_rows_for_model(model, build_row, only_fields):
@@ -216,28 +224,7 @@ class DataCleanupIndexView(CustomAuthMixin, PermissionRequiredMixin, ListView):
             )
         context["object_list"] = va_duplicate_rows
         context["va_duplicate_rows"] = va_duplicate_rows
-        # Keep parity with the former Home VA Statistics tables.
-        uncoded_vas = (
-            user_vas.filter(causes__isnull=True)
-            .prefetch_related("causes", "coding_issues", "location")
-            .distinct()
-        )
-        indeterminate_vas = (
-            user_vas.filter(causes__cause="Indeterminate")
-            .prefetch_related("causes", "coding_issues", "location")
-            .distinct()
-        )
-        context["va_coding_issue_rows"] = _get_context_for_va_table(
-            uncoded_vas[:MAX_VA_TABLE_ROWS], self.request.user
-        )
-        context["va_indeterminate_cod_rows"] = _get_context_for_va_table(
-            indeterminate_vas[:MAX_VA_TABLE_ROWS], self.request.user
-        )
-        context["additional_issues"] = max(uncoded_vas.count() - MAX_VA_TABLE_ROWS, 0)
-        context["additional_indeterminate_cods"] = max(
-            indeterminate_vas.count() - MAX_VA_TABLE_ROWS,
-            0,
-        )
+
         active_tab = self.request.GET.get("tab", "verbal-autopsy").strip().lower()
         allowed_tabs = {
             "household",
@@ -249,6 +236,55 @@ class DataCleanupIndexView(CustomAuthMixin, PermissionRequiredMixin, ListView):
         if active_tab not in allowed_tabs:
             active_tab = "verbal-autopsy"
         context["active_cleanup_tab"] = active_tab
+
+        # ---- Verbal Autopsy sub-tabs -------------------------------------- #
+        # Coding Issues = not yet coded; Indeterminate = coded "Indeterminate";
+        # Errors = has a CauseCodingIssue with severity="error". Each sub-tab is a
+        # full, independently paginated list; only the active sub-tab builds rows.
+        active_va_subtab = (
+            self.request.GET.get("va_subtab", "duplicates").strip().lower()
+        )
+        if active_va_subtab not in VA_SUBTABS:
+            active_va_subtab = "duplicates"
+        context["active_va_subtab"] = active_va_subtab
+
+        uncoded_vas = user_vas.filter(causes__isnull=True).order_by("id").distinct()
+        indeterminate_vas = (
+            user_vas.filter(causes__cause="Indeterminate").order_by("id").distinct()
+        )
+        error_vas = (
+            user_vas.filter(coding_issues__severity="error").order_by("id").distinct()
+        )
+
+        # Counts feed the sub-tab badges (cheap; no row building).
+        context["va_coding_issue_count"] = uncoded_vas.count()
+        context["va_indeterminate_count"] = indeterminate_vas.count()
+        context["va_error_count"] = error_vas.count()
+
+        subtab_sources = {
+            "coding-issues": (uncoded_vas, "ci_page", "va_coding_issue_rows"),
+            "indeterminate": (
+                indeterminate_vas,
+                "ind_page",
+                "va_indeterminate_cod_rows",
+            ),
+            "errors": (error_vas, "err_page", "va_error_rows"),
+        }
+        context["va_coding_issue_rows"] = []
+        context["va_indeterminate_cod_rows"] = []
+        context["va_error_rows"] = []
+        if active_va_subtab in subtab_sources:
+            queryset, page_param, rows_key = subtab_sources[active_va_subtab]
+            page = _paginate(
+                self.request,
+                queryset.prefetch_related("causes", "coding_issues", "location"),
+                page_param,
+            )
+            context[rows_key] = _get_context_for_va_table(
+                page.object_list, self.request.user
+            )
+            context["va_subtab_page"] = page
+            context["va_subtab_page_param"] = page_param
 
         # Each tab shows the data quality issues detected on its own records,
         # generated automatically on load (or via the dq_* management commands).

@@ -13,6 +13,21 @@ class AdminPanelRegistryTests(TestCase):
         assert "load_household_csv" in ALLOWLIST
         assert "bulk_load_users" in ALLOWLIST
 
+    def test_newly_registered_commands_are_allowlisted(self):
+        for key in (
+            "dq_all",
+            "dq_pregnancy",
+            "dq_pregnancy_outcome",
+            "dq_death",
+            "download_causeofdeath_csv",
+            "download_va_with_cod_csv",
+            "upload_causeofdeath_csv",
+            "load_csa_target_supervisor_map",
+            "load_po_baby_details",
+            "refresh_csa_first_dates",
+        ):
+            assert key in ALLOWLIST, f"{key} should be registered in the admin panel"
+
     def test_execute_endpoint_rejects_unregistered_command(self):
         admin = get_user_model().objects.create_user(
             email="admin-registry@example.com",

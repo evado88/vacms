@@ -656,6 +656,143 @@ def _command_specs() -> list[CommandRegistryItem]:
             safety="mutating",
             timeout_hint=120,
         ),
+        # ---- Data quality (run on demand; persist DataQualityIssue records) ----
+        CommandRegistryItem(
+            key="dq_all",
+            management_command="dq_all",
+            category="Data Quality",
+            description=_description_for("dq_all"),
+            safety="read_only",
+            favorite=True,
+        ),
+        CommandRegistryItem(
+            key="dq_pregnancy",
+            management_command="dq_pregnancy",
+            category="Data Quality",
+            description=_description_for("dq_pregnancy"),
+            safety="read_only",
+        ),
+        CommandRegistryItem(
+            key="dq_pregnancy_outcome",
+            management_command="dq_pregnancy_outcome",
+            category="Data Quality",
+            description=_description_for("dq_pregnancy_outcome"),
+            safety="read_only",
+        ),
+        CommandRegistryItem(
+            key="dq_death",
+            management_command="dq_death",
+            category="Data Quality",
+            description=_description_for("dq_death"),
+            safety="read_only",
+        ),
+        # ---- Cause-of-death exports / imports ----
+        CommandRegistryItem(
+            key="download_causeofdeath_csv",
+            management_command="download_causeofdeath_csv",
+            category="Backups/Exports",
+            description=_description_for("download_causeofdeath_csv"),
+            safety="read_only",
+        ),
+        CommandRegistryItem(
+            key="download_va_with_cod_csv",
+            management_command="download_va_with_cod_csv",
+            category="Backups/Exports",
+            description=_description_for("download_va_with_cod_csv"),
+            inputs=(
+                CommandInputSpec(
+                    type="text",
+                    name="filename",
+                    required=False,
+                    help="Override the output filename (optional).",
+                    flag="--filename",
+                ),
+            ),
+            safety="read_only",
+        ),
+        CommandRegistryItem(
+            key="upload_causeofdeath_csv",
+            management_command="upload_causeofdeath_csv",
+            category="Data Loading",
+            description=_description_for("upload_causeofdeath_csv"),
+            inputs=(
+                CommandInputSpec(
+                    type="file",
+                    name="csv_path",
+                    required=True,
+                    help="Cause-of-death CSV located in the admin-panel upload directory.",
+                    filename_pattern="CAUSE_OF_DEATH.csv",
+                    standardized_name="CAUSE_OF_DEATH.csv",
+                    allowed_pattern=r"^[A-Za-z0-9._-]+\.csv$",
+                ),
+                CommandInputSpec(
+                    type="bool",
+                    name="clear_existing",
+                    required=False,
+                    help="Delete all existing CauseOfDeath rows before upload.",
+                    flag="--clear-existing",
+                ),
+                CommandInputSpec(
+                    type="bool",
+                    name="dry_run",
+                    required=False,
+                    help="Validate and report without inserting rows.",
+                    flag="--dry-run",
+                ),
+            ),
+            safety="mutating",
+        ),
+        # ---- Other data loading / maintenance ----
+        CommandRegistryItem(
+            key="load_csa_target_supervisor_map",
+            management_command="load_csa_target_supervisor_map",
+            category="Data Loading",
+            description=_description_for("load_csa_target_supervisor_map"),
+            inputs=(
+                CommandInputSpec(
+                    type="file",
+                    name="csv_file",
+                    required=True,
+                    help="CSA supervisor/target mapping CSV.",
+                    filename_pattern="CSA_TARGET_SUPERVISOR_MAP.csv",
+                    standardized_name="CSA_TARGET_SUPERVISOR_MAP.csv",
+                    allowed_pattern=r"^[A-Za-z0-9._-]+\.csv$",
+                ),
+                CommandInputSpec(
+                    type="bool",
+                    name="prune",
+                    required=False,
+                    help="Remove mappings no longer present in the CSV.",
+                    flag="--prune",
+                ),
+            ),
+            safety="mutating",
+        ),
+        CommandRegistryItem(
+            key="load_po_baby_details",
+            management_command="load_po_baby_details",
+            category="Data Loading",
+            description=_description_for("load_po_baby_details"),
+            inputs=(
+                CommandInputSpec(
+                    type="file",
+                    name="csv_file",
+                    required=True,
+                    help="Pregnancy-outcome baby details CSV.",
+                    filename_pattern="PO_BABY_DETAILS.csv",
+                    standardized_name="PO_BABY_DETAILS.csv",
+                    allowed_pattern=r"^[A-Za-z0-9._-]+\.csv$",
+                ),
+            ),
+            safety="mutating",
+        ),
+        CommandRegistryItem(
+            key="refresh_csa_first_dates",
+            management_command="refresh_csa_first_dates",
+            category="Maintenance",
+            description=_description_for("refresh_csa_first_dates"),
+            safety="mutating",
+        ),
     ]
 
 

@@ -3,8 +3,15 @@ from django.contrib.auth.models import Permission
 from django.contrib.contenttypes.models import ContentType
 from django.core.management import call_command
 from django.test import Client
+from django.urls import reverse
 
-from va_explorer.tests.factories import GroupFactory, UserFactory
+from va_explorer.tests.factories import (
+    CauseCodingIssueFactory,
+    CauseOfDeathFactory,
+    GroupFactory,
+    UserFactory,
+    VerbalAutopsyFactory,
+)
 from va_explorer.va_data_management.models import (
     Death,
     Household,
@@ -309,3 +316,101 @@ def test_death_tab_shows_own_issues(settings, view_datacleanup_group):
     assert response.status_code == 200
     assert b"Flagged Person" in response.content
     assert b"Duplicate" in response.content
+
+
+# --------------------------------------------------------------------------- #
+# dq_all command
+# --------------------------------------------------------------------------- #
+
+
+def test_dq_all_runs_every_dataset(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)  # keep generated reports/ out of the repo
+    _bulk(Household, [_household("h1"), _household("h2")])
+    _bulk(Death, [_death("d1"), _death("d2")])
+
+    call_command("dq_all")
+
+    assert _issues_for(Household, DataQualityIssue.DUPLICATE).exists()
+    assert _issues_for(Death, DataQualityIssue.DUPLICATE).exists()
+    # Reports written for each dataset.
+    assert (tmp_path / "reports" / "dq_households.csv").exists()
+    assert (tmp_path / "reports" / "dq_death.csv").exists()
+
+
+# --------------------------------------------------------------------------- #
+# Verbal Autopsy sub-tabs
+# --------------------------------------------------------------------------- #
+
+
+def _va_cleanup_client(view_datacleanup_group, settings):
+    settings.QUESTIONS_TO_AUTODETECT_DUPLICATES = "Id10017, Id10010"
+    user = UserFactory.create(groups=[view_datacleanup_group])
+    client = Client()
+    client.force_login(user=user)
+    return client
+
+
+def _show_url(va):
+    return reverse("va_data_management:show", kwargs={"id": va.id}).encode()
+
+
+def test_va_subtab_nav_renders(settings, view_datacleanup_group):
+    client = _va_cleanup_client(view_datacleanup_group, settings)
+    response = client.get("/va_data_cleanup/?tab=verbal-autopsy")
+
+    assert response.status_code == 200
+    for pane in (
+        b"cleanup-va-duplicates",
+        b"cleanup-va-coding-issues",
+        b"cleanup-va-indeterminate",
+        b"cleanup-va-errors",
+    ):
+        assert pane in response.content
+
+
+def test_va_errors_subtab_lists_error_vas(settings, view_datacleanup_group):
+    client = _va_cleanup_client(view_datacleanup_group, settings)
+    va = VerbalAutopsyFactory.create()
+    CauseOfDeathFactory.create(verbalautopsy=va, cause="HIV/AIDS related death")
+    CauseCodingIssueFactory.create(verbalautopsy=va, severity="error")
+
+    response = client.get("/va_data_cleanup/?tab=verbal-autopsy&va_subtab=errors")
+
+    assert response.status_code == 200
+    assert _show_url(va) in response.content
+    assert b"No VAs with coding errors were found." not in response.content
+
+
+def test_va_coding_issues_subtab_lists_uncoded_vas(settings, view_datacleanup_group):
+    client = _va_cleanup_client(view_datacleanup_group, settings)
+    va = VerbalAutopsyFactory.create()  # no CauseOfDeath -> uncoded
+
+    response = client.get(
+        "/va_data_cleanup/?tab=verbal-autopsy&va_subtab=coding-issues"
+    )
+
+    assert response.status_code == 200
+    assert _show_url(va) in response.content
+
+
+def test_va_indeterminate_subtab_lists_indeterminate_vas(
+    settings, view_datacleanup_group
+):
+    client = _va_cleanup_client(view_datacleanup_group, settings)
+    va = VerbalAutopsyFactory.create()
+    CauseOfDeathFactory.create(verbalautopsy=va, cause="Indeterminate")
+
+    response = client.get(
+        "/va_data_cleanup/?tab=verbal-autopsy&va_subtab=indeterminate"
+    )
+
+    assert response.status_code == 200
+    assert _show_url(va) in response.content
+
+
+def test_invalid_va_subtab_falls_back_to_duplicates(settings, view_datacleanup_group):
+    client = _va_cleanup_client(view_datacleanup_group, settings)
+    response = client.get("/va_data_cleanup/?tab=verbal-autopsy&va_subtab=bogus")
+
+    assert response.status_code == 200
+    assert response.context["active_va_subtab"] == "duplicates"

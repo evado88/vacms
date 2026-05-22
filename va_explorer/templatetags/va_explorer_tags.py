@@ -209,6 +209,23 @@ def param_replace(context, **kwargs):
 
 
 @register.simple_tag(takes_context=True)
+def replace_query_param(context, key, value):
+    """Like ``param_replace`` but with a dynamic (variable) parameter name.
+
+    Returns the current request's encoded GET parameters with ``key`` set to
+    ``value`` (empty values are dropped). Useful for paginating multiple
+    independent lists on one page, e.g.
+    ``<a href="?{% replace_query_param page_param page_num %}">``.
+    """
+    d = context["request"].GET.copy()
+    d[key] = value
+    empty = [k for k, v in d.items() if not v]
+    for k in empty:
+        del d[k]
+    return d.urlencode()
+
+
+@register.simple_tag(takes_context=True)
 def sort_url(context, value, direction=""):
     sort_value = direction + value
     return param_replace(context, order_by=sort_value)
