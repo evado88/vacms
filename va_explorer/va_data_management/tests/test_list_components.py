@@ -27,6 +27,10 @@ def _death_viewer():
 
 def _make_death(**kwargs):
     defaults = {
+        "enumerator": "Enumerator One",
+        "province": "Southern",
+        "district": "Choma",
+        "ward": "Macha Ward",
         "DE_03": "Test Person",
         "DE_04": "1980-01-01",
         "DE_05": "Male",
@@ -38,8 +42,12 @@ def _make_death(**kwargs):
 
 def test_deaths_dod_filter_labels_renamed():
     form = DeathFilter().form
-    assert form.fields["start_date"].label == "Earliest DOD"
-    assert form.fields["end_date"].label == "Latest DOD"
+    assert form.fields["start_date"].label == "Earliest"
+    assert form.fields["end_date"].label == "Latest"
+    assert form.fields["start_date"].widget.attrs["placeholder"] == "Earliest Date"
+    assert form.fields["end_date"].widget.attrs["placeholder"] == "Latest Date"
+    assert form.fields["start_date"].widget.input_type == "date"
+    assert form.fields["end_date"].widget.input_type == "date"
 
 
 def test_component_request_returns_fragment_not_full_page():
@@ -78,6 +86,23 @@ def test_component_honors_filters():
     assert "Ndola Person" not in content
 
 
+def test_component_honors_date_filters_from_date_inputs():
+    client = Client()
+    client.force_login(_death_viewer())
+    _make_death(DE_03="Older Person", eventid=None, DE_06="2023-01-01")
+    _make_death(DE_03="Newer Person", eventid=None, DE_06="2024-01-01")
+
+    response = client.get(
+        reverse("va_data_management:deaths"),
+        {"component": "1", "start_date": "2024-01-01"},
+    )
+
+    assert response.status_code == 200
+    content = response.content.decode()
+    assert "Newer Person" in content
+    assert "Older Person" not in content
+
+
 def test_full_page_has_no_apply_button_and_loads_list_js():
     client = Client()
     client.force_login(_death_viewer())
@@ -86,5 +111,8 @@ def test_full_page_has_no_apply_button_and_loads_list_js():
     content = response.content.decode()
 
     assert "Apply Filters" not in content
+    assert "ou-date-filter-group" in content
+    assert ">Earliest</label>" in content
+    assert ">Latest</label>" in content
     assert "list_table.js" in content
     assert "data-list-slot" in content

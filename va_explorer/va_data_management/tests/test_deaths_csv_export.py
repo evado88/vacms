@@ -47,6 +47,10 @@ def _data_viewer():
 
 def _make_death(**kwargs):
     defaults = {
+        "enumerator": "Enumerator One",
+        "province": "Southern",
+        "district": "Choma",
+        "ward": "Macha Ward",
         "DE_03": "Test Person",
         "DE_04": "1980-01-01",
         "DE_05": "Male",
@@ -133,8 +137,10 @@ def test_download_button_visibility(client):
 
     client.force_login(_data_manager())
     dm_response = client.get(unscheduled_only_url)
-    assert b"Download CSV" in dm_response.content
+    assert b'aria-label="Download CSV"' in dm_response.content
+    assert b'title="Download CSV"' in dm_response.content
+    assert b"fa-download" in dm_response.content
 
     client.force_login(_data_viewer())
     viewer_response = client.get(unscheduled_only_url)
-    assert b"Download CSV" not in viewer_response.content
+    assert b'aria-label="Download CSV"' not in viewer_response.content

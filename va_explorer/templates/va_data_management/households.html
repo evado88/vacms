@@ -10,7 +10,7 @@
   <div data-list-table>
     <section class="ou-card ou-mb-3">
       <div class="ou-card-body">
-        <small class="ou-filter-note">Filter households by ID, district, ward, enumerator, or supervisor.</small>
+        <small class="ou-filter-note">Filter households by ID, enumerator, district, or ward.</small>
         <form method="get" class="ou-filter-row ou-va-filter-row" data-list-filter>
           {% for field in filter.form %}
             <div class="form-group mb-0">
@@ -19,7 +19,6 @@
             </div>
           {% endfor %}
           <div class="form-group mb-0 ou-va-filter-actions">
-            <label class="invisible d-block">&nbsp;</label>
             <div class="ou-form-actions">
               {% if filter.is_valid %}
                 <a class="btn btn-secondary" href="{% url 'va_data_management:households' %}">Reset</a>

@@ -10,22 +10,21 @@
   <div data-list-table>
     <section class="ou-card ou-mb-3">
       <div class="ou-card-body">
-        <small class="ou-filter-note">Filter deaths by district, ward, enumerator, deceased name, or date of death range.</small>
+        <small class="ou-filter-note">Filter deaths by enumerator, district, ward, deceased name, or date of death range.</small>
         <form method="get" class="ou-filter-row ou-va-filter-row" data-list-filter>
           {% for field in filter.form %}
-            <div class="form-group mb-0">
+            <div class="form-group mb-0{% if field.name == 'start_date' or field.name == 'end_date' %} ou-date-filter-group{% endif %}">
               {% if field.label %}<label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{% endif %}
               {{ field }}
             </div>
           {% endfor %}
           <div class="form-group mb-0 ou-va-filter-actions">
-            <label class="invisible d-block">&nbsp;</label>
             <div class="ou-form-actions">
               {% if filter.is_valid %}
                 <a class="btn btn-secondary" href="{% url 'va_data_management:deaths' %}">Reset</a>
               {% endif %}
               {% if request.user.can_download_csv_exports %}
-                <a class="btn btn-outline-secondary" href="{% url 'va_data_management:deaths_csv' %}{% if request.GET.urlencode %}?{{ request.GET.urlencode }}{% endif %}">Download CSV</a>
+                <a class="btn btn-outline-secondary" href="{% url 'va_data_management:deaths_csv' %}{% if request.GET.urlencode %}?{{ request.GET.urlencode }}{% endif %}" aria-label="Download CSV" title="Download CSV"><i class="fas fa-download" aria-hidden="true"></i></a>
               {% endif %}
             </div>
           </div>

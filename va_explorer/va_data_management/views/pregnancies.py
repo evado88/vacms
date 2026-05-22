@@ -19,6 +19,9 @@ from va_explorer.utils.mixins import (
 from va_explorer.va_data_management.filters import PregnancyFilter
 from va_explorer.va_data_management.forms import PregnancyForm
 from va_explorer.va_data_management.models import Pregnancy
+from va_explorer.va_data_management.utils.list_cleaning import (
+    exclude_rows_with_invalid_display_values,
+)
 from va_explorer.va_data_management.utils.location_access import (
     restrict_queryset_to_user_locations,
 )
@@ -45,11 +48,23 @@ class Pregnancies(
         "district": "district",
         "ward": "ward",
         "pregnant_woman": "PE_06",
-        "dob": "PE_07",
+        "dob": "PE_09A",
+        "lmp_date": "PE_09A",
     }
 
+    display_validation_fields = (
+        "enumerator",
+        "province",
+        "district",
+        "ward",
+        "PE_06",
+        "PE_09A",
+    )
+
     def get_queryset(self):
-        queryset = super().get_queryset()
+        queryset = exclude_rows_with_invalid_display_values(
+            super().get_queryset(), self.display_validation_fields
+        )
         self.filterset = PregnancyFilter(self.request.GET, queryset=queryset)
         order_by_raw = self.request.GET.get("order_by", "-id")
         direction = "-" if order_by_raw.startswith("-") else ""

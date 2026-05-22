@@ -20,6 +20,9 @@ from va_explorer.utils.mixins import (
 from va_explorer.va_data_management.filters import PregnancyOutcomeFilter
 from va_explorer.va_data_management.forms import PregnancyOutcomeForm
 from va_explorer.va_data_management.models import PregnancyOutcome
+from va_explorer.va_data_management.utils.list_cleaning import (
+    exclude_rows_with_invalid_display_values,
+)
 from va_explorer.va_data_management.utils.location_access import (
     restrict_queryset_to_user_locations,
 )
@@ -48,8 +51,19 @@ class PregnancyOutcomes(
         "PO_46": "PO_46",
     }
 
+    display_validation_fields = (
+        "enumerator",
+        "province",
+        "district",
+        "ward",
+        "PO_41",
+        "PO_46",
+    )
+
     def get_queryset(self):
-        queryset = super().get_queryset()
+        queryset = exclude_rows_with_invalid_display_values(
+            super().get_queryset(), self.display_validation_fields
+        )
         self.filterset = PregnancyOutcomeFilter(self.request.GET, queryset=queryset)
         order_by_raw = self.request.GET.get("order_by", "-id")
         direction = "-" if order_by_raw.startswith("-") else ""

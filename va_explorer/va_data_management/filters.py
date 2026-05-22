@@ -25,6 +25,16 @@ class DateInput(forms.DateInput):
     input_type = "date"
 
 
+def date_filter_widget(placeholder: str):
+    return DateInput(
+        attrs={
+            "class": "form-date datepicker",
+            "placeholder": placeholder,
+            "aria-label": placeholder,
+        }
+    )
+
+
 # =============================================================
 # Shared base filter — district / ward / enumerator
 # are declared on every list FilterSet.  Subclasses inherit
@@ -74,6 +84,16 @@ class GeoEnumeratorFilterSet(FilterSet):
         abstract = True
         fields = []
 
+    field_order = ()
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.form.helper = FormHelper()
+        self.form.helper.form_tag = False
+        self.form.helper.disable_csrf = True
+        if self.field_order:
+            self.form.order_fields(self.field_order)
+
 
 # =========================
 # Verbal Autopsy (VA) list
@@ -117,14 +137,14 @@ class VAFilter(FilterSet):
     start_date = DateFilter(
         field_name="Id10023",
         lookup_expr="gte",
-        label="Earliest Date",
-        widget=DateInput(attrs={"class": "form-date datepicker"}),
+        label="Earliest",
+        widget=date_filter_widget("Earliest Date"),
     )
     end_date = DateFilter(
         field_name="Id10023",
         lookup_expr="lte",
-        label="Latest Date",
-        widget=DateInput(attrs={"class": "form-date datepicker"}),
+        label="Latest",
+        widget=date_filter_widget("Latest Date"),
     )
     cause = CharFilter(
         field_name="causes__cause",
@@ -179,6 +199,8 @@ class VAFilter(FilterSet):
 # Pregnancy list
 # =========================
 class PregnancyFilter(GeoEnumeratorFilterSet):
+    field_order = ("id", "enumerator", "district", "ward", "start_date", "end_date")
+
     id = CharFilter(
         field_name="id",
         lookup_expr="icontains",
@@ -190,14 +212,14 @@ class PregnancyFilter(GeoEnumeratorFilterSet):
     start_date = DateFilter(
         field_name="created",
         lookup_expr="gte",
-        label="Earliest Record Date",
-        widget=DateInput(attrs={"class": "form-date datepicker"}),
+        label="Earliest",
+        widget=date_filter_widget("Earliest Date"),
     )
     end_date = DateFilter(
         field_name="created",
         lookup_expr="lte",
-        label="Latest Record Date",
-        widget=DateInput(attrs={"class": "form-date datepicker"}),
+        label="Latest",
+        widget=date_filter_widget("Latest Date"),
     )
 
     class Meta:
@@ -209,24 +231,14 @@ class PregnancyFilter(GeoEnumeratorFilterSet):
 # Household list
 # =========================
 class HouseholdFilter(GeoEnumeratorFilterSet):
+    field_order = ("id", "enumerator", "district", "ward")
+
     id = CharFilter(
         field_name="id",
         lookup_expr="icontains",
         label="",
         widget=TextInput(
             attrs={"class": "form-text", "placeholder": "ID", "aria-label": "ID"}
-        ),
-    )
-    supervisor = CharFilter(
-        field_name="supervisor",
-        lookup_expr="icontains",
-        label="",
-        widget=TextInput(
-            attrs={
-                "class": "form-text",
-                "placeholder": "Supervisor",
-                "aria-label": "Supervisor",
-            }
         ),
     )
 
@@ -239,6 +251,15 @@ class HouseholdFilter(GeoEnumeratorFilterSet):
 # Pregnancy Outcome list
 # =========================
 class PregnancyOutcomeFilter(GeoEnumeratorFilterSet):
+    field_order = (
+        "enumerator",
+        "district",
+        "ward",
+        "outcome_type",
+        "start_date",
+        "end_date",
+    )
+
     outcome_type = CharFilter(
         field_name="po_group",
         lookup_expr="icontains",
@@ -254,14 +275,14 @@ class PregnancyOutcomeFilter(GeoEnumeratorFilterSet):
     start_date = DateFilter(
         field_name="PO_41",
         lookup_expr="gte",
-        label="Earliest Delivery",
-        widget=DateInput(attrs={"class": "form-date datepicker"}),
+        label="Earliest",
+        widget=date_filter_widget("Earliest Date"),
     )
     end_date = DateFilter(
         field_name="PO_41",
         lookup_expr="lte",
-        label="Latest Delivery",
-        widget=DateInput(attrs={"class": "form-date datepicker"}),
+        label="Latest",
+        widget=date_filter_widget("Latest Date"),
     )
 
     class Meta:
@@ -273,6 +294,15 @@ class PregnancyOutcomeFilter(GeoEnumeratorFilterSet):
 # Death list
 # =========================
 class DeathFilter(GeoEnumeratorFilterSet):
+    field_order = (
+        "enumerator",
+        "district",
+        "ward",
+        "deceased",
+        "start_date",
+        "end_date",
+    )
+
     deceased = CharFilter(
         field_name="DE_03",
         lookup_expr="icontains",
@@ -288,14 +318,14 @@ class DeathFilter(GeoEnumeratorFilterSet):
     start_date = DateFilter(
         field_name="DE_06",
         lookup_expr="gte",
-        label="Earliest DOD",
-        widget=DateInput(attrs={"class": "form-date datepicker"}),
+        label="Earliest",
+        widget=date_filter_widget("Earliest Date"),
     )
     end_date = DateFilter(
         field_name="DE_06",
         lookup_expr="lte",
-        label="Latest DOD",
-        widget=DateInput(attrs={"class": "form-date datepicker"}),
+        label="Latest",
+        widget=date_filter_widget("Latest Date"),
     )
 
     class Meta:

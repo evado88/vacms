@@ -14,8 +14,8 @@
     </div>
   </div>
   {% if request.user.can_download_csv_exports %}
-  <a class="btn btn-sm btn-outline-secondary baseline-census-download-button" href="{% url 'va_analytics:baseline-census-province-table-csv-export' %}" data-baseline-census-download>
-    Download CSV
+  <a class="btn btn-sm btn-outline-secondary baseline-census-download-button" href="{% url 'va_analytics:baseline-census-province-table-csv-export' %}" data-baseline-census-download aria-label="Download CSV" title="Download CSV">
+    <i class="fas fa-download" aria-hidden="true"></i>
   </a>
   {% endif %}
 </div>

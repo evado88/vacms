@@ -43,8 +43,10 @@
             <button type="submit" class="btn btn-sm btn-primary mr-1">Filter</button>
             <a href="{% url 'va_admin:activity-log' %}" class="btn btn-sm btn-outline-secondary mr-1">Clear</a>
             <a href="{% url 'va_admin:activity-log-download' %}?{{ request.GET.urlencode }}"
-               class="btn btn-sm btn-outline-success">
-              <i class="fas fa-download mr-1"></i>Download CSV
+               class="btn btn-sm btn-outline-success"
+               aria-label="Download CSV"
+               title="Download CSV">
+              <i class="fas fa-download" aria-hidden="true"></i>
             </a>
           </div>
         </form>

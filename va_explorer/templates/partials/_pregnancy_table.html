@@ -10,7 +10,7 @@
       <th><a href="?{% sort_url 'district' direction='-' %}">District</a>{% if ob == 'district' %}▲{% elif ob == '-district' %}▼{% endif %}</th>
       <th><a href="?{% sort_url 'ward' direction='-' %}">Ward</a>{% if ob == 'ward' %}▲{% elif ob == '-ward' %}▼{% endif %}</th>
       <th><a href="?{% sort_url 'pregnant_woman' direction='-' %}">Pregnant Woman</a>{% if ob == 'pregnant_woman' %}▲{% elif ob == '-pregnant_woman' %}▼{% endif %}</th>
-      <th><a href="?{% sort_url 'dob' direction='-' %}">DOB</a>{% if ob == 'dob' %}▲{% elif ob == '-dob' %}▼{% endif %}</th>
+      <th><a href="?{% sort_url 'lmp_date' direction='-' %}">Last Menstrual Period Date</a>{% if ob == 'lmp_date' %}▲{% elif ob == '-lmp_date' %}▼{% elif ob == 'dob' %}▲{% elif ob == '-dob' %}▼{% endif %}</th>
       <th></th>
       {% if va_data_cleanup and perms.va_data_cleanup.download %}
         <th>Download</th>
@@ -31,7 +31,7 @@
           <td>{{ p.district|default:"-" }}</td>
           <td>{{ p.ward|default:"-" }}</td>
           <td>{% pii_filter "PE_06" p.PE_06|default:"Unknown" %}</td>
-          <td>{% pii_filter "PE_07" p.PE_07|standard_date|default:"-" %}</td>
+          <td>{{ p.PE_09A|standard_date|default:"-" }}</td>
           <td><a class="btn btn-primary" href="{% url 'va_data_management:pregnancy_detail' id=p.id %}">View</a></td>
           {% if va_data_cleanup and perms.va_data_cleanup.download %}
             <td>

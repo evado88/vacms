@@ -24,6 +24,9 @@ from va_explorer.va_data_management.models import Household
 from va_explorer.va_data_management.models.data_quality import (
     DataQualityIssue,
 )
+from va_explorer.va_data_management.utils.list_cleaning import (
+    exclude_rows_with_invalid_display_values,
+)
 from va_explorer.va_data_management.utils.location_access import (
     restrict_queryset_to_user_locations,
 )
@@ -62,8 +65,19 @@ class Households(
         "respondent": "respondent",
     }
 
+    display_validation_fields = (
+        "enumerator",
+        "province",
+        "district",
+        "ward",
+        "locality_name",
+        "respondent",
+    )
+
     def get_queryset(self):
-        base_qs = super().get_queryset()
+        base_qs = exclude_rows_with_invalid_display_values(
+            super().get_queryset(), self.display_validation_fields
+        )
         self.filter = HouseholdFilter(self.request.GET, queryset=base_qs)
         order_by_raw = self.request.GET.get("order_by", "-id")
         direction = "-" if order_by_raw.startswith("-") else ""

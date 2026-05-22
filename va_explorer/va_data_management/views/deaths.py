@@ -25,6 +25,9 @@ from va_explorer.va_data_management.constants import DEATH_PII_FIELDS, REDACTED_
 from va_explorer.va_data_management.filters import DeathFilter
 from va_explorer.va_data_management.forms import DeathForm
 from va_explorer.va_data_management.models import Death
+from va_explorer.va_data_management.utils.list_cleaning import (
+    exclude_rows_with_invalid_display_values,
+)
 from va_explorer.va_data_management.utils.location_access import (
     restrict_queryset_to_user_locations,
 )
@@ -54,8 +57,20 @@ class Deaths(
         "DE_06": "DE_06",
     }
 
+    display_validation_fields = (
+        "enumerator",
+        "province",
+        "district",
+        "ward",
+        "DE_03",
+        "DE_06",
+    )
+
     def get_queryset(self):
-        queryset = super().get_queryset().filter(eventid__isnull=True)
+        queryset = exclude_rows_with_invalid_display_values(
+            super().get_queryset().filter(eventid__isnull=True),
+            self.display_validation_fields,
+        )
         self.filter = DeathFilter(self.request.GET, queryset=queryset)
         order_by_raw = self.request.GET.get("order_by", "-id")
         direction = "-" if order_by_raw.startswith("-") else ""
