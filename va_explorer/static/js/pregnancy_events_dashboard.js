@@ -22,6 +22,8 @@
     birthOutcomesPayload: null,
     placeOfBirthPayload: null,
   };
+  let mapSelection = { geography_level: "", geography_value: "" };
+  let mapController = null;
 
   const mapState = {
     map: null,
@@ -33,18 +35,18 @@
   const getEl = (id) => document.getElementById(id);
 
   const filterElements = {
-    form: getEl("poFiltersForm"),
-    outcome: getEl("poFilterPregnancyOutcome"),
-    preset: getEl("poFilterTimePreset"),
-    start: getEl("poFilterStartDatetime"),
-    end: getEl("poFilterEndDatetime"),
-    mapViewSelect: getEl("poMapViewSelect"),
-    mapViewHidden: getEl("poFilterMapView"),
-    reset: getEl("poFiltersReset"),
-    birthCount: getEl("poBirthModeCount"),
-    birthPct: getEl("poBirthModePercentage"),
-    placeCount: getEl("poPlaceBirthModeCount"),
-    placePct: getEl("poPlaceBirthModePercentage"),
+    form: getEl("peFiltersForm"),
+    outcome: getEl("peFilterPregnancyOutcome"),
+    preset: getEl("peFilterTimePreset"),
+    start: getEl("peFilterStartDatetime"),
+    end: getEl("peFilterEndDatetime"),
+    mapViewSelect: getEl("peMapViewSelect"),
+    mapViewHidden: getEl("peFilterMapView"),
+    reset: getEl("peFiltersReset"),
+    birthCount: getEl("peBirthModeCount"),
+    birthPct: getEl("peBirthModePercentage"),
+    placeCount: getEl("pePlaceBirthModeCount"),
+    placePct: getEl("pePlaceBirthModePercentage"),
   };
 
   const getFilters = () => ({
@@ -55,6 +57,13 @@
     map_view: filterElements.mapViewSelect?.value || "Province",
   });
 
+  const getEffectiveSelection = () => {
+    if (mapController && typeof mapController.getSelection === "function") {
+      return mapController.getSelection();
+    }
+    return { ...mapSelection };
+  };
+
   const buildParams = (filters) => {
     const params = new URLSearchParams();
     if (filters.pregnancy_outcome) params.set("pregnancy_outcome", filters.pregnancy_outcome);
@@ -62,6 +71,11 @@
     if (filters.start_datetime) params.set("start_datetime", filters.start_datetime);
     if (filters.end_datetime) params.set("end_datetime", filters.end_datetime);
     if (filters.map_view && filters.map_view !== "Province") params.set("map_view", filters.map_view);
+    const selection = getEffectiveSelection();
+    if (selection.geography_level && selection.geography_value) {
+      params.set("geography_level", selection.geography_level);
+      params.set("geography_value", selection.geography_value);
+    }
     return params;
   };
 
@@ -90,6 +104,29 @@
     return response.json();
   };
 
+  const userCanViewPII = (app.dataset.userPii || "").toLowerCase() === "true";
+  mapController =
+    typeof window.createHierarchicalDashboardMap === "function"
+      ? window.createHierarchicalDashboardMap({
+          containerId: "peMapContainer",
+          legendId: "peMapLegend",
+          breadcrumbId: "peMapBreadcrumb",
+          emptyStateId: "peMapEmpty",
+          endpoint: endpoints.map,
+          buildParams,
+          onSelectionChange: (selection) => {
+            mapSelection = {
+              geography_level: selection?.geography_level || "",
+              geography_value: selection?.geography_value || "",
+            };
+          },
+          includeSelectionInRequest: false,
+          styleVariant: "va",
+          noDataMessage: "No mapped pregnancy events in current filter range.",
+          userCanViewPII,
+        })
+      : null;
+
   const setText = (id, value) => {
     const el = getEl(id);
     if (el) el.textContent = value;
@@ -101,22 +138,22 @@
   };
 
   const renderSummary = (data) => {
-    setText("poCardLastDataUpdate", data.card_last_data_update || "N/A");
-    setText("poCardLastEventDate", data.card_last_event_date || "N/A");
-    setText("poCardNumberOfEvents", data.card_number_of_events ?? 0);
-    setText("poCardMultipleBirthPct", `${data.card_multiple_birth_pct ?? 0}%`);
-    setEmptyState("poSummaryEmpty", (data.card_number_of_events ?? 0) === 0);
+    setText("peCardLastDataUpdate", data.card_last_data_update || "N/A");
+    setText("peCardLastEventDate", data.card_last_event_date || "N/A");
+    setText("peCardNumberOfEvents", data.card_number_of_events ?? 0);
+    setText("peCardMultipleBirthPct", `${data.card_multiple_birth_pct ?? 0}%`);
+    setEmptyState("peSummaryEmpty", (data.card_number_of_events ?? 0) === 0);
   };
 
   const renderKpis = (data) => {
-    setText("poKpiMeanAge", data.mean_age ?? 0);
-    setText("poKpiHivPct", `${data.hiv_positive_pct ?? 0}%`);
-    setEmptyState("poKpisEmpty", (data.mean_age ?? 0) === 0 && (data.hiv_positive_pct ?? 0) === 0);
+    setText("peKpiMeanAge", data.mean_age ?? 0);
+    setText("peKpiHivPct", `${data.hiv_positive_pct ?? 0}%`);
+    setEmptyState("peKpisEmpty", (data.mean_age ?? 0) === 0 && (data.hiv_positive_pct ?? 0) === 0);
   };
 
   const ensureLineChart = () => {
     if (chartState.trend) return chartState.trend;
-    const canvas = getEl("poTrendChart");
+    const canvas = getEl("peTrendChart");
     if (!canvas || typeof Chart === "undefined") return null;
     chartState.trend = new Chart(canvas.getContext("2d"), {
       type: "line",
@@ -149,7 +186,7 @@
     chart.data.datasets[0].data = data.data || [];
     chart.update();
     const sum = (data.data || []).reduce((acc, value) => acc + Number(value || 0), 0);
-    setEmptyState("poTrendEmpty", sum === 0);
+    setEmptyState("peTrendEmpty", sum === 0);
   };
 
   const currentBirthMode = () => (filterElements.birthPct?.checked ? "percentage" : "count");
@@ -157,7 +194,7 @@
 
   const renderBirthOutcomes = (payload) => {
     chartState.birthOutcomesPayload = payload;
-    const chart = ensureBarChart("birthOutcomes", "poBirthOutcomesChart", {
+    const chart = ensureBarChart("birthOutcomes", "peBirthOutcomesChart", {
       type: "bar",
       data: { labels: [], datasets: [{ label: "Birth Outcomes", data: [], backgroundColor: ["#2d6cdf", "#f46d43"], borderColor: ["#2d6cdf", "#f46d43"], borderWidth: 1 }] },
       options: {
@@ -177,11 +214,11 @@
     chart.options.scales.y.title.text = mode === "percentage" ? "Percentage (%)" : "Count";
     chart.update();
     const sum = (payload.count_data || []).reduce((acc, value) => acc + Number(value || 0), 0);
-    setEmptyState("poBirthOutcomesEmpty", sum === 0);
+    setEmptyState("peBirthOutcomesEmpty", sum === 0);
   };
 
   const renderGestationalAge = (payload) => {
-    const chart = ensureBarChart("gestationalAge", "poGestationalAgeChart", {
+    const chart = ensureBarChart("gestationalAge", "peGestationalAgeChart", {
       type: "bar",
       data: { labels: [], datasets: [{ label: "Outcomes", data: [], backgroundColor: ["#9ecae1", "#6baed6", "#3182bd", "#08519c"], borderColor: ["#9ecae1", "#6baed6", "#3182bd", "#08519c"], borderWidth: 1 }] },
       options: {
@@ -199,11 +236,11 @@
     chart.data.datasets[0].data = payload.data || [];
     chart.update();
     const sum = (payload.data || []).reduce((acc, value) => acc + Number(value || 0), 0);
-    setEmptyState("poGestationalAgeEmpty", sum === 0);
+    setEmptyState("peGestationalAgeEmpty", sum === 0);
   };
 
   const renderAncVisits = (payload) => {
-    const chart = ensureBarChart("ancVisits", "poAncVisitsChart", {
+    const chart = ensureBarChart("ancVisits", "peAncVisitsChart", {
       type: "bar",
       data: { labels: [], datasets: [{ label: "Outcomes", data: [], backgroundColor: "#4CAF50", borderColor: "#2E7D32", borderWidth: 1 }] },
       options: {
@@ -221,12 +258,12 @@
     chart.data.datasets[0].data = payload.data || [];
     chart.update();
     const sum = (payload.data || []).reduce((acc, value) => acc + Number(value || 0), 0);
-    setEmptyState("poAncVisitsEmpty", sum === 0);
+    setEmptyState("peAncVisitsEmpty", sum === 0);
   };
 
   const renderPlaceOfBirth = (payload) => {
     chartState.placeOfBirthPayload = payload;
-    const chart = ensureBarChart("placeOfBirth", "poPlaceOfBirthChart", {
+    const chart = ensureBarChart("placeOfBirth", "pePlaceOfBirthChart", {
       type: "bar",
       data: { labels: [], datasets: [{ label: "Place of Birth", data: [], backgroundColor: "#8e44ad", borderColor: "#6c3483", borderWidth: 1 }] },
       options: {
@@ -247,7 +284,7 @@
     chart.options.scales.x.title.text = mode === "percentage" ? "Percentage (%)" : "Count";
     chart.update();
     const sum = (payload.count_data || []).reduce((acc, value) => acc + Number(value || 0), 0);
-    setEmptyState("poPlaceOfBirthEmpty", sum === 0);
+    setEmptyState("pePlaceOfBirthEmpty", sum === 0);
   };
 
   const normalizeGeoName = (value) => (value || "").toString().toLowerCase().replace(/province|district/g, "").replace(/\s+/g, " ").trim();
@@ -277,11 +314,11 @@
     return mapState.colors[Math.min(bins.length - 2, mapState.colors.length - 1)];
   };
   const renderMapLegend = (bins) => {
-    const legend = getEl("poMapLegend");
+    const legend = getEl("peMapLegend");
     if (!legend) return;
     if (!bins || bins.length <= 1) {
       legend.innerHTML = "<div>No mapped outcomes in current filter range.</div>";
-      setEmptyState("poMapEmpty", true);
+      setEmptyState("peMapEmpty", true);
       return;
     }
     let html = "<div><svg width='18' height='14'><rect fill='#c0c0c0' width='14' height='14'></rect></svg>0</div>";
@@ -290,12 +327,12 @@
       html += `<div><svg width='18' height='14'><rect fill='${mapState.colors[i]}' width='14' height='14'></rect></svg>${label}</div>`;
     }
     legend.innerHTML = html;
-    setEmptyState("poMapEmpty", false);
+    setEmptyState("peMapEmpty", false);
   };
 
   const ensureMap = async () => {
     if (mapState.map || typeof L === "undefined") return;
-    mapState.map = L.map("poMapContainer", { maxBounds: [[-6, 20], [-20, 34]] }).setView([-13, 27], 6);
+    mapState.map = L.map("peMapContainer", { maxBounds: [[-6, 20], [-20, 34]] }).setView([-13, 27], 6);
     mapState.map.attributionControl.setPrefix("");
     mapState.map.keyboard.disable();
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -352,6 +389,10 @@
     const filters = getFilters();
     syncFilterHiddenFields();
     syncUrl(filters);
+    if (mapController) {
+      await mapController.refresh(filters);
+      return;
+    }
     const mapData = await fetchJSON(endpoints.map, filters);
     await renderMap(mapData);
   };
@@ -361,7 +402,7 @@
     syncFilterHiddenFields();
     syncUrl(filters);
 
-    const [summary, trend, birthOutcomes, gestAge, anc, kpis, place, map] = await Promise.all([
+    const requests = [
       fetchJSON(endpoints.summary, filters),
       fetchJSON(endpoints.trend, filters),
       fetchJSON(endpoints.birthOutcomes, filters),
@@ -369,8 +410,10 @@
       fetchJSON(endpoints.ancVisits, filters),
       fetchJSON(endpoints.kpis, filters),
       fetchJSON(endpoints.placeOfBirth, filters),
-      fetchJSON(endpoints.map, filters),
-    ]);
+    ];
+    if (!mapController) requests.push(fetchJSON(endpoints.map, filters));
+
+    const [summary, trend, birthOutcomes, gestAge, anc, kpis, place, map] = await Promise.all(requests);
 
     renderSummary(summary);
     renderTrend(trend);
@@ -379,7 +422,11 @@
     renderAncVisits(anc);
     renderKpis(kpis);
     renderPlaceOfBirth(place);
-    await renderMap(map);
+    if (mapController) {
+      await mapController.refresh(filters);
+    } else {
+      await renderMap(map);
+    }
   };
 
   const bindEvents = () => {
