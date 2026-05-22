@@ -30,7 +30,7 @@
             <h2 class="ou-card-title">Household Data Quality Issues</h2>
           </div>
           <div class="ou-card-body">
-            <p class="ou-text-muted mb-2">Issues below are generated from the <code>dq_households</code> command.</p>
+            <p class="ou-text-muted mb-2">Issues below are generated automatically when households are loaded (CSV or ODK import), or by running the <code>dq_households</code> command.</p>
             <p class="ou-text-muted mb-0">Open household issue groups: <strong>{{ dq_issue_total }}</strong></p>
           </div>
         </section>
@@ -71,7 +71,7 @@
                     </tr>
                   {% empty %}
                     <tr>
-                      <td colspan="9">No household issues were found. Run <code>dq_households</code> first.</td>
+                      <td colspan="9">No household data quality issues were found.</td>
                     </tr>
                   {% endfor %}
                 </tbody>
@@ -84,7 +84,11 @@
       <section class="tab-pane fade {% if active_cleanup_tab == 'pregnancy' %}show active{% endif %}" id="cleanup-pregnancy" role="tabpanel" aria-labelledby="cleanup-pregnancy-tab">
         <section class="ou-card ou-mb-3">
           <div class="ou-card-header">
-            <h2 class="ou-card-title">Pregnancy Records With Household DQ Issues</h2>
+            <h2 class="ou-card-title">Pregnancy Data Quality Issues</h2>
+          </div>
+          <div class="ou-card-body">
+            <p class="ou-text-muted mb-2">Issues below are generated automatically when pregnancy records are loaded (CSV or ODK import), or by running the <code>dq_pregnancy</code> command.</p>
+            <p class="ou-text-muted mb-0">Open pregnancy issue groups: <strong>{{ dq_pregnancy_total|default:"0" }}</strong></p>
           </div>
           <div class="ou-card-body p-0">
             <div class="table-responsive">
@@ -121,7 +125,7 @@
                     </tr>
                   {% empty %}
                     <tr>
-                      <td colspan="9">No pregnancy records currently link to open household DQ issues.</td>
+                      <td colspan="9">No pregnancy data quality issues were found.</td>
                     </tr>
                   {% endfor %}
                 </tbody>
@@ -134,7 +138,11 @@
       <section class="tab-pane fade {% if active_cleanup_tab == 'pregnancy-outcome' %}show active{% endif %}" id="cleanup-pregnancy-outcome" role="tabpanel" aria-labelledby="cleanup-pregnancy-outcome-tab">
         <section class="ou-card ou-mb-3">
           <div class="ou-card-header">
-            <h2 class="ou-card-title">Pregnancy Outcome Records With Household DQ Issues</h2>
+            <h2 class="ou-card-title">Pregnancy Outcome Data Quality Issues</h2>
+          </div>
+          <div class="ou-card-body">
+            <p class="ou-text-muted mb-2">Issues below are generated automatically when pregnancy outcome records are loaded (CSV or ODK import), or by running the <code>dq_pregnancy_outcome</code> command.</p>
+            <p class="ou-text-muted mb-0">Open pregnancy outcome issue groups: <strong>{{ dq_pregnancy_outcome_total|default:"0" }}</strong></p>
           </div>
           <div class="ou-card-body p-0">
             <div class="table-responsive">
@@ -175,7 +183,7 @@
                     </tr>
                   {% empty %}
                     <tr>
-                      <td colspan="11">No pregnancy outcome records currently link to open household DQ issues.</td>
+                      <td colspan="11">No pregnancy outcome data quality issues were found.</td>
                     </tr>
                   {% endfor %}
                 </tbody>
@@ -188,7 +196,11 @@
       <section class="tab-pane fade {% if active_cleanup_tab == 'death' %}show active{% endif %}" id="cleanup-death" role="tabpanel" aria-labelledby="cleanup-death-tab">
         <section class="ou-card ou-mb-3">
           <div class="ou-card-header">
-            <h2 class="ou-card-title">Death Records With Household DQ Issues</h2>
+            <h2 class="ou-card-title">Death Data Quality Issues</h2>
+          </div>
+          <div class="ou-card-body">
+            <p class="ou-text-muted mb-2">Issues below are generated automatically when death records are loaded (CSV or ODK import), or by running the <code>dq_death</code> command.</p>
+            <p class="ou-text-muted mb-0">Open death issue groups: <strong>{{ dq_death_total|default:"0" }}</strong></p>
           </div>
           <div class="ou-card-body p-0">
             <div class="table-responsive">
@@ -227,7 +239,7 @@
                     </tr>
                   {% empty %}
                     <tr>
-                      <td colspan="10">No death records currently link to open household DQ issues.</td>
+                      <td colspan="10">No death data quality issues were found.</td>
                     </tr>
                   {% endfor %}
                 </tbody>

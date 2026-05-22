@@ -96,6 +96,23 @@ def _clean_import_value(value):
     return value
 
 
+def _run_dq_after_import(form_name: str, created: int, updated: int) -> None:
+    """Run data-quality checks after an ODK import, fail-safe.
+
+    A DQ error must never break ingestion, so failures are logged and swallowed.
+    """
+    if (created + updated) <= 0:
+        return
+    try:
+        from va_explorer.va_data_management.utils.dq_specs import run_dq_for_form
+
+        run_dq_for_form(form_name)
+    except Exception:
+        logger.exception(
+            "Data quality checks failed after ODK import of form %s", form_name
+        )
+
+
 def import_dataframe_records(form_name: str, df: pd.DataFrame) -> Dict[str, int]:
     """Map values using ODKFormChoice and save model records."""
     lookup: Dict[str, Dict[str, str]] = {}
@@ -127,6 +144,7 @@ def import_dataframe_records(form_name: str, df: pd.DataFrame) -> Dict[str, int]
             for row in df.to_dict(orient="records")
         ]
         model.objects.bulk_create(objects)
+        _run_dq_after_import(form_name, len(objects), 0)
         return {
             "created": len(objects),
             "updated": 0,
@@ -199,6 +217,8 @@ def import_dataframe_records(form_name: str, df: pd.DataFrame) -> Dict[str, int]
             model.objects.bulk_create(to_create)
         if to_update:
             model.objects.bulk_update(to_update, fields=update_fields)
+
+    _run_dq_after_import(form_name, len(to_create), len(to_update))
 
     return {
         "created": len(to_create),

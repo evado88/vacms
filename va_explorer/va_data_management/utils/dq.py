@@ -1,6 +1,7 @@
 # va_explorer/va_data_management/utils/dq.py
 import hashlib
 import json
+from collections import defaultdict
 from datetime import timedelta
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -56,6 +57,12 @@ def _norm(s: Optional[str]) -> Optional[str]:
     if ss == "" or ss.lower() in {"nan", "none", "null", "n/a"}:
         return None
     return ss
+
+
+def _norm_key(s: Optional[str]) -> Optional[str]:
+    """Case-insensitive normalisation used for grouping/duplicate detection."""
+    v = _norm(s)
+    return v.lower() if v is not None else None
 
 
 def _to_bool_yesno(v: Optional[str]) -> Optional[bool]:
@@ -378,6 +385,46 @@ def _is_yes_consent(v: Optional[str]) -> bool:
     return str(v).strip().lower() in {"yes", "y", "true", "1", "01"}
 
 
+def upsert_consent_issue_if_invalid(
+    *,
+    model_class,
+    object_id: int,
+    consent_value: Optional[str],
+    gate_value: Optional[str] = None,
+    title: str = "Consent missing or not affirmative",
+    keys: Optional[Dict[str, Any]] = None,
+    details: Optional[Dict[str, Any]] = None,
+) -> Optional[DataQualityIssue]:
+    """
+    Generic consent check.
+
+    - ``gate_value`` is ``None``  -> consent is always required.
+    - ``gate_value`` is provided  -> consent is only required when the gate is
+      affirmative (e.g. Household requires consent only when ``household == YES``).
+    """
+    if gate_value is not None and _to_bool_yesno(gate_value) is not True:
+        return None
+
+    if _is_yes_consent(consent_value):
+        return None
+
+    if keys is None:
+        keys = {"consent": consent_value}
+        if gate_value is not None:
+            keys["gate"] = gate_value
+    if details is None:
+        details = {"subtype": "consent_missing_or_invalid"}
+
+    return upsert_issue(
+        issue_type=DataQualityIssue.CONSENT,
+        model_class=model_class,
+        member_ids=[object_id],
+        title=title,
+        keys=keys,
+        details=details,
+    )
+
+
 def upsert_household_consent_issue_if_invalid(
     *,
     model_class,
@@ -387,21 +434,164 @@ def upsert_household_consent_issue_if_invalid(
 ) -> Optional[DataQualityIssue]:
     """
     If household == YES, consent must be affirmative.
-    If missing or not affirmative, create a CONSENT issue.
+    Thin wrapper preserving the Household-specific title/keys/details so existing
+    issue signatures stay stable.
     """
-    household_bool = _to_bool_yesno(household_value)
+    return upsert_consent_issue_if_invalid(
+        model_class=model_class,
+        object_id=object_id,
+        consent_value=consent_value,
+        gate_value=household_value,
+        title="Consent missing or not affirmative for household = YES",
+        keys={"household": household_value, "consent": consent_value},
+        details={"subtype": "household_consent_missing_or_invalid"},
+    )
 
-    # Only enforce consent when household == YES (interview conducted)
-    if household_bool is not True:
+
+# ---------- Generic completeness (Minimum Viable Record) ----------
+
+
+def upsert_completeness_issue(
+    *,
+    model_class,
+    object_id: int,
+    field_values: Dict[str, Any],
+    required: Sequence[Any],
+    title: str = "Minimum Viable Record (MVR) completeness issue",
+) -> Optional[DataQualityIssue]:
+    """
+    Flag a record that is missing one or more required fields.
+
+    ``required`` is a sequence of ``(field_name, human_label)`` pairs (a bare
+    string is also accepted and used as its own label).
+    """
+    labels: Dict[str, str] = {}
+    for item in required:
+        if isinstance(item, (tuple, list)):
+            field, label = item[0], item[1]
+        else:
+            field, label = item, item
+        labels[field] = label
+
+    missing = sorted(f for f in labels if _is_blank(field_values.get(f)))
+    if not missing:
         return None
 
-    if not _is_yes_consent(consent_value):
-        return upsert_issue(
-            issue_type=DataQualityIssue.CONSENT,
-            model_class=model_class,
-            member_ids=[object_id],
-            title="Consent missing or not affirmative for household = YES",
-            keys={"household": household_value, "consent": consent_value},
-            details={"subtype": "household_consent_missing_or_invalid"},
-        )
-    return None
+    keys = {f: field_values.get(f) for f in labels}
+    details = {
+        "subtype": "minimum_viable_record",
+        "missing_fields": missing,
+        "missing_labels": [labels[f] for f in missing],
+    }
+    return upsert_issue(
+        issue_type=DataQualityIssue.INCOMPLETE,
+        model_class=model_class,
+        member_ids=[object_id],
+        title=title,
+        keys=keys,
+        details=details,
+    )
+
+
+# ---------- Validity / plausibility ----------
+
+
+def upsert_validity_issue(
+    *,
+    model_class,
+    object_id: int,
+    violations: Sequence[str],
+    keys: Optional[Dict[str, Any]] = None,
+    title: str = "Implausible or invalid value(s)",
+) -> Optional[DataQualityIssue]:
+    """Flag a record whose values fail one or more plausibility rules."""
+    violations = sorted({v for v in violations if v})
+    if not violations:
+        return None
+    details = {"subtype": "validity", "violations": violations}
+    return upsert_issue(
+        issue_type=DataQualityIssue.VALIDITY,
+        model_class=model_class,
+        member_ids=[object_id],
+        title=title,
+        keys=keys or {},
+        details=details,
+    )
+
+
+# ---------- Validity rule primitives (used by DQ specs) ----------
+
+
+def parse_when(value: Optional[str]) -> Optional[timezone.datetime]:
+    """Public alias for the internal date/datetime parser."""
+    return _parse_when(value)
+
+
+def date_in_future(value: Optional[str]) -> bool:
+    """True when ``value`` parses to a date later than now."""
+    dt = _parse_when(value)
+    if dt is None:
+        return False
+    return dt > timezone.now()
+
+
+def date_order_violation(earlier: Optional[str], later: Optional[str]) -> bool:
+    """True when both values parse and ``earlier`` is strictly after ``later``."""
+    a = _parse_when(earlier)
+    b = _parse_when(later)
+    if a is None or b is None:
+        return False
+    return a > b
+
+
+def nonneg_int_violation(value: Optional[str]) -> bool:
+    """True when ``value`` is present but is not a non-negative integer."""
+    v = _norm(value)
+    if v is None:
+        return False
+    try:
+        return int(float(v)) < 0
+    except (ValueError, TypeError):
+        return True
+
+
+def to_count(value: Optional[str]) -> Optional[int]:
+    """Best-effort parse of a numeric count; ``None`` when not parseable."""
+    v = _norm(value)
+    if v is None:
+        return None
+    try:
+        return int(float(v))
+    except (ValueError, TypeError):
+        return None
+
+
+# ---------- Generic exact-match duplicate detection ----------
+
+
+def detect_exact_duplicate_groups(
+    rows: Iterable[Dict[str, Any]],
+    fields: Sequence[str],
+    *,
+    id_field: str = "id",
+) -> List[Tuple[List[int], Dict[str, Optional[str]]]]:
+    """
+    Group rows that share identical (case-insensitive, trimmed) values across
+    ``fields``. Rows missing any of the grouping fields are skipped.
+
+    Returns a list of ``(sorted_member_ids, keys_dict)`` for groups of size >= 2.
+    """
+    groups: Dict[Tuple[Optional[str], ...], List[int]] = defaultdict(list)
+    for row in rows:
+        values = tuple(_norm_key(row.get(f)) for f in fields)
+        if any(v is None for v in values):
+            continue
+        groups[values].append(int(row[id_field]))
+
+    results: List[Tuple[List[int], Dict[str, Optional[str]]]] = []
+    for values, ids in groups.items():
+        unique_ids = sorted(set(ids))
+        if len(unique_ids) > 1:
+            keys_dict = dict(zip(fields, values))
+            results.append((unique_ids, keys_dict))
+    return results

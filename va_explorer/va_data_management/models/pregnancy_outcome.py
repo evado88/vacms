@@ -1,10 +1,20 @@
+from django.contrib.contenttypes.fields import GenericRelation
 from django.db import models
 from simple_history.models import HistoricalRecords
+
+from va_explorer.va_data_management.models.data_quality import DataQualityIssueMember
 
 
 class PregnancyOutcome(models.Model):
     # UUID-style primary key (string)
     key = models.CharField(max_length=100, unique=True, db_index=True)
+
+    dq_members = GenericRelation(
+        DataQualityIssueMember,
+        content_type_field="content_type",
+        object_id_field="object_id",
+        related_query_name="pregnancy_outcome",
+    )
 
     cluster = models.ForeignKey(
         "SRSClusterLocation", on_delete=models.SET_NULL, null=True, blank=True

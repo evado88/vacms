@@ -1,5 +1,6 @@
 import pytest
 from django.contrib.auth import models
+from django.core.cache import cache
 
 from va_explorer.tests.factories import (
     GroupFactory,
@@ -14,6 +15,15 @@ from va_explorer.va_data_management.models import Location
 @pytest.fixture(autouse=True)
 def _media_storage(settings, tmpdir):
     settings.MEDIA_ROOT = tmpdir.strpath
+
+
+@pytest.fixture(autouse=True)
+def _clear_cache():
+    # Several context processors cache values (e.g. AUTO_DETECT_DUPLICATES) for 60s.
+    # Clear between tests so settings overrides don't leak across the suite.
+    cache.clear()
+    yield
+    cache.clear()
 
 
 @pytest.fixture

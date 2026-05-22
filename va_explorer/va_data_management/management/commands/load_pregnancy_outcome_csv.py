@@ -1,6 +1,7 @@
 import argparse
 
 import pandas as pd
+from django.core.management import call_command
 from django.core.management.base import BaseCommand, CommandError
 
 from va_explorer.va_data_management.models import (
@@ -208,3 +209,20 @@ class Command(BaseCommand):
         )
         if upsert:
             self._write_upsert_summary(upsert_stats, dry_run)
+
+        # --- Run data quality checks immediately after import ---
+        if not dry_run:
+            try:
+                call_command("dq_pregnancy_outcome")
+                self.stdout.write(
+                    self.style.SUCCESS(
+                        "Ran dq_pregnancy_outcome successfully after import."
+                    )
+                )
+            except Exception as e:
+                # Never fail the import if DQ fails; surface a clear message.
+                self.stdout.write(
+                    self.style.WARNING(
+                        f"dq_pregnancy_outcome encountered an error after import: {e}"
+                    )
+                )
