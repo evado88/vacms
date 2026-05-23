@@ -1431,8 +1431,12 @@
   min-width: 0;
 }
 
-/* Vertical, rectangular sub-tabs with square bold borders. */
+/* Vertical side sub-tabs. */
 #sm-view .sm-subtabs {
+  --sm-subtab-orange-text: #5f3307;
+  --sm-subtab-orange-bg: linear-gradient(180deg, #fff7ed 0%, #fed7aa 100%);
+  --sm-subtab-orange-hover-bg: linear-gradient(180deg, #ffedd5 0%, #fb923c 100%);
+  --sm-subtab-active-bg: #009140;
   display: flex;
   flex-direction: column;
   gap: 0;
@@ -1443,12 +1447,17 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 2px solid #1f2937;
-  border-radius: 0;
-  background: linear-gradient(180deg, #fff8ed 0%, #ffd8a8 100%);
-  color: #1f2937;
-  font-size: 0.9rem;
-  font-weight: 700;
+  position: relative;
+  overflow: hidden;
+  border: 0;
+  border-radius: 12px 0 0 12px;
+  background: var(--sm-subtab-orange-bg);
+  box-shadow:
+    0 4px 10px rgba(15, 23, 42, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  color: var(--sm-subtab-orange-text);
+  font-size: 0.86rem;
+  font-weight: 800;
   line-height: 1;
   min-height: 116px;
   padding: 12px 8px;
@@ -1458,33 +1467,59 @@
   white-space: nowrap;
 }
 
+#sm-view .sm-subtab::after {
+  content: "";
+  position: absolute;
+  top: 10px;
+  right: 5px;
+  bottom: 10px;
+  width: 3px;
+  background: rgba(180, 83, 9, 0.34);
+}
+
 #sm-view .sm-subtab[data-sm-view-tab="charts"],
 #sm-view .sm-subtab[data-sm-view-tab="tables"] {
   min-height: var(--sm-kpi-rail-height, 154px);
 }
 
 #sm-view .sm-subtab + .sm-subtab {
-  margin-top: -2px;
+  margin-top: 0;
 }
 
 #sm-view .sm-subtab-label {
   display: inline-block;
+  position: relative;
+  z-index: 1;
   transform: rotate(-90deg);
   transform-origin: center;
 }
 
 #sm-view .sm-subtab:not(.sm-subtab--active):hover,
 #sm-view .sm-subtab:not(.sm-subtab--active):focus {
-  background: linear-gradient(180deg, #fff3df 0%, #ffb65c 100%);
-  border-color: #f97316;
-  color: #7c2d12;
+  background: var(--sm-subtab-orange-hover-bg);
+  box-shadow:
+    0 6px 14px rgba(249, 115, 22, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.58);
+  color: #431407;
+}
+
+#sm-view .sm-subtab:focus-visible {
+  outline: 3px solid rgba(249, 115, 22, 0.35);
+  outline-offset: 2px;
 }
 
 /* Active sub-tab — declared last so it wins over the inactive orange gradient. */
 #sm-view .sm-subtab--active {
-  background: #009140;
-  border-color: #1f2937;
+  z-index: 1;
+  background: var(--sm-subtab-active-bg);
+  box-shadow:
+    0 8px 18px rgba(0, 145, 64, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.24);
   color: #ffffff;
+}
+
+#sm-view .sm-subtab--active::after {
+  background: rgba(255, 255, 255, 0.42);
 }
 
 #sm-view .sm-view-panel {
