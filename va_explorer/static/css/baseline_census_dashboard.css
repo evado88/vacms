@@ -100,14 +100,11 @@
   border-radius: 14px;
   box-sizing: border-box;
   display: grid;
-  grid-template-rows: auto minmax(min-content, 1fr);
-  height: calc(100vh - 180px);
-  height: var(--bcd-shell-height, calc(100dvh - 180px));
-  max-height: calc(100vh - 180px);
-  max-height: var(--bcd-shell-height, calc(100dvh - 180px));
-  min-height: 420px;
-  overflow-x: hidden;
-  overflow-y: auto;
+  grid-template-rows: auto;
+  height: auto;
+  max-height: none;
+  min-height: 0;
+  overflow: visible;
   padding: 20px;
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
 }
@@ -127,45 +124,6 @@
   min-width: 0;
 }
 
-#national-operational-view .nov-overview-left-col,
-#national-operational-view .nov-overview-right-col {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  height: auto;
-  min-height: min-content;
-}
-
-#national-operational-view .nov-overview-left-container,
-#national-operational-view .nov-overview-right-container {
-  background: linear-gradient(180deg, #fff8ed 0%, #ffd8a8 100%);
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
-  padding: 10px;
-  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05);
-  height: auto;
-  min-height: min-content;
-  overflow: visible;
-}
-
-#national-operational-view .nov-overview-left-container {
-  display: grid;
-  grid-template-rows: minmax(min-content, 1fr);
-  gap: 12px;
-  min-height: min-content;
-}
-
-#national-operational-view .home-overview-left-top-row,
-#national-operational-view .home-overview-left-bottom-row {
-  min-width: 0;
-}
-
-#national-operational-view .home-overview-left-bottom-row {
-  display: flex;
-}
-
-#national-operational-view .home-overview-kpi-row,
 #national-operational-view #novKpisComponentSlot {
   display: flex;
   min-height: min-content;
@@ -174,18 +132,6 @@
 
 #national-operational-view #novKpisComponentSlot {
   width: 100%;
-}
-
-#national-operational-view .home-overview-left-bottom-row #homeOverviewMapPanel {
-  width: 100%;
-}
-
-#national-operational-view .nov-overview-left-col {
-  grid-column: 1;
-}
-
-#national-operational-view .nov-overview-right-col {
-  grid-column: 2;
 }
 
 #national-operational-view .nov-overview-refresh-btn {
@@ -1114,14 +1060,6 @@
     overflow: visible;
   }
 
-  #national-operational-view .nov-overview-left-col,
-  #national-operational-view .nov-overview-right-col {
-    grid-column: auto;
-  }
-
-  #national-operational-view .nov-overview-left-container,
-  #national-operational-view .nov-overview-right-container,
-  #national-operational-view .home-overview-kpi-row,
   #national-operational-view #novKpisComponentSlot,
   #national-operational-view #novKpiCardsContainer,
   #national-operational-view #novKpiCardsContainer .nov-kpi-columns,
@@ -1407,6 +1345,7 @@
 .sm-view {
   display: flex;
   flex-direction: column;
+  padding-top: 10px;
   padding-bottom: 24px;
 }
 

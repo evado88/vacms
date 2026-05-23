@@ -91,14 +91,8 @@
         <div id="national-operational-view" data-component="overview-dashboard" data-filter-url="{% url 'va_analytics:baseline-census-overview-filter-data' %}">
           <div class="national-operational-view-shell">
             <div class="national-operational-grid">
-              <div class="nov-overview-left-col">
-                <div class="nov-overview-left-container">
-                  <div class="home-overview-left-top-row home-overview-kpi-row">
-                    <div id="novKpisComponentSlot" data-component-slot data-component="kpi-cards" data-scope="overview,overview-data" data-endpoint="{% url 'va_analytics:baseline-census-overview-kpis-component' %}" data-cache-key="baseline-census:overview:kpis">
-                      <div class="home-panel home-panel-placeholder">Loading overview KPIs...</div>
-                    </div>
-                  </div>
-                </div>
+              <div id="novKpisComponentSlot" data-component-slot data-component="kpi-cards" data-scope="overview,overview-data" data-endpoint="{% url 'va_analytics:baseline-census-overview-kpis-component' %}" data-cache-key="baseline-census:overview:kpis">
+                <div class="home-panel home-panel-placeholder">Loading overview KPIs...</div>
               </div>
             </div>
           </div>
