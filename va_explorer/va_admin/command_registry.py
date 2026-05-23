@@ -393,6 +393,24 @@ def _command_specs() -> list[CommandRegistryItem]:
             safety="mutating",
         ),
         CommandRegistryItem(
+            "load_social_mobilization",
+            "load_social_mobilization",
+            "Data Loading",
+            _description_for("load_social_mobilization"),
+            inputs=(
+                CommandInputSpec(
+                    **{
+                        **csv_input.__dict__,
+                        "filename_pattern": "SOCIAL_MOBILIZATION or SOCIAL_MOBILIZATION.csv",
+                        "standardized_name": "SOCIAL_MOBILIZATION",
+                        "allowed_pattern": r"^(SOCIAL_MOBILIZATION|SOCIAL_MOBILIZATION\.csv)$",
+                        "help": "Social Mobilization daily tally feed.",
+                    }
+                ),
+            ),
+            safety="mutating",
+        ),
+        CommandRegistryItem(
             key="load_form_csv",
             management_command="load_form_csv",
             category="Data Loading",

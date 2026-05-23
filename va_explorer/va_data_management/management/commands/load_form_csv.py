@@ -12,6 +12,7 @@ from va_explorer.va_data_management.models import (
     ODKFormChoice,
     Pregnancy,
     PregnancyOutcome,
+    SocialMobilization,
 )
 from va_explorer.va_data_management.utils.loading import normalize_dataframe_columns
 
@@ -22,6 +23,7 @@ FORM_MODEL_MAP = {
     "pregnancy_outcome": PregnancyOutcome,
     "death": Death,
     "csa_daily_tracker": CSADailyTracker,
+    "social_mobilization": SocialMobilization,
 }
 
 

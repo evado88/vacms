@@ -39,6 +39,7 @@ FORM_UNIQUE_FIELD_MAP = {
     "pregnancy_outcome": "key",
     "death": "key",
     "csa_daily_tracker": "key",
+    "social_mobilization": "key",
 }
 
 # Maps form_name → (ODK split-column prefix, single target model field).
