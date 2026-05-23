@@ -1397,3 +1397,467 @@
     min-height: 150px;
   }
 }
+
+/* ------------------------------------------------------------------------ */
+/* Social Mobilization tab                                                   */
+/* The tab stacks KPIs, charts and tables in normal flow (it is not a        */
+/* fixed-height shell like the other tabs), so the chart card gets an        */
+/* explicit height for the canvases to render into.                          */
+/* ------------------------------------------------------------------------ */
+.sm-view {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 24px;
+}
+
+/* Tables / Charts sub-tabs (pills, matching the in-chart sub-tabs). */
+#sm-view .sm-subtabs {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+#sm-view .sm-subtab {
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  color: #6a7789;
+  font-size: 0.86rem;
+  font-weight: 600;
+  padding: 6px 16px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+#sm-view .sm-subtab:hover {
+  background: #f3f4f6;
+  color: #009140;
+}
+
+#sm-view .sm-subtab--active {
+  background: #009140;
+  border-color: #009140;
+  color: #ffffff;
+}
+
+#sm-view .sm-view-panel {
+  display: none;
+}
+
+#sm-view .sm-view-panel--active {
+  display: block;
+}
+
+/* Vertical spacing between the stacked components (KPIs, activity table,
+   rumour log) within the Tables panel. */
+#sm-view #baselineSocialMobSlot {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sm-view .sm-kpi-cards {
+  margin: 0;
+}
+
+.sm-view .sm-section-title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+#sm-chart-view {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+#sm-chart-view .baseline-chart-breadcrumb-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+#sm-chart-view .baseline-chart-breadcrumb {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  font-size: 0.86rem;
+  color: #6a7789;
+}
+
+#sm-chart-view .baseline-chart-breadcrumb-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #2563eb;
+  font-size: 0.86rem;
+  cursor: pointer;
+}
+
+#sm-chart-view .baseline-chart-breadcrumb-link:hover {
+  text-decoration: underline;
+}
+
+#sm-chart-view .baseline-chart-breadcrumb-current {
+  color: #1f2937;
+  font-weight: 600;
+}
+
+#sm-chart-view .baseline-chart-breadcrumb-sep {
+  color: #a4adba;
+}
+
+#sm-chart-view .baseline-chart-hint {
+  margin-left: auto;
+  font-size: 0.82rem;
+  font-style: italic;
+  color: #2563eb;
+}
+
+#sm-chart-view .census-chart-subtabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+#sm-chart-view .census-chart-subtab {
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  color: #6a7789;
+  font-size: 0.84rem;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+#sm-chart-view .census-chart-subtab:hover {
+  background: #f3f4f6;
+  color: #009140;
+}
+
+#sm-chart-view .census-chart-subtab--active {
+  background: #009140;
+  border-color: #009140;
+  color: #ffffff;
+}
+
+#sm-chart-view .census-chart-subpanels {
+  position: relative;
+  background: #ffffff;
+  border: 1px solid #eef1f5;
+  border-radius: 8px;
+  height: 440px;
+  overflow: hidden;
+}
+
+#sm-view .sm-card > #sm-chart-view {
+  margin-top: 6px;
+}
+
+#sm-chart-view .census-chart-subpanel {
+  display: none;
+  height: 100%;
+}
+
+#sm-chart-view .census-chart-subpanel--active {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  padding: 12px 14px;
+}
+
+#sm-chart-view .census-chart-note {
+  margin: 0 0 8px 0;
+  font-size: 0.8rem;
+  font-style: italic;
+  color: #6a7789;
+}
+
+#sm-chart-view .baseline-chart-wrap {
+  position: relative;
+  height: 100%;
+  min-height: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+#sm-chart-view .baseline-chart-canvas-box {
+  position: relative;
+  height: 100%;
+  width: 100%;
+  min-height: 0;
+}
+
+#sm-chart-view .baseline-chart-canvas-box canvas {
+  display: block;
+  height: 100% !important;
+  width: 100% !important;
+}
+
+#sm-chart-view .baseline-chart-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #6a7789;
+  font-size: 0.92rem;
+}
+
+#sm-chart-view .baseline-chart-overlay[hidden] {
+  display: none;
+}
+
+#sm-chart-view #smChartError {
+  color: #b91c1c;
+}
+
+.sm-rumour-table td:nth-child(7) {
+  white-space: normal;
+  min-width: 220px;
+}
+
+/* KPI cards — mirror the Overview tab's KPI card styling. */
+#sm-view .sm-kpi-cards .nov-kpi-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px;
+  align-items: stretch;
+}
+
+#sm-view .sm-kpi-cards .nov-kpi-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 12px 14px;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 118px;
+}
+
+#sm-view .sm-kpi-cards .nov-kpi-card h6 {
+  margin: 0 0 10px 0;
+  font-size: 0.98rem;
+  line-height: 1.25;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+#sm-view .sm-kpi-cards .nov-kpi-metrics {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 7px;
+}
+
+#sm-view .sm-kpi-cards .nov-kpi-metrics div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+#sm-view .sm-kpi-cards .nov-kpi-metrics span {
+  color: #475569;
+  font-size: 0.82rem;
+  line-height: 1.2;
+}
+
+#sm-view .sm-kpi-cards .nov-kpi-metrics strong {
+  color: #0f172a;
+  font-size: 1.02rem;
+  font-weight: 700;
+}
+
+/* Tables — mirror the Census Table tab styling (search, header, rows, totals,
+   pagination). The tab is in normal flow, so the container caps its height and
+   scrolls instead of filling a fixed shell. */
+#sm-view .baseline-census-table-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+#sm-view .baseline-census-search-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
+  min-width: 0;
+  justify-content: flex-end;
+}
+
+#sm-view .baseline-census-search {
+  flex: 0 1 280px;
+  min-width: 0;
+  position: relative;
+}
+
+#sm-view .baseline-census-search input {
+  width: 100%;
+  min-width: 0;
+  padding: 6px 10px 6px 28px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 8px;
+  font-size: 0.82rem;
+  background: #ffffff;
+}
+
+#sm-view .baseline-census-search::before {
+  content: "";
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  border: 2px solid #6a7789;
+  border-radius: 50%;
+  transform: translateY(-55%);
+}
+
+#sm-view .baseline-census-search::after {
+  content: "";
+  position: absolute;
+  left: 17px;
+  top: 55%;
+  width: 7px;
+  height: 2px;
+  background: #6a7789;
+  border-radius: 999px;
+  transform: rotate(45deg);
+  transform-origin: left center;
+}
+
+#sm-view .baseline-census-table-container {
+  max-height: 460px;
+  overflow: auto;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 10px;
+}
+
+#sm-view .baseline-census-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: auto;
+  font-size: 0.85rem;
+}
+
+#sm-view .baseline-census-table thead th {
+  position: sticky;
+  top: 0;
+  background: #f7f9fc;
+  z-index: 1;
+  padding: 10px 8px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  font-weight: 600;
+  color: #223044;
+  text-align: center;
+  vertical-align: bottom;
+  white-space: nowrap;
+}
+
+#sm-view .baseline-census-table thead th a {
+  color: inherit;
+  text-decoration: none;
+}
+
+#sm-view .baseline-census-table thead th a:hover {
+  text-decoration: underline;
+}
+
+#sm-view .baseline-census-table tbody td {
+  padding: 10px 8px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  color: #2c3b4f;
+}
+
+#sm-view .baseline-census-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+#sm-view .baseline-census-table thead th:not(:last-child),
+#sm-view .baseline-census-table tbody td:not(:last-child) {
+  border-right: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+#sm-view .baseline-census-table .numeric {
+  text-align: right;
+}
+
+#sm-view .baseline-census-table tfoot td {
+  padding: 10px 8px;
+}
+
+#sm-view .baseline-census-table tfoot .bc-grand-total-row td {
+  font-weight: 700;
+  color: #223044;
+  border-top: 2px solid rgba(0, 0, 0, 0.18);
+  background: #eef2f8;
+  position: sticky;
+  bottom: 0;
+}
+
+#sm-view .baseline-census-table tfoot td:not(:last-child) {
+  border-right: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+#sm-view .sort-icon {
+  font-size: 0.75rem;
+  color: #7a8799;
+  margin-left: 6px;
+}
+
+#sm-view .baseline-census-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 0 4px 0;
+  color: #6a7789;
+  font-size: 0.82rem;
+}
+
+#sm-view .baseline-census-page-link {
+  color: #2563eb;
+  text-decoration: none;
+}
+
+#sm-view .baseline-census-page-link.disabled {
+  pointer-events: none;
+  opacity: 0.45;
+  text-decoration: none;
+  color: #6a7789;
+}
+
+/* Each table block sits in its own white card, matching the chart card. */
+#sm-view .sm-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.05);
+  padding: 14px;
+}
+
+#sm-view .sm-card .section-body {
+  padding: 0;
+}
+
+#sm-view .sm-card .sm-section-title {
+  flex: 0 0 auto;
+}

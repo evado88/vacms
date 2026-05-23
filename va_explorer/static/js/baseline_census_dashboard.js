@@ -727,6 +727,7 @@ const handleBaselineFilterChange = () => {
   if (overviewInitialized) requestNationalOperationalFilterData();
   if (tableTabInitialized) refreshBcProvinceTable();
   if (chartTabInitialized) fetchCensusChartData();
+  if (window.BaselineSocialMob) window.BaselineSocialMob.onFilterChange();
   scheduleBaselineViewportHeight();
 }
 
@@ -1367,7 +1368,9 @@ const initChartTab = async () => {
 };
 
 const initBaselineCensusTab = async (tab) => {
-  const normalizedTab = ["table", "chart"].includes(tab) ? tab : "overview";
+  const normalizedTab = ["table", "chart", "social_mob"].includes(tab)
+    ? tab
+    : "overview";
   const started = perfNow();
   initBaselineSharedFilters();
   if (normalizedTab === "overview") {
@@ -1383,6 +1386,11 @@ const initBaselineCensusTab = async (tab) => {
   if (normalizedTab === "chart") {
     await initChartTab();
     perfLog("tab.init.chart", started);
+    return;
+  }
+  if (normalizedTab === "social_mob") {
+    if (window.BaselineSocialMob) await window.BaselineSocialMob.initTab();
+    perfLog("tab.init.social_mob", started);
   }
 }
 
@@ -1461,3 +1469,15 @@ document.addEventListener("dashboard:refresh-tab", (event) => {
 // debounced resize handler once, and run an initial sizing pass.
 bindBaselineViewportResize();
 scheduleBaselineViewportHeight();
+
+// Shared helpers consumed by the Social Mobilization controller
+// (baseline_social_mobilization.js) so it reuses one filter/format/chart stack.
+window.BaselineCensusShared = {
+  appendBaselineFilterParams,
+  formatCountValue,
+  formatCoverageValue,
+  parseNumericOrNull,
+  destroyChartForCanvas,
+  chartInstances,
+  enumerationCoverageLabelsPlugin,
+};

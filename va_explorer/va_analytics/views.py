@@ -1368,7 +1368,9 @@ class BaselineCensusDashboardView(
         context = super().get_context_data(**kwargs)
         raw_tab = (self.request.GET.get("tab") or "overview").strip().lower()
         context["baseline_active_tab"] = (
-            raw_tab if raw_tab in {"overview", "table", "chart"} else "overview"
+            raw_tab
+            if raw_tab in {"overview", "table", "chart", "social_mob"}
+            else "overview"
         )
         return context
 
@@ -2696,6 +2698,537 @@ class BaselineCensusChartDataView(CustomAuthMixin, PermissionRequiredMixin, View
 
 
 baseline_census_chart_data_view = BaselineCensusChartDataView.as_view()
+
+
+# ---------------------------------------------------------------------------
+# Social Mobilization tab (Baseline Census Dashboard)
+# ---------------------------------------------------------------------------
+# The Social Mobilization ODK tally is a flat table of TextField counts. Like
+# the census tabs it is scoped by user location (province/district), filtered on
+# the ISO ``submissiondate``, and rolled up in Python (text fields cannot be
+# summed in SQL). Two endpoints back the tab: an HTML component (KPIs + an
+# aggregated table + a rumour log) and a JSON chart-data endpoint (drill-down
+# bars + a time trend), mirroring the Census Table and Census Chart tabs.
+
+_SOCMOB_LEVEL_ORDER = (
+    "province",
+    "district",
+    "health_facility",
+    "village_neighbourhood",
+)
+_SOCMOB_LEVEL_FIELD = {level: level for level in _SOCMOB_LEVEL_ORDER}
+_SOCMOB_CHILD_OF = {
+    "province": "district",
+    "district": "health_facility",
+    "health_facility": "village_neighbourhood",
+}
+# Numeric tally fields summed during roll-up.
+_SOCMOB_SUM_FIELDS = (
+    "households_visited",
+    "people_over_15",
+    "children_5_14",
+    "children_12_59months",
+    "schools_reached",
+    "religious_leaders_reached",
+    "refusal_identified",
+    "refusal_managed",
+    "children_affected",
+    "refusals_from_rumor",
+)
+# Location columns shown on the aggregated table (one row per village).
+_SOCMOB_TABLE_GROUP_FIELDS = (
+    "province",
+    "district",
+    "health_facility",
+    "village_neighbourhood",
+)
+# Sort keys allowed on the aggregated table.
+_SOCMOB_SORT_FIELDS = frozenset(
+    _SOCMOB_TABLE_GROUP_FIELDS
+    + _SOCMOB_SUM_FIELDS
+    + ("people_reached", "refusal_managed_rate", "rumours_reported")
+)
+
+
+def _socmob_to_int(value):
+    """Parse an ODK text count to int; blanks / junk become 0."""
+    if value in (None, ""):
+        return 0
+    try:
+        return int(float(str(value).strip()))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _socmob_rate(numerator, denominator):
+    """Refusals managed as a % of refusals identified, or ``None`` when none
+    were identified (avoids division by zero)."""
+    if not denominator:
+        return None
+    return float(f"{numerator / denominator * 100:.1f}")
+
+
+def _socmob_base_queryset(
+    request,
+    location_level,
+    location_value,
+    start_iso,
+    end_iso,
+    parent_filters=None,
+):
+    """Location-scoped, date-filtered ``SocialMobilization`` queryset shared by
+    every Social Mobilization aggregation."""
+    from va_explorer.va_data_management.models import SocialMobilization
+
+    qs = SocialMobilization.objects.all()
+    qs = restrict_queryset_to_user_locations(
+        qs,
+        getattr(request, "user", None),
+        field_mapping={"province": "province", "district": "district"},
+    )
+    qs = BaselineCensusProvinceTableComponent._date_filter(
+        qs, "submissiondate", start_iso, end_iso
+    )
+    # Free-form location scope from the shared filter (icontains, mirrors census).
+    level_field = _SOCMOB_LEVEL_FIELD.get((location_level or "").lower())
+    if location_value and level_field:
+        qs = qs.filter(**{f"{level_field}__icontains": location_value})
+    # Drill-down parents are exact matches (values come from chart clicks).
+    for parent_level, parent_value in (parent_filters or {}).items():
+        field = _SOCMOB_LEVEL_FIELD.get(parent_level)
+        if parent_value and field:
+            qs = qs.filter(**{field: parent_value})
+    return qs
+
+
+def _socmob_new_group():
+    acc = dict.fromkeys(_SOCMOB_SUM_FIELDS, 0)
+    acc["rumours_reported"] = 0
+    return acc
+
+
+def _socmob_accumulate(acc, row):
+    for field in _SOCMOB_SUM_FIELDS:
+        acc[field] += _socmob_to_int(row.get(field))
+    if (row.get("rumor_description") or "").strip():
+        acc["rumours_reported"] += 1
+
+
+def _socmob_metrics_from_group(acc):
+    """Derive the shared metric dict (sums + derived fields) from an accumulator."""
+    people_reached = (
+        acc["people_over_15"] + acc["children_5_14"] + acc["children_12_59months"]
+    )
+    return {
+        "households_visited": acc["households_visited"],
+        "people_over_15": acc["people_over_15"],
+        "children_5_14": acc["children_5_14"],
+        "children_12_59months": acc["children_12_59months"],
+        "people_reached": people_reached,
+        "schools_reached": acc["schools_reached"],
+        "religious_leaders_reached": acc["religious_leaders_reached"],
+        "refusal_identified": acc["refusal_identified"],
+        "refusal_managed": acc["refusal_managed"],
+        "refusal_managed_rate": _socmob_rate(
+            acc["refusal_managed"], acc["refusal_identified"]
+        ),
+        "rumours_reported": acc["rumours_reported"],
+        "children_affected": acc["children_affected"],
+        "refusals_from_rumor": acc["refusals_from_rumor"],
+    }
+
+
+def aggregate_social_mobilization_by_level(
+    request, level, parent_filters, location_level, location_value, start_iso, end_iso
+):
+    """Roll Social Mobilization counts up to ``level`` for the chart drill-down.
+
+    Returns ``(results, child_level)`` where ``child_level`` is the next
+    drill-down level (``None`` at village)."""
+    group_field = _SOCMOB_LEVEL_FIELD.get(level, "province")
+    qs = _socmob_base_queryset(
+        request, location_level, location_value, start_iso, end_iso, parent_filters
+    )
+    rows = qs.values(group_field, *_SOCMOB_SUM_FIELDS, "rumor_description")
+
+    groups = {}
+    order = []
+    for row in rows:
+        key = (row.get(group_field) or "").strip()
+        acc = groups.get(key)
+        if acc is None:
+            acc = _socmob_new_group()
+            groups[key] = acc
+            order.append(key)
+        _socmob_accumulate(acc, row)
+
+    child_index = _SOCMOB_LEVEL_ORDER.index(level) + 1
+    child_level = (
+        _SOCMOB_LEVEL_ORDER[child_index]
+        if child_index < len(_SOCMOB_LEVEL_ORDER)
+        else None
+    )
+    results = []
+    for key in order:
+        results.append(
+            {
+                "label": key or "—",
+                "level": level,
+                "value": key,
+                "has_children": child_level is not None,
+                **_socmob_metrics_from_group(groups[key]),
+            }
+        )
+    results.sort(key=lambda row: str(row["value"]).lower())
+    return results, child_level
+
+
+def aggregate_social_mobilization_trend(
+    request, parent_filters, location_level, location_value, start_iso, end_iso
+):
+    """Daily totals over the current scope, bucketed by the ``submissiondate``
+    date part (YYYY-MM-DD)."""
+    qs = _socmob_base_queryset(
+        request, location_level, location_value, start_iso, end_iso, parent_filters
+    )
+    rows = qs.values(
+        "submissiondate",
+        "people_over_15",
+        "children_5_14",
+        "children_12_59months",
+        "households_visited",
+        "refusal_identified",
+        "refusal_managed",
+    )
+    buckets = {}
+    for row in rows:
+        raw = (row.get("submissiondate") or "").strip()
+        if not raw:
+            continue
+        day = raw[:10]
+        acc = buckets.setdefault(
+            day,
+            {
+                "households_visited": 0,
+                "people_reached": 0,
+                "refusals_identified": 0,
+                "refusals_managed": 0,
+            },
+        )
+        acc["households_visited"] += _socmob_to_int(row.get("households_visited"))
+        acc["people_reached"] += (
+            _socmob_to_int(row.get("people_over_15"))
+            + _socmob_to_int(row.get("children_5_14"))
+            + _socmob_to_int(row.get("children_12_59months"))
+        )
+        acc["refusals_identified"] += _socmob_to_int(row.get("refusal_identified"))
+        acc["refusals_managed"] += _socmob_to_int(row.get("refusal_managed"))
+    return [{"date": day, **buckets[day]} for day in sorted(buckets)]
+
+
+def aggregate_social_mobilization_table(
+    request, location_level, location_value, start_iso, end_iso
+):
+    """One row per ``(province, district, health_facility, village)`` plus
+    scope-wide KPI totals. Returns ``(rows, totals)``."""
+    qs = _socmob_base_queryset(
+        request, location_level, location_value, start_iso, end_iso
+    )
+    raw_rows = qs.values(
+        *_SOCMOB_TABLE_GROUP_FIELDS, *_SOCMOB_SUM_FIELDS, "rumor_description"
+    )
+
+    groups = {}
+    order = []
+    totals_acc = _socmob_new_group()
+    for row in raw_rows:
+        key = tuple(
+            (row.get(field) or "").strip() for field in _SOCMOB_TABLE_GROUP_FIELDS
+        )
+        acc = groups.get(key)
+        if acc is None:
+            acc = _socmob_new_group()
+            groups[key] = acc
+            order.append(key)
+        _socmob_accumulate(acc, row)
+        _socmob_accumulate(totals_acc, row)
+
+    rows = []
+    for key in order:
+        location = dict(zip(_SOCMOB_TABLE_GROUP_FIELDS, key))
+        rows.append({**location, **_socmob_metrics_from_group(groups[key])})
+    return rows, _socmob_metrics_from_group(totals_acc)
+
+
+def _socmob_sort_rows(rows, sort_key, sort_dir):
+    reverse = sort_dir == "desc"
+    if sort_key in _SOCMOB_TABLE_GROUP_FIELDS:
+        return sorted(
+            rows, key=lambda r: str(r.get(sort_key, "")).lower(), reverse=reverse
+        )
+
+    def numeric_key(row):
+        val = row.get(sort_key)
+        if val is None:
+            return -1 if reverse else float("inf")
+        try:
+            return float(val)
+        except (TypeError, ValueError):
+            return 0
+
+    return sorted(rows, key=numeric_key, reverse=reverse)
+
+
+class SocialMobilizationComponentView(
+    CustomAuthMixin, PermissionRequiredMixin, TemplateView
+):
+    """HTML component for the Social Mobilization tab: KPI cards, an aggregated
+    table (sortable / searchable / paginated), and a rumour log."""
+
+    template_name = (
+        "va_analytics/components/_baseline_social_mobilization_component.html"
+    )
+    permission_required = "va_analytics.view_dashboard"
+    _PAGE_SIZE = 25
+    _RUMOUR_LIMIT = 200
+    # (sort_key, header label) pairs — order matches the template's <tbody> cells.
+    _LOCATION_COLUMNS = (
+        ("province", "Province"),
+        ("district", "District"),
+        ("health_facility", "Health Facility"),
+        ("village_neighbourhood", "Village"),
+    )
+    _METRIC_COLUMNS = (
+        ("households_visited", "Households Visited"),
+        ("people_reached", "People Reached"),
+        ("schools_reached", "Schools"),
+        ("religious_leaders_reached", "Religious Leaders"),
+        ("refusal_identified", "Refusals Identified"),
+        ("refusal_managed", "Refusals Managed"),
+        ("refusal_managed_rate", "Managed Rate"),
+        ("rumours_reported", "Rumours"),
+    )
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        req = self.request
+        location_level, location_value = parse_location_filter(req)
+        start_iso, end_iso = self._scoped_date_bounds(req)
+
+        rows, totals = aggregate_social_mobilization_table(
+            req, location_level, location_value, start_iso, end_iso
+        )
+
+        sm_q = (req.GET.get("sm_q") or "").strip()
+        if sm_q:
+            needle = sm_q.lower()
+            rows = [
+                row
+                for row in rows
+                if needle
+                in " ".join(
+                    str(row.get(field, "")) for field in _SOCMOB_TABLE_GROUP_FIELDS
+                ).lower()
+            ]
+
+        sm_sort = BaselineCensusProvinceTableComponent._pick(
+            (req.GET.get("sm_sort") or "province").strip(),
+            _SOCMOB_SORT_FIELDS,
+            "province",
+        )
+        sm_dir = BaselineCensusProvinceTableComponent._pick(
+            (req.GET.get("sm_dir") or "asc").strip(), {"asc", "desc"}, "asc"
+        )
+        rows = _socmob_sort_rows(rows, sm_sort, sm_dir)
+
+        total_count = len(rows)
+        total_pages = max(1, (total_count + self._PAGE_SIZE - 1) // self._PAGE_SIZE)
+        try:
+            page = int(req.GET.get("sm_page") or 1)
+        except (TypeError, ValueError):
+            page = 1
+        page = min(max(1, page), total_pages)
+        offset = (page - 1) * self._PAGE_SIZE
+        page_rows = rows[offset : offset + self._PAGE_SIZE]
+
+        context.update(
+            {
+                "sm_stats": page_rows,
+                "sm_totals": totals,
+                "sm_location_columns": self._LOCATION_COLUMNS,
+                "sm_metric_columns": self._METRIC_COLUMNS,
+                "sm_rumours": self._rumour_log(
+                    req, location_level, location_value, start_iso, end_iso
+                ),
+                "sm_sort": sm_sort,
+                "sm_dir": sm_dir,
+                "sm_q": sm_q,
+                "sm_page": page,
+                "sm_total_pages": total_pages,
+                "sm_total_count": total_count,
+                "sm_visible_count": len(page_rows),
+                "sm_has_prev": page > 1,
+                "sm_has_next": page < total_pages,
+                "sm_prev_page": page - 1 if page > 1 else 1,
+                "sm_next_page": page + 1 if page < total_pages else total_pages,
+            }
+        )
+        return context
+
+    @staticmethod
+    def _scoped_date_bounds(request):
+        """ISO bounds that only apply when an explicit preset / custom range is
+        set, mirroring the Census tabs (default view is all-time)."""
+        preset, start_dt, end_dt, has_custom = parse_filter_range(request)
+        if not (has_custom or preset in {"30", "7", "24"}):
+            start_dt = end_dt = None
+        return BaselineCensusProvinceTableComponent._iso_bounds(start_dt, end_dt)
+
+    def _rumour_log(self, request, location_level, location_value, start_iso, end_iso):
+        qs = _socmob_base_queryset(
+            request, location_level, location_value, start_iso, end_iso
+        )
+        qs = qs.exclude(rumor_description__isnull=True).exclude(rumor_description="")
+        records = qs.values(
+            "submissiondate",
+            "today",
+            "province",
+            "district",
+            "health_facility",
+            "village_neighbourhood",
+            "rumor_source",
+            "rumor_source_other",
+            "rumor_description",
+            "children_affected",
+            "refusals_from_rumor",
+        ).order_by("-submissiondate")[: self._RUMOUR_LIMIT]
+        log = []
+        for record in records:
+            log.append(
+                {
+                    "date": (record.get("submissiondate") or "")[:10]
+                    or (record.get("today") or ""),
+                    "province": record.get("province"),
+                    "district": record.get("district"),
+                    "health_facility": record.get("health_facility"),
+                    "village_neighbourhood": record.get("village_neighbourhood"),
+                    "source": record.get("rumor_source_other")
+                    or record.get("rumor_source"),
+                    "description": record.get("rumor_description"),
+                    "children_affected": _socmob_to_int(
+                        record.get("children_affected")
+                    ),
+                    "refusals_from_rumor": _socmob_to_int(
+                        record.get("refusals_from_rumor")
+                    ),
+                }
+            )
+        return log
+
+
+social_mobilization_component_view = SocialMobilizationComponentView.as_view()
+
+
+class SocialMobilizationKpisComponentView(
+    CustomAuthMixin, PermissionRequiredMixin, TemplateView
+):
+    """KPI cards for the Social Mobilization tab. Rendered separately from the
+    tables so the cards stay visible above the Charts/Tables sub-tabs."""
+
+    template_name = (
+        "va_analytics/components/_baseline_social_mobilization_kpis_component.html"
+    )
+    permission_required = "va_analytics.view_dashboard"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        req = self.request
+        location_level, location_value = parse_location_filter(req)
+        start_iso, end_iso = SocialMobilizationComponentView._scoped_date_bounds(req)
+        _, totals = aggregate_social_mobilization_table(
+            req, location_level, location_value, start_iso, end_iso
+        )
+        context["sm_totals"] = totals
+        return context
+
+
+social_mobilization_kpis_component_view = SocialMobilizationKpisComponentView.as_view()
+
+
+class SocialMobilizationChartDataView(CustomAuthMixin, PermissionRequiredMixin, View):
+    """JSON endpoint backing the Social Mobilization charts: per-location metrics
+    with province → district → health facility → village drill-down, plus a
+    daily time trend. Mirrors ``BaselineCensusChartDataView``."""
+
+    permission_required = "va_analytics.view_dashboard"
+    _PARENT_LEVELS = ("province", "district", "health_facility")
+
+    def get(self, request, *args, **kwargs):
+        try:
+            return self._build_response(request)
+        except Exception:
+            logger.exception("Social mobilization chart data endpoint failed")
+            return JsonResponse(
+                {"error": "Unable to load social mobilization chart data."}, status=500
+            )
+
+    def _build_response(self, request):
+        level = BaselineCensusProvinceTableComponent._pick(
+            (request.GET.get("level", "province") or "province").strip().lower(),
+            set(_SOCMOB_LEVEL_ORDER),
+            "province",
+        )
+        parent_filters = {
+            parent: request.GET.get(parent, "").strip()
+            for parent in self._PARENT_LEVELS
+        }
+        location_level = request.GET.get("location_level", "").strip().lower()
+        location_value = request.GET.get("location_value", "").strip()
+        start_iso, end_iso = SocialMobilizationComponentView._scoped_date_bounds(
+            request
+        )
+
+        results, child_level = aggregate_social_mobilization_by_level(
+            request,
+            level,
+            parent_filters,
+            location_level,
+            location_value,
+            start_iso,
+            end_iso,
+        )
+        trend = aggregate_social_mobilization_trend(
+            request, parent_filters, location_level, location_value, start_iso, end_iso
+        )
+        return JsonResponse(
+            {
+                "level": level,
+                "child_level": child_level,
+                "breadcrumbs": self._build_breadcrumbs(parent_filters),
+                "results": results,
+                "trend": trend,
+            }
+        )
+
+    def _build_breadcrumbs(self, parent_filters):
+        crumbs = [{"label": "All Provinces", "level": "province", "parents": {}}]
+        cumulative = {}
+        for parent in self._PARENT_LEVELS:
+            value = parent_filters.get(parent)
+            if not value:
+                break
+            cumulative = {**cumulative, parent: value}
+            crumbs.append(
+                {
+                    "label": value,
+                    "level": _SOCMOB_CHILD_OF[parent],
+                    "parents": dict(cumulative),
+                }
+            )
+        return crumbs
+
+
+social_mobilization_chart_data_view = SocialMobilizationChartDataView.as_view()
 
 
 class OutcomesDashboardView(CustomAuthMixin, PermissionRequiredMixin, TemplateView):

@@ -50,6 +50,9 @@ from va_explorer.va_analytics.views import (
     outcomes_dashboard_view,
     pregnancy_dashboard_view,
     pregnancy_events_dashboard_view,
+    social_mobilization_chart_data_view,
+    social_mobilization_component_view,
+    social_mobilization_kpis_component_view,
     user_supervision_view,
 )
 
@@ -90,6 +93,21 @@ urlpatterns = [
         "baseline-census/components/chart/census-chart-data/",
         view=baseline_census_chart_data_view,
         name="baseline-census-chart-data",
+    ),
+    path(
+        "baseline-census/components/social-mobilization/",
+        view=social_mobilization_component_view,
+        name="baseline-census-social-mobilization-component",
+    ),
+    path(
+        "baseline-census/components/social-mobilization/kpis/",
+        view=social_mobilization_kpis_component_view,
+        name="baseline-census-social-mobilization-kpis-component",
+    ),
+    path(
+        "baseline-census/components/social-mobilization/chart-data/",
+        view=social_mobilization_chart_data_view,
+        name="baseline-census-social-mobilization-chart-data",
     ),
     path(
         "pregnancy-dashboard/",
