@@ -212,8 +212,17 @@ class TestSocialMobilizationTab:
         assert (
             'sm-view-panel sm-view-panel--active" data-sm-view-panel="charts"' in body
         )
-        # Tables sub-tab carries its own (fading light-green) styling hook.
+        # Tables sub-tab carries its own styling hook.
         assert "sm-subtab--tables" in body
+
+    def test_tables_panel_has_activity_and_rumour_pills(self):
+        body = _client().get(reverse(DASHBOARD_URL)).content.decode()
+
+        assert 'id="smTableTabs"' in body
+        assert 'data-sm-table-tab="activity" role="tab" aria-selected="true"' in body
+        assert 'data-sm-table-tab="rumour" role="tab" aria-selected="false"' in body
+        assert "Activity by location" in body
+        assert "Rumour Log" in body
 
     def test_chart_heading_is_inline_with_breadcrumb(self):
         body = _client().get(reverse(DASHBOARD_URL)).content.decode()
@@ -293,6 +302,15 @@ class TestSocialMobilizationComponent:
         # Activity table renders location names title-cased.
         assert "Copperbelt" in response.content.decode()
         assert "Mpongwe" in response.content.decode()
+
+    def test_table_component_marks_activity_and_rumour_panels(self):
+        _build_fixture()
+        body = _client().get(reverse(COMPONENT_URL)).content.decode()
+
+        assert 'data-sm-table-panel="activity"' in body
+        assert 'data-sm-table-panel="rumour"' in body
+        assert 'id="sm-table-panel-activity"' in body
+        assert 'id="sm-table-panel-rumour"' in body
 
     def test_rumour_log_lists_only_rumour_rows(self):
         _build_fixture()

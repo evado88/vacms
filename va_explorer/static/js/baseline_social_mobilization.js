@@ -117,6 +117,16 @@
     return slot ? slot.dataset.endpoint || "" : "";
   };
 
+  const syncKpiRailHeight = () => {
+    const root = byId("sm-view");
+    const cards = root?.querySelector("#baselineSocialMobKpisSlot .nov-kpi-cards");
+    if (!root || !cards) return;
+    const height = Math.ceil(cards.getBoundingClientRect().height);
+    if (height > 0) {
+      root.style.setProperty("--sm-kpi-rail-height", `${height}px`);
+    }
+  };
+
   // KPI cards live above the sub-tabs and stay visible on every view, so they
   // are refreshed independently of the tables.
   const refreshKpis = () => {
@@ -136,6 +146,7 @@
       })
       .then((html) => {
         slot.innerHTML = html;
+        window.requestAnimationFrame(syncKpiRailHeight);
       })
       .catch((err) => console.error("[social-mob] KPI refresh failed", err));
   };
@@ -550,6 +561,7 @@
       .then((html) => {
         slot.innerHTML = html;
         slot.dataset.smLoaded = "1";
+        setActiveTableTab(activeTableTab);
         if (searchFocused) {
           const input = byId("smSearch");
           if (input) {
@@ -599,9 +611,40 @@
     });
   };
 
+  // ----- Activity / Rumour table switching ------------------------------
+  let tableSubtabsBound = false;
+  let activeTableTab = "activity";
+
+  const setActiveTableTab = (key) => {
+    activeTableTab = key === "rumour" ? "rumour" : "activity";
+    document.querySelectorAll("#smTableTabs .sm-table-subtab").forEach((btn) => {
+      const isActive = btn.dataset.smTableTab === activeTableTab;
+      btn.classList.toggle("sm-table-subtab--active", isActive);
+      btn.setAttribute("aria-selected", isActive ? "true" : "false");
+    });
+    document.querySelectorAll("#baselineSocialMobSlot [data-sm-table-panel]").forEach((panel) => {
+      const isActive = panel.dataset.smTablePanel === activeTableTab;
+      panel.classList.toggle("sm-table-panel--active", isActive);
+      panel.hidden = !isActive;
+    });
+  };
+
+  const bindTableSubtabs = () => {
+    if (tableSubtabsBound) return;
+    tableSubtabsBound = true;
+    const tabs = byId("smTableTabs");
+    if (!tabs) return;
+    tabs.addEventListener("click", (event) => {
+      const btn = event.target.closest(".sm-table-subtab");
+      if (!btn || !btn.dataset.smTableTab) return;
+      setActiveTableTab(btn.dataset.smTableTab);
+    });
+  };
+
   // ----- Tables / Charts view switching ---------------------------------
   let viewSubtabsBound = false;
   let activeViewTab = "charts";
+  let resizeBound = false;
 
   const setActiveViewTab = (key) => {
     activeViewTab = key === "charts" ? "charts" : "tables";
@@ -636,10 +679,16 @@
   // ----- public API ------------------------------------------------------
   const initTab = async () => {
     bindViewSubtabs();
+    bindTableSubtabs();
     bindSubtabs();
     bindTableEvents();
+    if (!resizeBound) {
+      resizeBound = true;
+      window.addEventListener("resize", syncKpiRailHeight);
+    }
     if (initialized) {
       setActiveSubtab(activeSubtab);
+      syncKpiRailHeight();
       return;
     }
     initialized = true;

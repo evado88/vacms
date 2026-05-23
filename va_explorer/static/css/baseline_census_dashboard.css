@@ -139,7 +139,7 @@
 
 #national-operational-view .nov-overview-left-container,
 #national-operational-view .nov-overview-right-container {
-  background: #ffffff;
+  background: linear-gradient(180deg, #fff8ed 0%, #ffd8a8 100%);
   border: 1px solid #e2e8f0;
   border-radius: 12px;
   padding: 10px;
@@ -1415,8 +1415,8 @@
    Charts sub-tab therefore sits alongside the KPI cards, Tables directly after. */
 #sm-view .sm-layout {
   display: grid;
-  grid-template-columns: 150px minmax(0, 1fr);
-  gap: 14px;
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: 12px;
   align-items: start;
 }
 
@@ -1435,34 +1435,52 @@
 #sm-view .sm-subtabs {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  align-items: stretch;
+  gap: 0;
+  align-items: flex-start;
 }
 
 #sm-view .sm-subtab {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border: 2px solid #1f2937;
   border-radius: 0;
-  background: #ffffff;
+  background: linear-gradient(180deg, #fff8ed 0%, #ffd8a8 100%);
   color: #1f2937;
   font-size: 0.9rem;
   font-weight: 700;
-  padding: 12px 14px;
-  width: 100%;
+  line-height: 1;
+  min-height: 116px;
+  padding: 12px 8px;
+  width: 56px;
   text-align: center;
   cursor: pointer;
+  white-space: nowrap;
 }
 
-#sm-view .sm-subtab:hover {
-  color: #009140;
-  border-color: #009140;
+#sm-view .sm-subtab[data-sm-view-tab="charts"],
+#sm-view .sm-subtab[data-sm-view-tab="tables"] {
+  min-height: var(--sm-kpi-rail-height, 154px);
 }
 
-/* Tables sub-tab carries a fading light-green background. */
-#sm-view .sm-subtab--tables {
-  background: linear-gradient(180deg, #ffffff 0%, #cfeecf 100%);
+#sm-view .sm-subtab + .sm-subtab {
+  margin-top: -2px;
 }
 
-/* Active sub-tab — declared last so it wins over the tables gradient. */
+#sm-view .sm-subtab-label {
+  display: inline-block;
+  transform: rotate(-90deg);
+  transform-origin: center;
+}
+
+#sm-view .sm-subtab:not(.sm-subtab--active):hover,
+#sm-view .sm-subtab:not(.sm-subtab--active):focus {
+  background: linear-gradient(180deg, #fff3df 0%, #ffb65c 100%);
+  border-color: #f97316;
+  color: #7c2d12;
+}
+
+/* Active sub-tab — declared last so it wins over the inactive orange gradient. */
 #sm-view .sm-subtab--active {
   background: #009140;
   border-color: #1f2937;
@@ -1474,6 +1492,45 @@
 }
 
 #sm-view .sm-view-panel--active {
+  display: block;
+}
+
+#sm-view .sm-table-subtabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+#sm-view .sm-table-subtab {
+  border: 1px solid #009140;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #006b30;
+  cursor: pointer;
+  font-size: 0.84rem;
+  font-weight: 700;
+  line-height: 1.2;
+  padding: 7px 14px;
+}
+
+#sm-view .sm-table-subtab:hover,
+#sm-view .sm-table-subtab:focus {
+  border-color: #006b30;
+  color: #004f24;
+}
+
+#sm-view .sm-table-subtab--active {
+  background: #009140;
+  border-color: #009140;
+  color: #ffffff;
+}
+
+#sm-view .sm-table-panel {
+  display: none;
+}
+
+#sm-view .sm-table-panel--active {
   display: block;
 }
 
@@ -1495,11 +1552,7 @@
 
 @media (max-width: 767.98px) {
   #sm-view .sm-layout {
-    grid-template-columns: 1fr;
-  }
-
-  #sm-view .sm-subtabs {
-    flex-direction: row;
+    grid-template-columns: 56px minmax(0, 1fr);
   }
 }
 

@@ -163,8 +163,8 @@
           <div class="sm-layout">
           <div class="sm-side">
             <div class="sm-subtabs" id="smViewTabs" role="tablist" aria-label="Social mobilization views">
-              <button type="button" class="sm-subtab sm-subtab--active" data-sm-view-tab="charts" role="tab" aria-selected="true">Charts</button>
-              <button type="button" class="sm-subtab sm-subtab--tables" data-sm-view-tab="tables" role="tab" aria-selected="false">Tables</button>
+              <button type="button" class="sm-subtab sm-subtab--active" data-sm-view-tab="charts" role="tab" aria-selected="true"><span class="sm-subtab-label">Charts</span></button>
+              <button type="button" class="sm-subtab sm-subtab--tables" data-sm-view-tab="tables" role="tab" aria-selected="false"><span class="sm-subtab-label">Tables</span></button>
             </div>
           </div>
           <div class="sm-main">
@@ -172,6 +172,10 @@
             <div class="home-panel home-panel-placeholder">Loading social mobilization KPIs...</div>
           </div>
           <div class="sm-view-panel" data-sm-view-panel="tables" role="tabpanel" aria-label="Social mobilization tables">
+            <div class="sm-table-subtabs" id="smTableTabs" role="tablist" aria-label="Social mobilization table sections">
+              <button type="button" id="sm-table-tab-activity" class="sm-table-subtab sm-table-subtab--active" data-sm-table-tab="activity" role="tab" aria-selected="true" aria-controls="sm-table-panel-activity">Activity by location</button>
+              <button type="button" id="sm-table-tab-rumour" class="sm-table-subtab" data-sm-table-tab="rumour" role="tab" aria-selected="false" aria-controls="sm-table-panel-rumour">Rumour Log</button>
+            </div>
             <div id="baselineSocialMobSlot" data-component-slot data-component="social-mob" data-scope="social_mob" data-endpoint="{% url 'va_analytics:baseline-census-social-mobilization-component' %}" data-cache="off">
               <div class="home-panel home-panel-placeholder">Loading social mobilization data...</div>
             </div>
