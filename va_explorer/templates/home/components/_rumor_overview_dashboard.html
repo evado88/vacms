@@ -1,4 +1,4 @@
-<main
+<section
   id="rumorOverviewDashboardApp"
   class="outcomes-dashboard-root"
   data-component="dashboard"
@@ -76,6 +76,19 @@
             <input id="rumorOverviewFilterEndDatetime" class="input" type="date" name="end_datetime" value="{{ filter_end_datetime }}">
           </div>
 
+          <div class="mainFiltersContainer">
+            <label for="rumorDetailsFilterGeoLevel">Geography:</label>
+            <select id="rumorDetailsFilterGeoLevel" class="select" name="geography_level">
+              <option value="" {% if not filter_geography_level %}selected{% endif %}>All</option>
+              <option value="province" {% if filter_geography_level == "province" %}selected{% endif %}>Province</option>
+              <option value="district" {% if filter_geography_level == "district" %}selected{% endif %}>District</option>
+              <option value="constituency" {% if filter_geography_level == "constituency" %}selected{% endif %}>Constituency</option>
+              <option value="ward" {% if filter_geography_level == "ward" %}selected{% endif %}>Ward</option>
+            </select>
+            <label for="rumorDetailsFilterGeoValue" class="sr-only">Geography value</label>
+            <input id="rumorDetailsFilterGeoValue" class="input" type="text" name="geography_value" placeholder="Name (e.g. Lusaka Province)" value="{{ filter_geography_value }}">
+          </div>
+
           <div class="formBtnsContainer">
             <button id="rumorOverviewFiltersReset" type="button" class="button resetBtn">Reset</button>
           </div>
@@ -85,6 +98,12 @@
     </section>
   </div>
 
+  <div class="rumor-surveillance-subtabs" id="rumorSurveillanceTabs" role="tablist" aria-label="Rumor surveillance views">
+    <button type="button" id="rumor-surveillance-overview-tab" class="rumor-surveillance-subtab {% if request.GET.rumor_view != 'details' and request.GET.tab != 'rumor_details' %}rumor-surveillance-subtab--active{% endif %}" data-rumor-surveillance-tab="overview" role="tab" aria-selected="{% if request.GET.rumor_view == 'details' or request.GET.tab == 'rumor_details' %}false{% else %}true{% endif %}" aria-controls="rumor-surveillance-overview-panel">Overview</button>
+    <button type="button" id="rumor-surveillance-details-tab" class="rumor-surveillance-subtab {% if request.GET.rumor_view == 'details' or request.GET.tab == 'rumor_details' %}rumor-surveillance-subtab--active{% endif %}" data-rumor-surveillance-tab="details" role="tab" aria-selected="{% if request.GET.rumor_view == 'details' or request.GET.tab == 'rumor_details' %}true{% else %}false{% endif %}" aria-controls="rumor-surveillance-details-panel">Details</button>
+  </div>
+
+  <section id="rumor-surveillance-overview-panel" class="rumor-surveillance-panel {% if request.GET.rumor_view != 'details' and request.GET.tab != 'rumor_details' %}rumor-surveillance-panel--active{% endif %}" data-rumor-surveillance-panel="overview" role="tabpanel" aria-labelledby="rumor-surveillance-overview-tab" {% if request.GET.rumor_view == 'details' or request.GET.tab == 'rumor_details' %}hidden{% endif %}>
   <!-- Row 3: Map (left) + Charts (right) -->
   <div class="rumor-overview-content-row">
     <div class="rumor-overview-col-left">
@@ -135,4 +154,9 @@
       </div>
     </div>
   </div>
-</main>
+  </section>
+
+  <section id="rumor-surveillance-details-panel" class="rumor-surveillance-panel {% if request.GET.rumor_view == 'details' or request.GET.tab == 'rumor_details' %}rumor-surveillance-panel--active{% endif %}" data-rumor-surveillance-panel="details" role="tabpanel" aria-labelledby="rumor-surveillance-details-tab" {% if request.GET.rumor_view != 'details' and request.GET.tab != 'rumor_details' %}hidden{% endif %}>
+    {% include "home/components/_rumor_details_dashboard.html" %}
+  </section>
+</section>

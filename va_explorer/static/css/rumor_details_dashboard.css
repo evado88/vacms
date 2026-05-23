@@ -11,8 +11,7 @@
   --od-gap: 10px;
 }
 
-#tab-6,
-#tab-7 {
+#tab-rumor-surveillance {
   background: var(--od-surface);
   border-radius: 14px;
   height: auto;
@@ -22,8 +21,7 @@
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
 }
 
-/* Rumor Details tab: keep filters in the initial viewport.
-   The visible gap = #tab-6 padding-top only. */
+/* Rumor Surveillance tab: keep shared filters in the initial viewport. */
 #homeTabs.nav-tabs {
   margin-bottom: 0;
 }
@@ -33,28 +31,18 @@
   padding-top: 0;
 }
 
-#homeTabsContent.tab-content > #tab-6,
-#homeTabsContent.tab-content > #tab-7 {
+#homeTabsContent.tab-content > #tab-rumor-surveillance {
   margin-top: 0;
-}
-
-#homeTabsContent.tab-content > #tab-6 {
   padding: 5px 16px 16px;
 }
 
-#homeTabsContent.tab-content > #tab-6.show,
-#homeTabsContent.tab-content > #tab-7.show {
+#homeTabsContent.tab-content > #tab-rumor-surveillance.show {
   display: flex;
   flex-direction: column;
 }
 
-#homeTabsContent.tab-content > #tab-6:not(.show),
-#homeTabsContent.tab-content > #tab-7:not(.show) {
+#homeTabsContent.tab-content > #tab-rumor-surveillance:not(.show) {
   display: none;
-}
-
-#rumorDetailsDashboardApp > .rumor-details-filters-row {
-  margin-top: 0;
 }
 
 #rumorDetailsDashboardApp,
@@ -92,6 +80,53 @@
 .rumor-overview-content-row {
   flex: 1 1 auto;
   min-height: 0;
+}
+
+.rumor-surveillance-subtabs {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
+.rumor-surveillance-subtab {
+  background: #ffffff;
+  border: 1px solid #009140;
+  border-radius: 999px;
+  color: #006b30;
+  cursor: pointer;
+  font-size: 0.84rem;
+  font-weight: 700;
+  line-height: 1.2;
+  padding: 7px 14px;
+}
+
+.rumor-surveillance-subtab:hover,
+.rumor-surveillance-subtab:focus {
+  border-color: #006b30;
+  color: #004f24;
+}
+
+.rumor-surveillance-subtab:focus-visible {
+  outline: 3px solid rgba(0, 145, 64, 0.28);
+  outline-offset: 2px;
+}
+
+.rumor-surveillance-subtab--active {
+  background: #009140;
+  border-color: #009140;
+  box-shadow: none;
+  color: #ffffff;
+}
+
+.rumor-surveillance-panel[hidden] {
+  display: none !important;
+}
+
+.rumor-surveillance-panel--active {
+  display: block;
 }
 
 .rumor-details-col-left,
@@ -192,7 +227,6 @@
   white-space: nowrap;
 }
 
-#rumorDetailsFiltersForm .filtersRow,
 #rumorOverviewFiltersForm .filtersRow {
   display: flex;
   align-items: center;
@@ -203,7 +237,6 @@
   white-space: nowrap;
 }
 
-#rumorDetailsDashboardApp .controls,
 #rumorOverviewDashboardApp .controls {
   background: var(--od-card);
   border: 1px solid var(--od-border);
@@ -211,13 +244,11 @@
   padding: 10px 12px;
 }
 
-#rumorDetailsDashboardApp .controls label,
 #rumorOverviewDashboardApp .controls label {
   line-height: 1.2;
   margin-bottom: 0;
 }
 
-#rumorDetailsDashboardApp .controls :is(select, input[type="date"], button),
 #rumorOverviewDashboardApp .controls :is(select, input[type="date"], button) {
   height: 2.25rem;
   min-height: 2.25rem;
@@ -226,17 +257,14 @@
   font-size: 0.8rem;
 }
 
-#rumorDetailsDashboardApp .controls select,
 #rumorOverviewDashboardApp .controls select {
   padding: 0.35rem 0.65rem;
 }
 
-#rumorDetailsDashboardApp .controls input[type="date"],
 #rumorOverviewDashboardApp .controls input[type="date"] {
   padding: 0.35rem 0.6rem;
 }
 
-#rumorDetailsDashboardApp .controls button,
 #rumorOverviewDashboardApp .controls button {
   padding: 0 0.9rem;
   display: inline-flex;
@@ -244,10 +272,6 @@
   justify-content: center;
 }
 
-#rumorDetailsDashboardApp .mainFiltersContainer,
-#rumorDetailsDashboardApp .betweenDatesContainer,
-#rumorDetailsDashboardApp .customDatesContainer,
-#rumorDetailsDashboardApp .formBtnsContainer,
 #rumorOverviewDashboardApp .mainFiltersContainer,
 #rumorOverviewDashboardApp .betweenDatesContainer,
 #rumorOverviewDashboardApp .customDatesContainer,
@@ -649,13 +673,8 @@
 }
 
 @media (max-width: 992px) {
-  #tab-6,
-  #tab-7 {
-    padding: 5px 12px 12px;
-  }
-
-  #homeTabsContent.tab-content > #tab-6,
-  #homeTabsContent.tab-content > #tab-7 {
+  #tab-rumor-surveillance,
+  #homeTabsContent.tab-content > #tab-rumor-surveillance {
     padding: 5px 12px 12px;
   }
 
@@ -679,7 +698,6 @@
     flex-basis: calc(50% - 0.75rem);
   }
 
-  #rumorDetailsFiltersForm .filtersRow,
   #rumorOverviewFiltersForm .filtersRow {
     flex-wrap: wrap;
     overflow-x: hidden;

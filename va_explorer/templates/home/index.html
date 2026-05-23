@@ -9,7 +9,7 @@
   {{ block.super }}
   <link href="{% static 'css/home_dashboard.css' %}?v=20260219d" rel="stylesheet">
   <link href="{% static 'css/regional_operations.css' %}" rel="stylesheet">
-  <link href="{% static 'css/rumor_details_dashboard.css' %}?v=20260505a" rel="stylesheet">
+  <link href="{% static 'css/rumor_details_dashboard.css' %}?v=20260524c" rel="stylesheet">
   <link href="{% static 'vendor/leaflet-1.9.2/leaflet.css' %}" rel="stylesheet">
 {% endblock %}
 
@@ -47,13 +47,8 @@
         </a>
       </li>
       <li class="nav-item" role="presentation">
-        <a class="nav-link {% if home_active_tab == 'rumor_overview' %}active{% endif %}" id="tab-7-tab" data-tab="rumor_overview" href="?tab=rumor_overview" role="tab" aria-controls="tab-7" aria-selected="{% if home_active_tab == 'rumor_overview' %}true{% else %}false{% endif %}">
-          Rumor Overview
-        </a>
-      </li>
-      <li class="nav-item" role="presentation">
-        <a class="nav-link {% if home_active_tab == 'rumor_details' %}active{% endif %}" id="tab-6-tab" data-tab="rumor_details" href="?tab=rumor_details" role="tab" aria-controls="tab-6" aria-selected="{% if home_active_tab == 'rumor_details' %}true{% else %}false{% endif %}">
-          Rumor Details
+        <a class="nav-link {% if home_active_tab == 'rumor_surveillance' or home_active_tab == 'rumor_overview' or home_active_tab == 'rumor_details' %}active{% endif %}" id="tab-rumor-surveillance-tab" data-tab="rumor_surveillance" href="?tab=rumor_surveillance" role="tab" aria-controls="tab-rumor-surveillance" aria-selected="{% if home_active_tab == 'rumor_surveillance' or home_active_tab == 'rumor_overview' or home_active_tab == 'rumor_details' %}true{% else %}false{% endif %}">
+          Rumor Surveillance
         </a>
       </li>
     </ul>
@@ -229,11 +224,8 @@
           </div>
         </section>
       </div>
-      <div class="tab-pane dashboard-tab-panel fade {% if home_active_tab == 'rumor_overview' %}show active{% endif %}" id="tab-7" data-tab-panel="rumor_overview" role="tabpanel" aria-labelledby="tab-7-tab">
+      <div class="tab-pane dashboard-tab-panel fade {% if home_active_tab == 'rumor_surveillance' or home_active_tab == 'rumor_overview' or home_active_tab == 'rumor_details' %}show active{% endif %}" id="tab-rumor-surveillance" data-tab-panel="rumor_surveillance" role="tabpanel" aria-labelledby="tab-rumor-surveillance-tab">
         {% include "home/components/_rumor_overview_dashboard.html" %}
-      </div>
-      <div class="tab-pane dashboard-tab-panel fade {% if home_active_tab == 'rumor_details' %}show active{% endif %}" id="tab-6" data-tab-panel="rumor_details" role="tabpanel" aria-labelledby="tab-6-tab">
-        {% include "home/components/_rumor_details_dashboard.html" %}
       </div>
       <div class="tab-pane dashboard-tab-panel fade home-va-tab {% if home_active_tab == 'va_statistics' %}show active{% endif %}" id="tab-3" data-tab-panel="va_statistics" role="tabpanel" aria-labelledby="tab-3-tab">
         <div id="homeVAStatisticsComponentSlot" data-component-slot data-component="va-statistics" data-scope="va_statistics,trends-data" data-endpoint="{% url 'home:home_va_statistics_component' %}" data-cache-key="home:va_statistics">
@@ -262,8 +254,8 @@
   <script src="{% static 'vendor/chartjs-3.7.1/chart.min.js' %}"></script>
   <script src="{% static 'vendor/d3-7.9.0/d3.min.js' %}"></script>
   <script src="{% static 'js/rumor_word_cloud.js' %}?v=20260505b"></script>
-  <script src="{% static 'js/rumor_details_dashboard.js' %}?v=20260504c"></script>
-  <script src="{% static 'js/rumor_overview_dashboard.js' %}?v=20260430c"></script>
+  <script src="{% static 'js/rumor_details_dashboard.js' %}?v=20260524b"></script>
+  <script src="{% static 'js/rumor_overview_dashboard.js' %}?v=20260524b"></script>
   <script src="{% static 'js/home.js' %}?v=20260430a"></script>
 
   <script>

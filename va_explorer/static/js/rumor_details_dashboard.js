@@ -13,15 +13,16 @@
   let sentimentChart = null;
 
   const getEl = (id) => document.getElementById(id);
+  const getFirstEl = (...ids) => ids.map(getEl).find(Boolean) || null;
 
   const filterElements = {
-    form: getEl("rumorDetailsFiltersForm"),
-    preset: getEl("rumorDetailsFilterTimePreset"),
-    start: getEl("rumorDetailsFilterStartDatetime"),
-    end: getEl("rumorDetailsFilterEndDatetime"),
+    form: getFirstEl("rumorDetailsFiltersForm", "rumorOverviewFiltersForm"),
+    preset: getFirstEl("rumorDetailsFilterTimePreset", "rumorOverviewFilterTimePreset"),
+    start: getFirstEl("rumorDetailsFilterStartDatetime", "rumorOverviewFilterStartDatetime"),
+    end: getFirstEl("rumorDetailsFilterEndDatetime", "rumorOverviewFilterEndDatetime"),
     geoLevel: getEl("rumorDetailsFilterGeoLevel"),
     geoValue: getEl("rumorDetailsFilterGeoValue"),
-    reset: getEl("rumorDetailsFiltersReset"),
+    reset: getFirstEl("rumorDetailsFiltersReset", "rumorOverviewFiltersReset"),
   };
 
   const getFilters = () => ({
@@ -48,6 +49,8 @@
     const params = buildParams(filters);
     const currentTab = new URLSearchParams(window.location.search).get("tab");
     if (currentTab) params.set("tab", currentTab);
+    const rumorView = new URLSearchParams(window.location.search).get("rumor_view");
+    if (rumorView) params.set("rumor_view", rumorView);
     const query = params.toString();
     window.history.replaceState({}, "", query ? `${window.location.pathname}?${query}` : window.location.pathname);
   };
@@ -453,6 +456,12 @@
     if (window.RumorWordCloud) window.RumorWordCloud.resize();
     if (sentimentChart) sentimentChart.resize();
   };
+
+  document.addEventListener("rumor-surveillance:subtab-change", (event) => {
+    if ((event.detail || {}).tab === "details") {
+      setTimeout(resizeVisuals, 0);
+    }
+  });
 
   // ── Init ───────────────────────────────────────────────────────────────────
   const init = async () => {

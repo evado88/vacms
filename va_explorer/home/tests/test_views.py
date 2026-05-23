@@ -602,26 +602,35 @@ def test_regional_operations_page_loads(user: User):
     assert b'id="regionalMsoComponent"' in response.content
 
 
-def test_operational_dashboard_includes_rumor_details_tab(user: User):
+def test_operational_dashboard_includes_rumor_surveillance_tab(user: User):
     client = Client()
     client.force_login(user=user)
 
     response = client.get("/", {"tab": "rumor_details"}, follow=True)
 
     assert response.status_code == 200
-    assert b"Rumor Details" in response.content
-    assert b"Rumor Overview" in response.content
-    assert b'data-tab="rumor_details"' in response.content
-    assert b'data-tab="rumor_overview"' in response.content
+    assert b"Rumor Surveillance" in response.content
+    assert b'data-tab="rumor_surveillance"' in response.content
+    assert b'data-tab="rumor_details"' not in response.content
+    assert b'data-tab="rumor_overview"' not in response.content
+    assert b'data-rumor-surveillance-tab="overview"' in response.content
+    assert b'data-rumor-surveillance-tab="details"' in response.content
+    assert b'id="rumor-surveillance-overview-panel"' in response.content
+    assert b'id="rumor-surveillance-details-panel"' in response.content
     assert b'id="rumorDetailsDashboardApp"' in response.content
     assert b'id="rumorOverviewDashboardApp"' in response.content
-    # Tab-6 (Details): has enumerator section, description table
+    # Shared Rumor Surveillance header: KPI cards and filter controls.
+    assert b'id="rumorOverviewSummaryCards"' in response.content
+    assert b'id="rumorOverviewFiltersForm"' in response.content
+    assert b'id="rumorDetailsFilterGeoLevel"' in response.content
+    assert b'id="rumorDetailsFiltersForm"' not in response.content
+    # Details sub-tab: has enumerator section, description table
     assert b'id="rumorSummaryCards"' not in response.content
     assert b'id="rumorTrendChart"' not in response.content
     assert b'id="rumorGpsCoverageChart"' not in response.content
     assert b'id="rumorDetailsEnumeratorTable"' in response.content
     assert b'id="rumorDetailsDescTable"' in response.content
-    # Tab-7 (Overview): has map, no word cloud
+    # Overview sub-tab: has map, no legacy overview word cloud.
     assert b'id="rumorOverviewMapContainer"' in response.content
     assert b'id="rumorOverviewWordCloud"' not in response.content
     # Both tabs reference their own JS
@@ -633,6 +642,24 @@ def test_operational_dashboard_includes_rumor_details_tab(user: User):
     assert b"rumor-details/enumerator-stats/" in response.content
     assert b"rumor-details/description-table/" in response.content
     assert b"pregnancyDashboardApp" not in response.content
+
+    default_response = client.get("/", {"tab": "rumor_surveillance"}, follow=True)
+
+    assert default_response.status_code == 200
+    assert (
+        b'id="rumor-surveillance-overview-tab" '
+        b'class="rumor-surveillance-subtab rumor-surveillance-subtab--active"'
+        in default_response.content
+    )
+    assert (
+        b'id="rumor-surveillance-details-tab" '
+        b'class="rumor-surveillance-subtab "' in default_response.content
+    )
+    assert (
+        b'id="rumor-surveillance-overview-panel" '
+        b'class="rumor-surveillance-panel rumor-surveillance-panel--active"'
+        in default_response.content
+    )
 
 
 def test_rumor_details_api_endpoints_return_dashboard_payloads(user: User):

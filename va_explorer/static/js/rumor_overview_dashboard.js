@@ -22,6 +22,8 @@
     end: getEl("rumorOverviewFilterEndDatetime"),
     mapViewSelect: getEl("rumorOverviewMapViewSelect"),
     mapViewHidden: getEl("rumorOverviewFilterMapView"),
+    geoLevel: getEl("rumorDetailsFilterGeoLevel"),
+    geoValue: getEl("rumorDetailsFilterGeoValue"),
     reset: getEl("rumorOverviewFiltersReset"),
   };
 
@@ -30,6 +32,8 @@
     start_datetime: filterElements.start?.value || "",
     end_datetime: filterElements.end?.value || "",
     map_view: filterElements.mapViewSelect?.value || "Province",
+    geography_level: filterElements.geoLevel?.value || "",
+    geography_value: (filterElements.geoValue?.value || "").trim(),
   });
 
   const getEffectiveSelection = () => {
@@ -49,6 +53,9 @@
     if (sel.geography_level && sel.geography_value) {
       params.set("geography_level", sel.geography_level);
       params.set("geography_value", sel.geography_value);
+    } else if (filters.geography_level && filters.geography_value) {
+      params.set("geography_level", filters.geography_level);
+      params.set("geography_value", filters.geography_value);
     }
     return params;
   };
@@ -63,6 +70,8 @@
     const params = buildParams(filters);
     const currentTab = new URLSearchParams(window.location.search).get("tab");
     if (currentTab) params.set("tab", currentTab);
+    const rumorView = new URLSearchParams(window.location.search).get("rumor_view");
+    if (rumorView) params.set("rumor_view", rumorView);
     const query = params.toString();
     window.history.replaceState({}, "", query ? `${window.location.pathname}?${query}` : window.location.pathname);
   };
@@ -341,8 +350,15 @@
     if (filterElements.form) {
       filterElements.form.addEventListener("submit", (e) => { e.preventDefault(); refreshAll().catch(console.error); });
     }
-    for (const el of [filterElements.preset, filterElements.start, filterElements.end]) {
+    for (const el of [filterElements.preset, filterElements.start, filterElements.end, filterElements.geoLevel]) {
       if (el) el.addEventListener("change", () => { if (!shouldApplyDateRangeChange()) return; refreshAll().catch(console.error); });
+    }
+    if (filterElements.geoValue) {
+      let geoTimer;
+      filterElements.geoValue.addEventListener("input", () => {
+        clearTimeout(geoTimer);
+        geoTimer = setTimeout(() => refreshAll().catch(console.error), 350);
+      });
     }
     if (filterElements.mapViewSelect) {
       filterElements.mapViewSelect.addEventListener("change", () => refreshMapOnly().catch(console.error));
@@ -353,9 +369,53 @@
         if (filterElements.start) filterElements.start.value = "";
         if (filterElements.end) filterElements.end.value = "";
         if (filterElements.mapViewSelect) filterElements.mapViewSelect.value = "Province";
+        if (filterElements.geoLevel) filterElements.geoLevel.value = "";
+        if (filterElements.geoValue) filterElements.geoValue.value = "";
         refreshAll().catch(console.error);
       });
     }
+  };
+
+  const bindSurveillanceSubtabs = () => {
+    const tabs = getEl("rumorSurveillanceTabs");
+    if (!tabs || tabs.dataset.bound === "1") return;
+    tabs.dataset.bound = "1";
+
+    const activate = (key) => {
+      const activeKey = key === "details" ? "details" : "overview";
+      document.querySelectorAll("[data-rumor-surveillance-tab]").forEach((btn) => {
+        const isActive = btn.dataset.rumorSurveillanceTab === activeKey;
+        btn.classList.toggle("rumor-surveillance-subtab--active", isActive);
+        btn.setAttribute("aria-selected", isActive ? "true" : "false");
+      });
+      document.querySelectorAll("[data-rumor-surveillance-panel]").forEach((panel) => {
+        const isActive = panel.dataset.rumorSurveillancePanel === activeKey;
+        panel.classList.toggle("rumor-surveillance-panel--active", isActive);
+        panel.hidden = !isActive;
+      });
+
+      const url = new URL(window.location.href);
+      url.searchParams.set("tab", "rumor_surveillance");
+      url.searchParams.set("rumor_view", activeKey);
+      window.history.replaceState({}, "", url.toString());
+
+      document.dispatchEvent(
+        new CustomEvent("rumor-surveillance:subtab-change", {
+          detail: { tab: activeKey },
+        })
+      );
+      window.dispatchEvent(new Event("resize"));
+      if (window.RumorWordCloud && typeof window.RumorWordCloud.resize === "function") {
+        window.RumorWordCloud.resize();
+      }
+      setTimeout(resizeVisuals, 0);
+    };
+
+    tabs.addEventListener("click", (event) => {
+      const btn = event.target.closest("[data-rumor-surveillance-tab]");
+      if (!btn) return;
+      activate(btn.dataset.rumorSurveillanceTab);
+    });
   };
 
   // ── Init ───────────────────────────────────────────────────────────────────
@@ -369,6 +429,7 @@
 
   const init = async () => {
     setupDateInputs([filterElements.start, filterElements.end]);
+    bindSurveillanceSubtabs();
     bindEvents();
     await refreshAll();
     requestAnimationFrame(() => { syncRumorMapSectionHeight(); if (mapController) mapController.resize(); });
