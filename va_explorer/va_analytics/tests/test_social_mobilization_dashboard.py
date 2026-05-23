@@ -197,13 +197,13 @@ class TestSocialMobilizationTab:
         chart = body.index('id="sm-chart-view"')
         assert tables_panel < slot < charts_panel < chart
 
-    def test_kpis_live_above_subtabs_and_charts_is_default(self):
+    def test_layout_has_side_rail_kpis_and_charts_default(self):
         body = _client().get(reverse(DASHBOARD_URL)).content.decode()
 
-        # KPI cards load in their own slot, above the Tables/Charts sub-tabs.
-        kpi_slot = body.index('id="baselineSocialMobKpisSlot"')
-        subtabs = body.index('id="smViewTabs"')
-        assert kpi_slot < subtabs
+        # Two-column layout: left rail with the sub-tabs, main column with KPIs.
+        assert 'class="sm-side"' in body
+        assert 'class="sm-main"' in body
+        assert 'id="baselineSocialMobKpisSlot"' in body
         # Charts is the first sub-tab and active by default.
         charts_btn = body.index('data-sm-view-tab="charts"')
         tables_btn = body.index('data-sm-view-tab="tables"')
@@ -212,6 +212,18 @@ class TestSocialMobilizationTab:
         assert (
             'sm-view-panel sm-view-panel--active" data-sm-view-panel="charts"' in body
         )
+        # Tables sub-tab carries its own (fading light-green) styling hook.
+        assert "sm-subtab--tables" in body
+
+    def test_chart_heading_is_inline_with_breadcrumb(self):
+        body = _client().get(reverse(DASHBOARD_URL)).content.decode()
+
+        # "Trends & breakdowns:" sits in the breadcrumb row, inline with the
+        # JS-rendered "All Provinces" crumb.
+        title = body.index("Trends &amp; breakdowns:")
+        breadcrumb = body.index('id="smChartBreadcrumb"')
+        row_start = body.rindex("baseline-chart-breadcrumb-row", 0, title)
+        assert row_start < title < breadcrumb
 
 
 # --- Component endpoint (KPIs + tables) ---------------------------------------
@@ -265,7 +277,8 @@ class TestSocialMobilizationComponent:
 
     def test_table_has_one_row_per_location_tuple(self):
         _build_fixture()
-        rows = _client().get(reverse(COMPONENT_URL)).context["sm_stats"]
+        response = _client().get(reverse(COMPONENT_URL))
+        rows = response.context["sm_stats"]
 
         keyed = {
             (r["province"], r["district"], r["village_neighbourhood"]): r for r in rows
@@ -277,6 +290,9 @@ class TestSocialMobilizationComponent:
         }
         # Mpongwe V1 merges its two same-day rows and the old row: 2 + 3 + 9.
         assert keyed[("copperbelt", "mpongwe", "V1")]["households_visited"] == 14
+        # Activity table renders location names title-cased.
+        assert "Copperbelt" in response.content.decode()
+        assert "Mpongwe" in response.content.decode()
 
     def test_rumour_log_lists_only_rumour_rows(self):
         _build_fixture()

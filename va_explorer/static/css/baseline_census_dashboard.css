@@ -1407,36 +1407,65 @@
 .sm-view {
   display: flex;
   flex-direction: column;
-  gap: 10px;
   padding-bottom: 24px;
 }
 
-/* Tables / Charts sub-tabs (pills, matching the in-chart sub-tabs). */
+/* Two columns: a narrow left rail holding the Charts/Tables sub-tabs, and the
+   main column with the KPI cards on top and the active panel below. The
+   Charts sub-tab therefore sits alongside the KPI cards, Tables directly after. */
+#sm-view .sm-layout {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+#sm-view .sm-side {
+  min-width: 0;
+}
+
+#sm-view .sm-main {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+/* Vertical, rectangular sub-tabs with square bold borders. */
 #sm-view .sm-subtabs {
   display: flex;
-  gap: 6px;
-  align-items: center;
+  flex-direction: column;
+  gap: 8px;
+  align-items: stretch;
 }
 
 #sm-view .sm-subtab {
-  border: 1px solid #e2e8f0;
+  border: 2px solid #1f2937;
+  border-radius: 0;
   background: #ffffff;
-  color: #6a7789;
-  font-size: 0.86rem;
-  font-weight: 600;
-  padding: 6px 16px;
-  border-radius: 999px;
+  color: #1f2937;
+  font-size: 0.9rem;
+  font-weight: 700;
+  padding: 12px 14px;
+  width: 100%;
+  text-align: center;
   cursor: pointer;
 }
 
 #sm-view .sm-subtab:hover {
-  background: #f3f4f6;
   color: #009140;
+  border-color: #009140;
 }
 
+/* Tables sub-tab carries a fading light-green background. */
+#sm-view .sm-subtab--tables {
+  background: linear-gradient(180deg, #ffffff 0%, #cfeecf 100%);
+}
+
+/* Active sub-tab — declared last so it wins over the tables gradient. */
 #sm-view .sm-subtab--active {
   background: #009140;
-  border-color: #009140;
+  border-color: #1f2937;
   color: #ffffff;
 }
 
@@ -1448,8 +1477,7 @@
   display: block;
 }
 
-/* Vertical spacing between the stacked components (KPIs, activity table,
-   rumour log) within the Tables panel. */
+/* Vertical spacing between the stacked table cards within the Tables panel. */
 #sm-view #baselineSocialMobSlot {
   display: flex;
   flex-direction: column;
@@ -1458,6 +1486,21 @@
 
 .sm-view .sm-kpi-cards {
   margin: 0;
+}
+
+/* Inline chart heading: "Trends & breakdowns: All Provinces". */
+#sm-view .sm-chart-title {
+  white-space: nowrap;
+}
+
+@media (max-width: 767.98px) {
+  #sm-view .sm-layout {
+    grid-template-columns: 1fr;
+  }
+
+  #sm-view .sm-subtabs {
+    flex-direction: row;
+  }
 }
 
 .sm-view .sm-section-title {

@@ -28,10 +28,10 @@
       <tbody>
         {% for row in sm_stats %}
           <tr>
-            <td>{{ row.province|default:"&mdash;" }}</td>
-            <td>{{ row.district|default:"&mdash;" }}</td>
-            <td>{{ row.health_facility|default:"&mdash;" }}</td>
-            <td>{{ row.village_neighbourhood|default:"&mdash;" }}</td>
+            <td>{{ row.province|title|default:"&mdash;" }}</td>
+            <td>{{ row.district|title|default:"&mdash;" }}</td>
+            <td>{{ row.health_facility|title|default:"&mdash;" }}</td>
+            <td>{{ row.village_neighbourhood|title|default:"&mdash;" }}</td>
             <td class="numeric">{{ row.households_visited }}</td>
             <td class="numeric">{{ row.people_reached }}</td>
             <td class="numeric">{{ row.schools_reached }}</td>

@@ -160,12 +160,16 @@
       </div>
       <div class="tab-pane dashboard-tab-panel fade {% if baseline_active_tab == 'social_mob' %}show active{% endif %}" id="tab-social-mob" data-tab-panel="social_mob" role="tabpanel" aria-labelledby="tab-social-mob-tab">
         <div id="sm-view" class="sm-view">
+          <div class="sm-layout">
+          <div class="sm-side">
+            <div class="sm-subtabs" id="smViewTabs" role="tablist" aria-label="Social mobilization views">
+              <button type="button" class="sm-subtab sm-subtab--active" data-sm-view-tab="charts" role="tab" aria-selected="true">Charts</button>
+              <button type="button" class="sm-subtab sm-subtab--tables" data-sm-view-tab="tables" role="tab" aria-selected="false">Tables</button>
+            </div>
+          </div>
+          <div class="sm-main">
           <div id="baselineSocialMobKpisSlot" class="sm-kpis-slot" data-component-slot data-component="social-mob-kpis" data-scope="social_mob" data-endpoint="{% url 'va_analytics:baseline-census-social-mobilization-kpis-component' %}" data-cache="off">
             <div class="home-panel home-panel-placeholder">Loading social mobilization KPIs...</div>
-          </div>
-          <div class="sm-subtabs" id="smViewTabs" role="tablist" aria-label="Social mobilization views">
-            <button type="button" class="sm-subtab sm-subtab--active" data-sm-view-tab="charts" role="tab" aria-selected="true">Charts</button>
-            <button type="button" class="sm-subtab" data-sm-view-tab="tables" role="tab" aria-selected="false">Tables</button>
           </div>
           <div class="sm-view-panel" data-sm-view-panel="tables" role="tabpanel" aria-label="Social mobilization tables">
             <div id="baselineSocialMobSlot" data-component-slot data-component="social-mob" data-scope="social_mob" data-endpoint="{% url 'va_analytics:baseline-census-social-mobilization-component' %}" data-cache="off">
@@ -174,9 +178,9 @@
           </div>
           <div class="sm-view-panel sm-view-panel--active" data-sm-view-panel="charts" role="tabpanel" aria-label="Social mobilization charts">
           <section class="sm-card">
-          <h5 class="sm-section-title">Trends &amp; breakdowns</h5>
           <div id="sm-chart-view" class="sm-chart-view" data-endpoint="{% url 'va_analytics:baseline-census-social-mobilization-chart-data' %}">
             <div class="baseline-chart-breadcrumb-row mb-2">
+              <h5 class="sm-section-title sm-chart-title">Trends &amp; breakdowns:</h5>
               <button type="button" id="smChartBack" class="btn btn-sm btn-outline-secondary baseline-chart-back" hidden>&larr; Back</button>
               <nav class="baseline-chart-breadcrumb" id="smChartBreadcrumb" aria-label="Social mobilization drill-down breadcrumb"></nav>
               <span class="baseline-chart-hint" id="smChartHint">
@@ -227,6 +231,8 @@
             </div>
           </div>
           </section>
+          </div>
+          </div>
           </div>
         </div>
       </div>
