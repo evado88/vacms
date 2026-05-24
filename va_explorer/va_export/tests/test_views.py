@@ -5,6 +5,7 @@ import zipfile
 import pytest
 from django.contrib.auth.models import Permission
 from django.test import Client, RequestFactory
+from django.urls import reverse
 
 from va_explorer.tests.factories import (
     GroupFactory,
@@ -116,6 +117,59 @@ def build_test_db():
 
 
 class TestAPIView:
+    def test_download_form_renders_split_export_configuration_panels(self):
+        permission = Permission.objects.filter(codename="download_data").first()
+        group = GroupFactory.create(permissions=[permission] if permission else [])
+        user = UserFactory.create(groups=[group])
+        client = Client()
+        client.force_login(user=user)
+
+        response = client.get(reverse("va_export:download_form"))
+
+        assert response.status_code == 200
+        body = response.content.decode()
+        assert "va-export-config-panels" in body
+        assert body.count("va-export-config-panel") >= 2
+        for wrapper_id in (
+            "div_id_dataset",
+            "div_id_va_record_type",
+            "div_id_action",
+            "div_id_start_date",
+            "div_id_end_date",
+            "div_id_locations",
+            "div_id_causes",
+            "div_id_export_config",
+            "div_id_format",
+        ):
+            assert wrapper_id in body
+        assert "Abridged VA (Location, Demographics and CoD )" in body
+        assert "Full VA Record" in body
+
+    def test_download_form_defaults_to_abridged_va_record_type(self):
+        form = VADownloadForm(
+            {
+                "dataset": "verbalautopsy",
+                "action": "download",
+                "format": "csv",
+            }
+        )
+
+        assert form.is_valid()
+        assert form.cleaned_data["va_record_type"] == "abridged"
+
+    def test_download_form_ignores_va_record_type_for_non_va_dataset(self):
+        form = VADownloadForm(
+            {
+                "dataset": "household",
+                "action": "download",
+                "format": "csv",
+                "va_record_type": "full",
+            }
+        )
+
+        assert form.is_valid()
+        assert form.cleaned_data["va_record_type"] is None
+
     def test_household_csv_download(self, user: User):
         build_test_db()
         Household.objects.create(

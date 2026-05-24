@@ -7,10 +7,10 @@
 {% block content %}
   {% include 'partials/_va_update_stats.html' %}
 
-  <section class="ou-card ou-mb-3">
+  <section class="ou-card ou-mb-3 ou-va-list-filter-panel">
     <div class="ou-card-body">
-      <small class="ou-filter-note">Filter verbal autopsies by interviewer, district, cause of death, error status, or interview date range.</small>
-      <form method="get" class="ou-filter-row ou-va-filter-row">
+      <small class="ou-filter-note">Filter verbal autopsies by interviewer, district, cause of death, or interview date range.</small>
+      <form method="get" class="ou-filter-row ou-va-filter-row ou-va-list-filter-row">
         {% for field in filterset.form %}
           <div class="form-group mb-0{% if field.name == 'start_date' or field.name == 'end_date' %} ou-date-filter-group{% endif %}">
             {% if field.label %}<label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{% endif %}

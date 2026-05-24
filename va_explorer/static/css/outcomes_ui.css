@@ -536,3 +536,107 @@
     font-size: 0.78rem;
   }
 }
+
+.ou-va-list-filter-panel .ou-filter-note {
+  margin-bottom: 0.2rem;
+}
+
+.ou-va-list-filter-row {
+  flex-wrap: nowrap;
+  gap: 0.6rem;
+  overflow-x: auto;
+  padding-bottom: 0.05rem;
+}
+
+.ou-va-list-filter-row > .form-group:not(.ou-date-filter-group) {
+  flex: 1 1 8.5rem;
+  width: auto;
+}
+
+.ou-va-list-filter-row > .ou-date-filter-group,
+.ou-va-list-filter-row > .ou-va-filter-actions {
+  flex: 0 0 auto;
+  width: auto;
+}
+
+.ou-va-list-filter-row .form-group :is(input, select, .form-control, .custom-select) {
+  width: 100% !important;
+  min-width: 0;
+  max-width: none;
+}
+
+.ou-va-list-filter-row .ou-date-filter-group {
+  align-items: center;
+  flex-direction: row;
+  white-space: nowrap;
+}
+
+.ou-va-list-filter-row .ou-date-filter-group .form-date {
+  width: 7.75rem !important;
+  min-width: 7.75rem;
+  max-width: 7.75rem;
+}
+
+.ou-va-list-filter-row .ou-form-actions {
+  width: auto;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
+.ou-va-list-filter-row .ou-form-actions .btn {
+  width: auto;
+}
+
+.va-export-config-panels {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 1.25rem;
+  align-items: start;
+  margin-top: 0.75rem;
+  position: relative;
+}
+
+.va-export-config-panels::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 10px;
+  left: 50%;
+  width: 1px;
+  background: var(--ou-text);
+  transform: translateX(-0.5px);
+}
+
+.va-export-config-panel {
+  min-width: 0;
+}
+
+.va-export-config-panel--right {
+  padding-left: 1.25rem;
+}
+
+.va-export-config-panel .form-group:last-child {
+  margin-bottom: 0;
+}
+
+.va-export-config-disabled {
+  color: var(--ou-muted);
+  opacity: 0.65;
+}
+
+@media (max-width: 767.98px) {
+  .va-export-config-panels {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  .va-export-config-panels::before {
+    display: none;
+  }
+
+  .va-export-config-panel--right {
+    border-top: 1px solid var(--ou-text);
+    padding-left: 0;
+    padding-top: 1rem;
+  }
+}

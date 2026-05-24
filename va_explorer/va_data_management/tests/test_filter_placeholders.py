@@ -118,4 +118,4 @@ def test_va_filter_placeholders():
     # Non-placeholder fields keep their labels.
     _assert_date_placeholder(form, "start_date", "Earliest", "Earliest Date")
     _assert_date_placeholder(form, "end_date", "Latest", "Latest Date")
-    assert form.fields["only_errors"].label == "Only Errors"
+    assert "only_errors" not in form.fields

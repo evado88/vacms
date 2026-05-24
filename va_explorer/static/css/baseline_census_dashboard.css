@@ -1847,6 +1847,19 @@
   text-decoration: none;
 }
 
+#sm-view .baseline-census-table thead th.numeric {
+  text-align: center;
+}
+
+#sm-view .baseline-census-table thead th.sm-wrap-header {
+  white-space: normal;
+  line-height: 1.15;
+}
+
+#sm-view .baseline-census-table thead th.sm-wrap-header a {
+  white-space: normal;
+}
+
 #sm-view .baseline-census-table thead th a:hover {
   text-decoration: underline;
 }
@@ -1874,6 +1887,7 @@
   padding: 10px 8px;
 }
 
+#sm-view .baseline-census-table tfoot .bc-district-total-row td,
 #sm-view .baseline-census-table tfoot .bc-grand-total-row td {
   font-weight: 700;
   color: #223044;
@@ -1884,6 +1898,25 @@
 }
 
 #sm-view .baseline-census-table tfoot td:not(:last-child) {
+  border-right: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+#sm-view .sm-grand-total-table {
+  margin-top: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+#sm-view .sm-grand-total-table .bc-grand-total-row td {
+  padding: 10px 8px;
+  font-weight: 700;
+  color: #223044;
+  background: #eef2f8;
+  border-top: 0;
+}
+
+#sm-view .sm-grand-total-table .bc-grand-total-row td:not(:last-child) {
   border-right: 1px solid rgba(0, 0, 0, 0.08);
 }
 

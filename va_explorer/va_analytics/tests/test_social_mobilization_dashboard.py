@@ -221,7 +221,7 @@ class TestSocialMobilizationTab:
         assert 'id="smTableTabs"' in body
         assert 'data-sm-table-tab="activity" role="tab" aria-selected="true"' in body
         assert 'data-sm-table-tab="rumour" role="tab" aria-selected="false"' in body
-        assert "Activity by location" in body
+        assert "Activity by Location" in body
         assert "Rumour Log" in body
 
     def test_chart_heading_is_inline_with_breadcrumb(self):
@@ -266,6 +266,20 @@ class TestSocialMobilizationComponent:
 
         assert response.status_code in (302, 403)
 
+    def test_activity_table_wraps_long_metric_headers(self):
+        response = _client().get(reverse(COMPONENT_URL))
+
+        assert response.status_code == 200
+        assert response.context["sm_wrapping_metric_columns"] == (
+            "households_visited",
+            "people_reached",
+            "religious_leaders_reached",
+            "refusal_identified",
+            "refusal_managed",
+            "refusal_managed_rate",
+        )
+        assert response.content.decode().count('class="numeric sm-wrap-header"') == 6
+
     def test_kpi_totals_sum_all_records(self):
         _build_fixture()
         response = _client().get(reverse(COMPONENT_URL))
@@ -286,22 +300,53 @@ class TestSocialMobilizationComponent:
 
     def test_table_has_one_row_per_location_tuple(self):
         _build_fixture()
-        response = _client().get(reverse(COMPONENT_URL))
+        response = _client().get(reverse(COMPONENT_URL), {"sm_page": 2})
         rows = response.context["sm_stats"]
 
         keyed = {
             (r["province"], r["district"], r["village_neighbourhood"]): r for r in rows
         }
-        assert set(keyed) == {
-            ("copperbelt", "mpongwe", "V1"),
-            ("copperbelt", "kitwe", "V2"),
-            ("central", "kabwe", "V3"),
-        }
+        assert set(keyed) == {("copperbelt", "mpongwe", "V1")}
         # Mpongwe V1 merges its two same-day rows and the old row: 2 + 3 + 9.
         assert keyed[("copperbelt", "mpongwe", "V1")]["households_visited"] == 14
         # Activity table renders location names title-cased.
         assert "Copperbelt" in response.content.decode()
         assert "Mpongwe" in response.content.decode()
+
+    def test_table_paginates_one_district_per_page_with_scoped_and_grand_totals(self):
+        _build_fixture()
+        response = _client().get(reverse(COMPONENT_URL), {"sm_page": 2})
+
+        rows = response.context["sm_stats"]
+        assert {row["district"] for row in rows} == {"mpongwe"}
+        assert response.context["sm_total_pages"] == 3
+        assert response.context["sm_visible_count"] == 1
+        assert response.context["sm_page_totals"]["households_visited"] == 14
+        assert response.context["sm_page_totals"]["people_reached"] == 37
+        assert response.context["sm_grand_totals"]["households_visited"] == 19
+        assert response.context["sm_grand_totals"]["people_reached"] == 54
+
+        body = response.content.decode()
+        assert "Total: Mpongwe" in body
+        assert "Grand Total" in body
+
+    def test_table_normalizes_health_facility_names(self):
+        _row(
+            "copperbelt",
+            "Ndola",
+            "Ndola_Kanfinsa_Health_Post",
+            "V1",
+            _iso(timezone.now()),
+            households_visited=1,
+        ).save()
+
+        response = _client().get(reverse(COMPONENT_URL))
+
+        assert response.context["sm_stats"][0]["health_facility"] == (
+            "Kanfinsa Health Post"
+        )
+        assert "Kanfinsa Health Post" in response.content.decode()
+        assert "Ndola Kanfinsa Health Post" not in response.content.decode()
 
     def test_table_component_marks_activity_and_rumour_panels(self):
         _build_fixture()

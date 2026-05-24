@@ -65,6 +65,7 @@ $(document).ready(function() {
   const locationRestrictionsClass = 'location-restrictions-select';
   const facilityRestrictionsClass = 'facility-restrictions-select';
   const datasetID = 'div_id_dataset';
+  const vaRecordTypeID = 'div_id_va_record_type';
   const causesID = 'div_id_causes';
   const warningBoxID = '#exportValidationWarning';
 
@@ -271,6 +272,17 @@ $(document).ready(function() {
 
   function updateFormForDatasetSelected() {
     const selectedDataset = ($('#id_dataset').val() || 'verbalautopsy').toLowerCase();
+    const isVerbalAutopsy = selectedDataset === 'verbalautopsy';
+    const $vaRecordType = $('#' + vaRecordTypeID);
+    const $vaRecordTypeInputs = $vaRecordType.find('input[type="radio"]');
+
+    $vaRecordType.toggleClass('va-export-config-disabled', !isVerbalAutopsy);
+    $vaRecordTypeInputs.prop('disabled', !isVerbalAutopsy);
+
+    if (isVerbalAutopsy) {
+      $('#id_va_record_type_0').prop('checked', true);
+    }
+
     if (selectedDataset === 'verbalautopsy') {
       $('#' + causesID).show();
       $('#id_format').prop('disabled', false);

@@ -2768,6 +2768,23 @@ def _socmob_rate(numerator, denominator):
     return float(f"{numerator / denominator * 100:.1f}")
 
 
+def _socmob_normalize_location_label(value):
+    return " ".join(str(value or "").replace("_", " ").split())
+
+
+def _socmob_normalize_health_facility(value, district):
+    facility = _socmob_normalize_location_label(value)
+    parent = _socmob_normalize_location_label(district)
+    if not facility or not parent:
+        return facility
+
+    if facility.casefold().startswith(parent.casefold()):
+        remainder = facility[len(parent) :].strip(" -_/")
+        if remainder:
+            return remainder
+    return facility
+
+
 def _socmob_base_queryset(
     request,
     location_level,
@@ -2956,6 +2973,9 @@ def aggregate_social_mobilization_table(
     rows = []
     for key in order:
         location = dict(zip(_SOCMOB_TABLE_GROUP_FIELDS, key))
+        location["health_facility"] = _socmob_normalize_health_facility(
+            location["health_facility"], location["district"]
+        )
         rows.append({**location, **_socmob_metrics_from_group(groups[key])})
     return rows, _socmob_metrics_from_group(totals_acc)
 
@@ -2977,6 +2997,46 @@ def _socmob_sort_rows(rows, sort_key, sort_dir):
             return 0
 
     return sorted(rows, key=numeric_key, reverse=reverse)
+
+
+def _socmob_totals_from_rows(rows):
+    totals = {
+        "households_visited": 0,
+        "people_reached": 0,
+        "schools_reached": 0,
+        "religious_leaders_reached": 0,
+        "refusal_identified": 0,
+        "refusal_managed": 0,
+        "rumours_reported": 0,
+    }
+    for row in rows:
+        for field in totals:
+            totals[field] += _socmob_to_int(row.get(field))
+    totals["refusal_managed_rate"] = _socmob_rate(
+        totals["refusal_managed"], totals["refusal_identified"]
+    )
+    return totals
+
+
+def _socmob_rows_by_district(rows):
+    district_pages = []
+    district_index = {}
+    for row in rows:
+        key = (
+            str(row.get("province") or "").casefold(),
+            str(row.get("district") or "").casefold(),
+        )
+        if key not in district_index:
+            district_index[key] = len(district_pages)
+            district_pages.append(
+                {
+                    "province": row.get("province") or "",
+                    "district": row.get("district") or "",
+                    "rows": [],
+                }
+            )
+        district_pages[district_index[key]]["rows"].append(row)
+    return district_pages
 
 
 class SocialMobilizationComponentView(
@@ -3008,6 +3068,14 @@ class SocialMobilizationComponentView(
         ("refusal_managed_rate", "Managed Rate"),
         ("rumours_reported", "Rumours"),
     )
+    _WRAPPING_METRIC_COLUMNS = (
+        "households_visited",
+        "people_reached",
+        "religious_leaders_reached",
+        "refusal_identified",
+        "refusal_managed",
+        "refusal_managed_rate",
+    )
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -3015,7 +3083,7 @@ class SocialMobilizationComponentView(
         location_level, location_value = parse_location_filter(req)
         start_iso, end_iso = self._scoped_date_bounds(req)
 
-        rows, totals = aggregate_social_mobilization_table(
+        rows, _totals = aggregate_social_mobilization_table(
             req, location_level, location_value, start_iso, end_iso
         )
 
@@ -3042,21 +3110,33 @@ class SocialMobilizationComponentView(
         rows = _socmob_sort_rows(rows, sm_sort, sm_dir)
 
         total_count = len(rows)
-        total_pages = max(1, (total_count + self._PAGE_SIZE - 1) // self._PAGE_SIZE)
+        grand_totals = _socmob_totals_from_rows(rows)
+        district_pages = _socmob_rows_by_district(rows)
+        page_rows = []
+        page_district = None
+        page_totals = _socmob_totals_from_rows(page_rows)
+        total_pages = max(1, len(district_pages))
         try:
             page = int(req.GET.get("sm_page") or 1)
         except (TypeError, ValueError):
             page = 1
         page = min(max(1, page), total_pages)
-        offset = (page - 1) * self._PAGE_SIZE
-        page_rows = rows[offset : offset + self._PAGE_SIZE]
+        if district_pages:
+            district_page = district_pages[page - 1]
+            page_rows = district_page["rows"]
+            page_district = district_page["district"]
+            page_totals = _socmob_totals_from_rows(page_rows)
 
         context.update(
             {
                 "sm_stats": page_rows,
-                "sm_totals": totals,
+                "sm_totals": grand_totals,
+                "sm_grand_totals": grand_totals,
+                "sm_page_totals": page_totals,
+                "sm_page_district": page_district,
                 "sm_location_columns": self._LOCATION_COLUMNS,
                 "sm_metric_columns": self._METRIC_COLUMNS,
+                "sm_wrapping_metric_columns": self._WRAPPING_METRIC_COLUMNS,
                 "sm_rumours": self._rumour_log(
                     req, location_level, location_value, start_iso, end_iso
                 ),

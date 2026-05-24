@@ -1,16 +1,11 @@
 from crispy_forms.helper import FormHelper
 from django import forms
 from django.core.exceptions import ValidationError
-from django.forms import Select, TextInput
-from django_filters import BooleanFilter, CharFilter, DateFilter, FilterSet
+from django.forms import TextInput
+from django_filters import CharFilter, DateFilter, FilterSet
 from fuzzywuzzy import fuzz
 
 from .models import Death, Household, Pregnancy, PregnancyOutcome, VerbalAutopsy
-
-TRUE_FALSE_CHOICES = (
-    (False, "No"),
-    (True, "Yes"),
-)
 
 
 def validate_integer(value: str):
@@ -154,11 +149,6 @@ class VAFilter(FilterSet):
             attrs={"class": "form-text", "placeholder": "Cause", "aria-label": "Cause"}
         ),
     )
-    only_errors = BooleanFilter(
-        method="filter_errors",
-        label="Only Errors",
-        widget=Select(choices=TRUE_FALSE_CHOICES, attrs={"class": "custom-select"}),
-    )
 
     class Meta:
         model = VerbalAutopsy
@@ -186,12 +176,6 @@ class VAFilter(FilterSet):
                 > threshold
             ]
             return queryset.filter(id__in=matches)
-        return queryset
-
-    def filter_errors(self, queryset, name, value):
-        # Keep as-is for VA: project-specific relation "coding_issues"
-        if value:
-            return queryset.filter(coding_issues__severity="error").distinct()
         return queryset
 
 

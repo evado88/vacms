@@ -1,7 +1,7 @@
 {% load static %}
 <section class="sm-card sm-table-panel sm-table-panel--active" id="sm-table-panel-activity" data-sm-table-panel="activity" role="tabpanel" aria-labelledby="sm-table-tab-activity">
 <div class="baseline-census-table-header">
-  <h5 class="sm-section-title">Activity by location</h5>
+  <h5 class="sm-section-title">Activity by Location</h5>
   <div class="baseline-census-search-group">
     <div class="baseline-census-search">
       <input type="search" placeholder="Search location" aria-label="Search location" id="smSearch" value="{{ sm_q }}">
@@ -19,7 +19,7 @@
           </th>
           {% endfor %}
           {% for col, label in sm_metric_columns %}
-          <th class="numeric">
+          <th class="numeric{% if col in sm_wrapping_metric_columns %} sm-wrap-header{% endif %}">
             <a href="?sm_sort={{ col }}&sm_dir={% if sm_sort == col and sm_dir == 'asc' %}desc{% else %}asc{% endif %}&sm_page=1" class="sm-sort-link">{{ label }}</a><span class="sort-icon">{% if sm_sort == col %}{% if sm_dir == 'asc' %}&#9650;{% else %}&#9660;{% endif %}{% else %}&#9650;{% endif %}</span>
           </th>
           {% endfor %}
@@ -47,18 +47,18 @@
           </tr>
         {% endfor %}
       </tbody>
-      {% if sm_totals %}
+      {% if sm_page_totals %}
         <tfoot>
-          <tr class="bc-grand-total-row">
-            <td colspan="4">Total</td>
-            <td class="numeric">{{ sm_totals.households_visited }}</td>
-            <td class="numeric">{{ sm_totals.people_reached }}</td>
-            <td class="numeric">{{ sm_totals.schools_reached }}</td>
-            <td class="numeric">{{ sm_totals.religious_leaders_reached }}</td>
-            <td class="numeric">{{ sm_totals.refusal_identified }}</td>
-            <td class="numeric">{{ sm_totals.refusal_managed }}</td>
-            <td class="numeric">{% if sm_totals.refusal_managed_rate is not None %}{{ sm_totals.refusal_managed_rate }}%{% else %}&mdash;{% endif %}</td>
-            <td class="numeric">{{ sm_totals.rumours_reported }}</td>
+          <tr class="bc-district-total-row">
+            <td colspan="4">Total{% if sm_page_district %}: {{ sm_page_district|title }}{% endif %}</td>
+            <td class="numeric">{{ sm_page_totals.households_visited }}</td>
+            <td class="numeric">{{ sm_page_totals.people_reached }}</td>
+            <td class="numeric">{{ sm_page_totals.schools_reached }}</td>
+            <td class="numeric">{{ sm_page_totals.religious_leaders_reached }}</td>
+            <td class="numeric">{{ sm_page_totals.refusal_identified }}</td>
+            <td class="numeric">{{ sm_page_totals.refusal_managed }}</td>
+            <td class="numeric">{% if sm_page_totals.refusal_managed_rate is not None %}{{ sm_page_totals.refusal_managed_rate }}%{% else %}&mdash;{% endif %}</td>
+            <td class="numeric">{{ sm_page_totals.rumours_reported }}</td>
           </tr>
         </tfoot>
       {% endif %}
@@ -69,6 +69,23 @@
     <span>Page {{ sm_page }} of {{ sm_total_pages }} | Rows: {{ sm_visible_count }} of {{ sm_total_count }}</span>
     <a href="?sm_page={{ sm_next_page }}" class="sm-page-link baseline-census-page-link {% if not sm_has_next %}disabled{% endif %}" aria-disabled="{% if sm_has_next %}false{% else %}true{% endif %}">Next</a>
   </div>
+  {% if sm_grand_totals %}
+    <table class="baseline-census-table sm-grand-total-table" aria-label="Social mobilization grand totals">
+      <tbody>
+        <tr class="bc-grand-total-row">
+          <td colspan="4">Grand Total</td>
+          <td class="numeric">{{ sm_grand_totals.households_visited }}</td>
+          <td class="numeric">{{ sm_grand_totals.people_reached }}</td>
+          <td class="numeric">{{ sm_grand_totals.schools_reached }}</td>
+          <td class="numeric">{{ sm_grand_totals.religious_leaders_reached }}</td>
+          <td class="numeric">{{ sm_grand_totals.refusal_identified }}</td>
+          <td class="numeric">{{ sm_grand_totals.refusal_managed }}</td>
+          <td class="numeric">{% if sm_grand_totals.refusal_managed_rate is not None %}{{ sm_grand_totals.refusal_managed_rate }}%{% else %}&mdash;{% endif %}</td>
+          <td class="numeric">{{ sm_grand_totals.rumours_reported }}</td>
+        </tr>
+      </tbody>
+    </table>
+  {% endif %}
 </div>
 </section>
 

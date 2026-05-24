@@ -15,7 +15,21 @@
     <p class="ou-text-muted">Customize which data you'd like to export and how. First choose target type, then timeframe and geographic scope.</p>
     <form action="/va_export/" method="post" id="export-form">
       {% csrf_token %}
-      {{ form|crispy}}
+      <div class="va-export-config-panels">
+        <div class="va-export-config-panel">
+          {{ form.dataset|as_crispy_field }}
+          {{ form.va_record_type|as_crispy_field }}
+          {{ form.action|as_crispy_field }}
+          {{ form.start_date|as_crispy_field }}
+          {{ form.end_date|as_crispy_field }}
+        </div>
+        <div class="va-export-config-panel va-export-config-panel--right">
+          {{ form.locations|as_crispy_field }}
+          {{ form.causes|as_crispy_field }}
+          {{ form.export_config|as_crispy_field }}
+          {{ form.format|as_crispy_field }}
+        </div>
+      </div>
       <div class="ou-form-actions">
         <button type="submit" id="submit-form" class="btn btn-primary hidden">Download</button>
       </div>

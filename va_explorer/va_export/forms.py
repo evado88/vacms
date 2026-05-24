@@ -1,5 +1,11 @@
 from django import forms
-from django.forms import DateField, ModelMultipleChoiceField, Select, SelectMultiple
+from django.forms import (
+    DateField,
+    ModelMultipleChoiceField,
+    RadioSelect,
+    Select,
+    SelectMultiple,
+)
 
 from va_explorer.users.forms import LocationRestrictionsSelectMultiple
 from va_explorer.va_data_management.models import CauseOfDeath, SRSClusterLocation
@@ -35,6 +41,18 @@ class VADownloadForm(forms.Form):
         widget=Select(),
         required=True,
         help_text="Choose which dataset to export.",
+    )
+
+    va_record_type = forms.ChoiceField(
+        label="VA Record Type",
+        choices=(
+            ("abridged", "Abridged VA (Location, Demographics and CoD )"),
+            ("full", "Full VA Record"),
+        ),
+        initial="abridged",
+        widget=RadioSelect(),
+        required=False,
+        help_text="Choose how much Verbal Autopsy detail to include.",
     )
 
     action = forms.ChoiceField(
@@ -127,6 +145,15 @@ class VADownloadForm(forms.Form):
             cleaned_data["causes"] = ",".join([str(cod.cause) for cod in cods])
         else:
             cleaned_data["causes"] = None
+
+        # The VA record-type option is currently a UI choice only. Keep it out
+        # of non-VA requests and default it for VA requests when disabled/missing.
+        if cleaned_data.get("dataset") == "verbalautopsy":
+            cleaned_data["va_record_type"] = (
+                cleaned_data.get("va_record_type") or "abridged"
+            )
+        else:
+            cleaned_data["va_record_type"] = None
 
         # Non-VA datasets are exported as CSV.
         if cleaned_data.get("dataset") != "verbalautopsy":
