@@ -1,3 +1,4 @@
+import csv
 import io
 import json
 import zipfile
@@ -26,6 +27,7 @@ from va_explorer.va_data_management.models import (
     VerbalAutopsy,
 )
 from va_explorer.va_export.forms import VADownloadForm
+from va_explorer.va_export.profiles import ABRIDGED_VA_EXPORT_COLUMNS
 
 pytestmark = pytest.mark.django_db
 
@@ -116,6 +118,25 @@ def build_test_db():
     }
 
 
+def _read_csv_text(response):
+    f = io.BytesIO(response.content)
+    try:
+        zipped_file = zipfile.ZipFile(f, "r")
+        return zipped_file.read(CSV_FILE_NAME).decode()
+    finally:
+        f.close()
+
+
+def _csv_header(response):
+    text = _read_csv_text(response)
+    return next(csv.reader(io.StringIO(text)))
+
+
+def _csv_rows(response):
+    text = _read_csv_text(response)
+    return list(csv.DictReader(io.StringIO(text)))
+
+
 class TestAPIView:
     def test_download_form_renders_split_export_configuration_panels(self):
         permission = Permission.objects.filter(codename="download_data").first()
@@ -142,7 +163,10 @@ class TestAPIView:
             "div_id_format",
         ):
             assert wrapper_id in body
-        assert "Abridged VA (Location, Demographics and CoD )" in body
+        assert (
+            "Abridged VA (Location, Demographics, CoD, and necessary "
+            "identifier values for analysis and tracking)" in body
+        )
         assert "Full VA Record" in body
 
     def test_download_form_defaults_to_abridged_va_record_type(self):
@@ -708,3 +732,146 @@ class TestAPIView:
             }
         )
         assert submitted_form.is_valid()
+
+    def test_abridged_export_contains_only_profile_columns(self, user: User):
+        build_test_db()
+        c = Client()
+        c.force_login(user=user)
+
+        response = c.post(
+            POST_URL, data={"format": "csv", "va_record_type": "abridged"}
+        )
+        assert response.status_code == 200
+
+        header = _csv_header(response)
+        # Every abridged column must come from the profile (nothing else leaks in).
+        assert set(header).issubset(set(ABRIDGED_VA_EXPORT_COLUMNS))
+        # Representative identifier, location, demographic and CoD columns present.
+        for expected in ("id", "province", "Id10019", "cause", "cause_algorithm"):
+            assert expected in header
+
+    def test_abridged_export_excludes_full_questionnaire_fields(self, user: User):
+        build_test_db()
+        c = Client()
+        c.force_login(user=user)
+
+        abridged_header = _csv_header(
+            c.post(POST_URL, data={"format": "csv", "va_record_type": "abridged"})
+        )
+        full_header = _csv_header(
+            c.post(POST_URL, data={"format": "csv", "va_record_type": "full"})
+        )
+
+        # Id10007 is a full questionnaire/PII field outside the abridged profile.
+        assert "Id10007" in full_header
+        assert "Id10007" not in abridged_header
+
+    def test_full_export_returns_wide_record(self, user: User):
+        build_test_db()
+        c = Client()
+        c.force_login(user=user)
+
+        response = c.post(POST_URL, data={"format": "csv", "va_record_type": "full"})
+        assert response.status_code == 200
+
+        header = _csv_header(response)
+        # Full export is the wide record and a superset of the abridged columns.
+        assert len(header) > len(ABRIDGED_VA_EXPORT_COLUMNS)
+        for col in ("id", "cause", "province"):
+            assert col in header
+
+        # Row count is unchanged from the legacy full-record behaviour.
+        try:
+            f = io.BytesIO(response.content)
+            zipped_file = zipfile.ZipFile(f, "r")
+            assert len(zipped_file.open(CSV_FILE_NAME).readlines()) == 5
+        finally:
+            zipped_file.close()
+            f.close()
+
+    def test_filters_apply_to_both_record_types(self, user: User):
+        build_test_db()
+        c = Client()
+        c.force_login(user=user)
+
+        # A 2020 date window matches exactly one fixture VA (va4, 2020-04-01).
+        row_counts = {}
+        for record_type in ("abridged", "full"):
+            response = c.post(
+                POST_URL,
+                data={
+                    "format": "csv",
+                    "va_record_type": record_type,
+                    "start_date": "2020-01-01",
+                    "end_date": "2021-01-01",
+                },
+            )
+            assert response.status_code == 200
+            row_counts[record_type] = len(_csv_rows(response))
+
+        # The date filter applies identically regardless of record type.
+        assert row_counts["abridged"] == 1
+        assert row_counts["full"] == 1
+
+    def test_abridged_export_populates_cod_fields(self, user: User):
+        test_data = build_test_db()
+        va = VerbalAutopsyFactory.create(
+            location=test_data["facility_a"], Id10023="2021-02-02"
+        )
+        CauseOfDeath.objects.create(
+            cause="Malaria",
+            algorithm="InterVA5",
+            settings={},
+            verbalautopsy=va,
+        )
+
+        c = Client()
+        c.force_login(user=user)
+
+        response = c.post(
+            POST_URL,
+            data={"format": "csv", "va_record_type": "abridged", "ids": str(va.pk)},
+        )
+        assert response.status_code == 200
+
+        rows = _csv_rows(response)
+        assert len(rows) == 1
+        assert rows[0]["cause"] == "Malaria"
+        assert rows[0]["cause_algorithm"] == "InterVA5"
+
+    def test_abridged_export_handles_missing_cod(self, user: User):
+        test_data = build_test_db()
+        # VA with no related CauseOfDeath record.
+        va = VerbalAutopsyFactory.create(
+            location=test_data["facility_a"], Id10023="2021-03-03"
+        )
+
+        c = Client()
+        c.force_login(user=user)
+
+        response = c.post(
+            POST_URL,
+            data={"format": "csv", "va_record_type": "abridged", "ids": str(va.pk)},
+        )
+        assert response.status_code == 200
+
+        rows = _csv_rows(response)
+        assert len(rows) == 1
+        # Missing CoD exports cleanly with blank cause cells.
+        assert rows[0]["cause"] == ""
+        assert rows[0]["cause_algorithm"] == ""
+
+    def test_missing_or_invalid_record_type_defaults_to_full(self, user: User):
+        build_test_db()
+        c = Client()
+        c.force_login(user=user)
+
+        # Omitted entirely -> full record (backward compatible).
+        omitted_header = _csv_header(c.post(POST_URL, data={"format": "csv"}))
+        assert "Id10007" in omitted_header
+
+        # Unrecognised value -> never silently abridged; falls back to full.
+        invalid_header = _csv_header(
+            c.post(POST_URL, data={"format": "csv", "va_record_type": "garbage"})
+        )
+        assert "Id10007" in invalid_header

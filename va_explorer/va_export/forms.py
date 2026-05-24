@@ -46,7 +46,11 @@ class VADownloadForm(forms.Form):
     va_record_type = forms.ChoiceField(
         label="VA Record Type",
         choices=(
-            ("abridged", "Abridged VA (Location, Demographics and CoD )"),
+            (
+                "abridged",
+                "Abridged VA (Location, Demographics, CoD, and necessary "
+                "identifier values for analysis and tracking)",
+            ),
             ("full", "Full VA Record"),
         ),
         initial="abridged",

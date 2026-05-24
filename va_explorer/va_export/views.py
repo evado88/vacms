@@ -32,6 +32,7 @@ from va_explorer.va_data_management.utils.location_access import (
     restrict_queryset_to_user_locations,
 )
 from va_explorer.va_export.forms import VADownloadForm
+from va_explorer.va_export.profiles import ABRIDGED_VA_EXPORT_COLUMNS
 
 EXPORT_DATASETS = {
     "verbalautopsy",
@@ -356,6 +357,14 @@ class VaApi(CustomAuthMixin, View):
         if dataset != "verbalautopsy":
             return _export_non_va_dataset(request, dataset, params)
 
+        # Determine how much VA detail to include. A missing or invalid value is
+        # never silently abridged: it falls back to the complete record so that
+        # programmatic callers (e.g. the ID-based "download selected" path that
+        # omits this field) keep their backward-compatible full export.
+        va_record_type = str(params.get("va_record_type") or "full").strip().lower()
+        if va_record_type not in {"abridged", "full"}:
+            va_record_type = "full"
+
         # NOTE: using same filters as dashboard - exclude vas w/ null locations,
         # unknown death dates, or unknown CODs
         matching_vas = (
@@ -367,7 +376,6 @@ class VaApi(CustomAuthMixin, View):
                 cause=F("causes__cause"),
                 loc_id=F("location__id"),
                 loc_name=F("location__name"),
-                cluster_id=F("cluster__id"),
                 cluster_name=F("cluster__name"),
             )
         )
@@ -385,7 +393,12 @@ class VaApi(CustomAuthMixin, View):
             matching_vas = (
                 matching_vas.filter(pk__in=va_ids)
                 .select_related("causes")
-                .annotate(cause=F("causes__cause"), cause_id=F("causes__pk"))
+                .annotate(
+                    cause=F("causes__cause"),
+                    cause_id=F("causes__pk"),
+                    cause_algorithm=F("causes__algorithm"),
+                    cause_created=F("causes__created"),
+                )
                 .values()
             )
         # otherwise, proceed to check for other filters
@@ -438,7 +451,12 @@ class VaApi(CustomAuthMixin, View):
             # get causes for matching vas and convert to list of records
             matching_vas = (
                 matching_vas.select_related("causes")
-                .annotate(cause=F("causes__cause"), cause_id=F("causes__pk"))
+                .annotate(
+                    cause=F("causes__cause"),
+                    cause_id=F("causes__pk"),
+                    cause_algorithm=F("causes__algorithm"),
+                    cause_created=F("causes__created"),
+                )
                 .values()
             )
 
@@ -519,6 +537,14 @@ class VaApi(CustomAuthMixin, View):
                 for field in PII_FIELDS:
                     if field in va_df.columns:
                         va_df[field] = REDACTED_STRING
+
+        # =========ABRIDGED COLUMN SELECTION===================#
+        # For the abridged profile, keep only identifier, location, demographic
+        # and cause-of-death columns. Intersecting with the actual columns means
+        # a field absent from this record set is simply skipped (no KeyError).
+        if va_record_type == "abridged" and not va_df.empty:
+            keep = [c for c in ABRIDGED_VA_EXPORT_COLUMNS if c in va_df.columns]
+            va_df = va_df[keep]
 
         # =========DATA FORMAT LOGIC===================#
         # convert VAs to proper format. Currently supports .csv (default) and .json
