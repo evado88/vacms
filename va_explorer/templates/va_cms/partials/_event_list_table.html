@@ -1,5 +1,5 @@
 {% load va_explorer_tags %}
-<table class="table table-striped table-hover">
+<table class="table table-striped table-hover vacms-list-table">
   <thead>
     {% with ob=request.GET.order_by %}
     <tr>
@@ -17,7 +17,7 @@
     {% for event in object_list %}
       <tr>
         <td>{{ event.id }}</td>
-        <td>{{ event.va_interview_staff.name|default:event.va_interview_staff.get_full_name|default:"Unassigned" }}</td>
+        <td>{% if event.va_interview_staff %}{{ event.va_interview_staff.name|default:event.va_interview_staff.get_full_name|default:event.va_interview_staff.email }}{% else %}Unassigned{% endif %}</td>
         <td>{{ event.record_province|default:"-" }}</td>
         <td>{{ event.record_district|default:"-" }}</td>
         <td>{{ event.get_event_status_display }}</td>
@@ -41,6 +41,10 @@
             {% endif %}
           {% endif %}
         </td>
+      </tr>
+    {% empty %}
+      <tr>
+        <td colspan="7">No scheduled events found for the selected filters.</td>
       </tr>
     {% endfor %}
   </tbody>

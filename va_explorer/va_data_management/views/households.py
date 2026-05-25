@@ -13,12 +13,19 @@ from django.views.generic import (
 )
 from django.views.generic.detail import SingleObjectMixin
 
-from va_explorer.utils.mixins import CustomAuthMixin, LocationRestrictedQuerySetMixin
+from va_explorer.utils.mixins import (
+    AjaxListTableMixin,
+    CustomAuthMixin,
+    LocationRestrictedQuerySetMixin,
+)
 from va_explorer.va_data_management.filters import HouseholdFilter
 from va_explorer.va_data_management.forms import HouseholdForm
 from va_explorer.va_data_management.models import Household
 from va_explorer.va_data_management.models.data_quality import (
     DataQualityIssue,
+)
+from va_explorer.va_data_management.utils.list_cleaning import (
+    exclude_rows_with_invalid_display_values,
 )
 from va_explorer.va_data_management.utils.location_access import (
     restrict_queryset_to_user_locations,
@@ -30,11 +37,16 @@ class HouseholdAccessMixin(LocationRestrictedQuerySetMixin, SingleObjectMixin):
 
 
 class Households(
-    CustomAuthMixin, PermissionRequiredMixin, LocationRestrictedQuerySetMixin, ListView
+    AjaxListTableMixin,
+    CustomAuthMixin,
+    PermissionRequiredMixin,
+    LocationRestrictedQuerySetMixin,
+    ListView,
 ):
     permission_required = "va_data_management.view_household"
     model = Household
     template_name = "va_data_management/households.html"
+    list_table_template = "partials/_household_table.html"
     paginate_by = 15
     location_field_mapping = {
         "province": "province",
@@ -53,8 +65,19 @@ class Households(
         "respondent": "respondent",
     }
 
+    display_validation_fields = (
+        "enumerator",
+        "province",
+        "district",
+        "ward",
+        "locality_name",
+        "respondent",
+    )
+
     def get_queryset(self):
-        base_qs = super().get_queryset()
+        base_qs = exclude_rows_with_invalid_display_values(
+            super().get_queryset(), self.display_validation_fields
+        )
         self.filter = HouseholdFilter(self.request.GET, queryset=base_qs)
         order_by_raw = self.request.GET.get("order_by", "-id")
         direction = "-" if order_by_raw.startswith("-") else ""

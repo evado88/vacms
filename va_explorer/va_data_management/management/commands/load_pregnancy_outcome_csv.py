@@ -1,6 +1,7 @@
 import argparse
 
 import pandas as pd
+from django.core.management import call_command
 from django.core.management.base import BaseCommand, CommandError
 
 from va_explorer.va_data_management.models import (
@@ -13,6 +14,7 @@ from va_explorer.va_data_management.utils.loading import (
     load_odk_csv_to_model,
     normalize_dataframe_columns,
     normalize_string,
+    upsert_gps_for_existing,
 )
 
 
@@ -31,11 +33,39 @@ class Command(BaseCommand):
             default="missing_ea_name_mappings.csv",
             help="CSV file to log unmatched EA names",
         )
+        parser.add_argument(
+            "--upsert",
+            action="store_true",
+            help="Also update GPS on records that already exist (matched by key).",
+        )
+        parser.add_argument(
+            "--dry-run",
+            action="store_true",
+            help="Compute the load/upsert plan and print the summary without writing.",
+        )
+
+    def _write_upsert_summary(self, stats, dry_run):
+        prefix = "[DRY RUN] " if dry_run else ""
+        verb = "would update" if dry_run else "updated"
+        self.stdout.write(
+            f"{prefix}Upsert: {verb} {stats['updated']} existing GPS values "
+            f"({stats['skipped_no_change']} unchanged, "
+            f"{stats['skipped_no_value']} incoming had no GPS value)."
+        )
+        if dry_run and stats["sample"]:
+            self.stdout.write("Sample of changes that would be applied:")
+            for item in stats["sample"]:
+                existing = item["existing"] or "(empty)"
+                self.stdout.write(
+                    f"  key={item['key']}  {existing}  ->  {item['incoming']}"
+                )
 
     def handle(self, *args, **options):
         form_name = "pregnancy_outcome"
         csv_file = options["csv_file"]
         missing_log = options["log_missing_ea"]
+        upsert = options["upsert"]
+        dry_run = options["dry_run"]
 
         norm_form_name = normalize_string(form_name)
         odk_choices = ODKFormChoice.objects.filter(form_name=norm_form_name)
@@ -73,6 +103,21 @@ class Command(BaseCommand):
             )
         )
         before_existing_filter = len(df)
+        upsert_stats = {
+            "updated": 0,
+            "skipped_no_change": 0,
+            "skipped_no_value": 0,
+            "sample": [],
+        }
+        if upsert:
+            existing_df = df[df["key"].astype(str).isin(existing_keys)]
+            upsert_stats = upsert_gps_for_existing(
+                model=PregnancyOutcome,
+                df=existing_df,
+                key_field="key",
+                gps_field="gps",
+                dry_run=dry_run,
+            )
         df = df[~df["key"].astype(str).isin(existing_keys)]
         skipped_existing = before_existing_filter - len(df)
 
@@ -90,12 +135,16 @@ class Command(BaseCommand):
         # Log rows where EA didn't match
         missing_ea_df = df[df["cluster"].isnull()]
         if not missing_ea_df.empty:
-            missing_ea_df[["key", "ea"]].drop_duplicates().to_csv(
-                missing_log, index=False
-            )
+            if not dry_run:
+                missing_ea_df[["key", "ea"]].drop_duplicates().to_csv(
+                    missing_log, index=False
+                )
+                log_message = f"Logged to {missing_log}"
+            else:
+                log_message = f"Would log to {missing_log}"
             self.stdout.write(
                 self.style.WARNING(
-                    f"{len(missing_ea_df)} records had unmatched EA values. Logged to {missing_log}"
+                    f"{len(missing_ea_df)} records had unmatched EA values. {log_message}"
                 )
             )
 
@@ -147,11 +196,33 @@ class Command(BaseCommand):
         created = 0
         if objects:
             # ignore_conflicts handles any race conditions (same key inserted by another process)
-            PregnancyOutcome.objects.bulk_create(objects, ignore_conflicts=True)
+            if not dry_run:
+                PregnancyOutcome.objects.bulk_create(objects, ignore_conflicts=True)
             created = len(objects)
 
+        prefix = "[DRY RUN] " if dry_run else ""
+        action = "Would import" if dry_run else "Imported"
         self.stdout.write(
-            f"Imported {created} pregnancy outcomes "
+            f"{prefix}{action} {created} pregnancy outcomes "
             f"(skipped {skipped_existing} existing, {intrafile_dupes} intra-file duplicates, "
             f"dropped {dropped_blank} blank-key rows)."
         )
+        if upsert:
+            self._write_upsert_summary(upsert_stats, dry_run)
+
+        # --- Run data quality checks immediately after import ---
+        if not dry_run:
+            try:
+                call_command("dq_pregnancy_outcome")
+                self.stdout.write(
+                    self.style.SUCCESS(
+                        "Ran dq_pregnancy_outcome successfully after import."
+                    )
+                )
+            except Exception as e:
+                # Never fail the import if DQ fails; surface a clear message.
+                self.stdout.write(
+                    self.style.WARNING(
+                        f"dq_pregnancy_outcome encountered an error after import: {e}"
+                    )
+                )

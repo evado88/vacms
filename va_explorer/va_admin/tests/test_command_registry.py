@@ -1,0 +1,67 @@
+from va_explorer.va_admin.command_registry import (
+    ALLOWLIST,
+    REGISTRY_ITEMS,
+    grouped_command_specs,
+    requires_password_confirmation,
+)
+
+# The Favorites tab must include at least these commands (docs/admin_panel.md req #5).
+REQUIRED_FAVORITES = {
+    "load_pregnancy_csv",
+    "load_pregnancy_outcome_csv",
+    "load_death_csv",
+    "load_va_csv",
+    "run_coding_algorithms",
+    "load_csa_tracker",
+}
+
+
+def test_registry_keys_are_unique():
+    # A duplicate key would be silently dropped by the ALLOWLIST dict.
+    assert len(REGISTRY_ITEMS) == len(ALLOWLIST)
+
+
+def test_load_va_csv_appears_once():
+    matches = [item for item in REGISTRY_ITEMS if item.key == "load_va_csv"]
+    assert len(matches) == 1
+
+
+def test_favorites_include_required_commands():
+    favorites = {item.key for item in REGISTRY_ITEMS if item.favorite}
+    assert REQUIRED_FAVORITES.issubset(favorites)
+
+
+def test_no_command_appears_in_more_than_one_category():
+    groups = grouped_command_specs()
+    seen = {}
+    for category, specs in groups.items():
+        for spec in specs:
+            seen.setdefault(spec.key, []).append(category)
+    duplicated = {key: cats for key, cats in seen.items() if len(cats) > 1}
+    assert duplicated == {}
+
+
+def test_favorites_not_repeated_in_other_categories():
+    groups = grouped_command_specs()
+    favorite_keys = {item.key for item in REGISTRY_ITEMS if item.favorite}
+    for category, specs in groups.items():
+        if category == "Favorites":
+            continue
+        leaked = {spec.key for spec in specs} & favorite_keys
+        assert leaked == set(), f"Favorites leaked into {category}: {leaked}"
+
+
+def test_favorites_tab_contains_all_favorites():
+    groups = grouped_command_specs()
+    favorite_keys = {item.key for item in REGISTRY_ITEMS if item.favorite}
+    favorites_tab = {spec.key for spec in groups.get("Favorites", [])}
+    assert favorites_tab == favorite_keys
+
+
+def test_password_required_for_non_favorite_mutating_only():
+    for item in REGISTRY_ITEMS:
+        expected = item.safety == "mutating" and not item.favorite
+        assert requires_password_confirmation(item) is expected
+        # Favorites are always exempt.
+        if item.favorite:
+            assert requires_password_confirmation(item) is False

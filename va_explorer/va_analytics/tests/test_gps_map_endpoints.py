@@ -97,6 +97,29 @@ class TestPregnancyOutcomeMapGPS:
         assert data["gps_total"] == 2
         assert data["gps_truncated"] is True
 
+    def test_pregnancy_events_map_alias_returns_gps_points(self, client):
+        _make_user_with_perms(client, ["view_dashboard", "view_pii"])
+        data = client.get(
+            reverse("va_analytics:preg-events-map-api"),
+            {"include_gps_points": "true"},
+        ).json()
+        assert data.get("gps_pii_denied") is False
+        assert len(data["gps_points"]) == 1
+        point = data["gps_points"][0]
+        assert point["event_type"] == "pregnancy_outcome"
+        assert point["latitude"] == -14.5
+        assert point["longitude"] == 28.3
+
+    def test_pregnancy_events_page_loads_gps_overlay_assets(self, client):
+        _make_user_with_perms(client, ["view_dashboard", "view_pii"])
+        response = client.get(reverse("va_analytics:pregnancy-events-dashboard"))
+        assert response.status_code == 200
+        html = response.content.decode()
+        assert 'data-user-pii="true"' in html
+        assert "dashboard_gps_layer.js" in html
+        assert "hierarchical_dashboard_map.js" in html
+        assert "pregnancy_events_dashboard.js" in html
+
 
 @pytest.mark.django_db
 class TestPregnancyMapGPS:

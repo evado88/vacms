@@ -4,7 +4,7 @@
 // GPS coordinate as an individual circleMarker on a shared canvas renderer
 // for performance. Used by:
 //   - hierarchical_dashboard_map.js (outcomes dashboards)
-//   - home_hierarchical_dashboard_map.js (operational dashboard)
+//   - home_hierarchical_dashboard_map.js (operations dashboard)
 //   - dashboard_map.js (legacy VA Vue dashboard)
 //
 // Always-on (no toggle). Server enforces PII gating via va_analytics.view_pii;

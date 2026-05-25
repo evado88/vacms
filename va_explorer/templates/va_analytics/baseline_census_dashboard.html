@@ -1,0 +1,250 @@
+{% extends "base.html" %}
+{% load static i18n %}
+
+{% block heading %}Baseline Census Dashboard{% endblock heading %}
+
+{% block container-type %}container-fluid{% endblock %}
+
+{% block css %}
+  {{ block.super }}
+  <link href="{% static 'css/baseline_census_dashboard.css' %}" rel="stylesheet">
+{% endblock %}
+
+{% block content %}
+<div class="row dashboard-shell" data-shell="baseline-census">
+  <div class="col">
+    {% with baseline_active_tab=baseline_active_tab|default:'overview' %}
+    <div class="baseline-shared-filters-row mb-3" id="baselineSharedFilters" data-component="baseline-shared-filters">
+      <div class="baseline-shared-current-census form-check">
+        <input class="form-check-input" type="checkbox" id="baselineCurrentCensus">
+        <label class="form-check-label" for="baselineCurrentCensus">Current Census</label>
+      </div>
+      <div class="baseline-shared-filter-select-wrap">
+        <select id="baselineLocationLevel" class="form-control form-control-sm form-select baseline-shared-filter-select" aria-label="Baseline Census location level">
+          <option value="national" selected>National</option>
+          <option value="province">Province</option>
+          <option value="district">District</option>
+          <option value="constituency">Constituency</option>
+          <option value="ward">Ward</option>
+          <option value="ea">EA</option>
+        </select>
+      </div>
+      <div class="baseline-shared-filter-select-wrap">
+        <select id="baselineLocationValue" class="form-control form-control-sm form-select baseline-shared-filter-select" aria-label="Baseline Census location value" disabled>
+          <option value="">All National</option>
+        </select>
+      </div>
+      <div class="baseline-shared-time-filters" role="radiogroup" aria-label="Baseline Census time filters">
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="baselineGlobalTimeFilter" id="baselineTimeAll" checked>
+          <label class="form-check-label" for="baselineTimeAll">All time</label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="baselineGlobalTimeFilter" id="baselineTime30">
+          <label class="form-check-label" for="baselineTime30">Last 30 days</label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="baselineGlobalTimeFilter" id="baselineTime7">
+          <label class="form-check-label" for="baselineTime7">Last 7 days</label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="baselineGlobalTimeFilter" id="baselineTime24">
+          <label class="form-check-label" for="baselineTime24">Last 24 hours</label>
+        </div>
+      </div>
+      <div class="baseline-shared-date-filter">
+        <label for="baselineStartDatetime" class="mb-0">Start:</label>
+        <input id="baselineStartDatetime" type="date" class="form-control form-control-sm baseline-shared-filter-input">
+      </div>
+      <div class="baseline-shared-date-filter">
+        <label for="baselineEndDatetime" class="mb-0">End:</label>
+        <input id="baselineEndDatetime" type="date" class="form-control form-control-sm baseline-shared-filter-input">
+      </div>
+    </div>
+    <!-- Nav tabs -->
+    <ul class="nav nav-tabs" id="baselineCensusTabs" role="tablist">
+      <li class="nav-item" role="presentation">
+        <a class="nav-link {% if baseline_active_tab == 'overview' %}active{% endif %}" id="tab-1-tab" data-tab="overview" href="?tab=overview" role="tab" aria-controls="tab-1" aria-selected="{% if baseline_active_tab == 'overview' %}true{% else %}false{% endif %}">
+          Overview
+        </a>
+      </li>
+      <li class="nav-item" role="presentation">
+        <a class="nav-link {% if baseline_active_tab == 'table' %}active{% endif %}" id="tab-table-tab" data-tab="table" href="?tab=table" role="tab" aria-controls="tab-table" aria-selected="{% if baseline_active_tab == 'table' %}true{% else %}false{% endif %}">
+          Census Table
+        </a>
+      </li>
+      <li class="nav-item" role="presentation">
+        <a class="nav-link {% if baseline_active_tab == 'chart' %}active{% endif %}" id="tab-chart-tab" data-tab="chart" href="?tab=chart" role="tab" aria-controls="tab-chart" aria-selected="{% if baseline_active_tab == 'chart' %}true{% else %}false{% endif %}">
+          Census Chart
+        </a>
+      </li>
+      <li class="nav-item" role="presentation">
+        <a class="nav-link {% if baseline_active_tab == 'social_mob' %}active{% endif %}" id="tab-social-mob-tab" data-tab="social_mob" href="?tab=social_mob" role="tab" aria-controls="tab-social-mob" aria-selected="{% if baseline_active_tab == 'social_mob' %}true{% else %}false{% endif %}">
+          Social Mobilization
+        </a>
+      </li>
+    </ul>
+
+    <!-- Tab panes -->
+    <div class="tab-content" id="baselineCensusTabsContent">
+      <div class="tab-pane dashboard-tab-panel fade {% if baseline_active_tab == 'overview' %}show active{% endif %}" id="tab-1" data-tab-panel="overview" role="tabpanel" aria-labelledby="tab-1-tab">
+        <div id="national-operational-view" data-component="overview-dashboard" data-filter-url="{% url 'va_analytics:baseline-census-overview-filter-data' %}">
+          <div class="national-operational-view-shell">
+            <div class="national-operational-grid">
+              <div id="novKpisComponentSlot" data-component-slot data-component="kpi-cards" data-scope="overview,overview-data" data-endpoint="{% url 'va_analytics:baseline-census-overview-kpis-component' %}" data-cache-key="baseline-census:overview:kpis">
+                <div class="home-panel home-panel-placeholder">Loading overview KPIs...</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="tab-pane dashboard-tab-panel fade {% if baseline_active_tab == 'table' %}show active{% endif %}" id="tab-table" data-tab-panel="table" role="tabpanel" aria-labelledby="tab-table-tab">
+        <div id="baseline-table-view">
+          <div class="national-operational-view-shell">
+            <div id="baselineProvinceTableSlot" data-component-slot data-component="province-table" data-scope="table" data-endpoint="{% url 'va_analytics:baseline-census-province-table-component' %}" data-cache="off">
+              <div class="home-panel home-panel-placeholder">Loading census table...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="tab-pane dashboard-tab-panel fade {% if baseline_active_tab == 'chart' %}show active{% endif %}" id="tab-chart" data-tab-panel="chart" role="tabpanel" aria-labelledby="tab-chart-tab">
+        <div id="baseline-chart-view" data-endpoint="{% url 'va_analytics:baseline-census-chart-data' %}">
+          <div class="national-operational-view-shell">
+            <div class="baseline-chart-breadcrumb-row mb-2">
+              <button type="button" id="baselineChartBack" class="btn btn-sm btn-outline-secondary baseline-chart-back" hidden>&larr; Back</button>
+              <nav class="baseline-chart-breadcrumb" id="baselineChartBreadcrumb" aria-label="Census chart drill-down breadcrumb"></nav>
+              <span class="baseline-chart-hint" id="baselineChartHint">
+                Tip: click a province bar to drill down into its districts.
+              </span>
+            </div>
+            <div class="census-chart-subtabs" id="censusChartTabs" role="tablist" aria-label="Census chart indicators">
+              <button type="button" class="census-chart-subtab census-chart-subtab--active" data-census-subtab="population" role="tab" aria-selected="true">Population</button>
+              <button type="button" class="census-chart-subtab" data-census-subtab="household" role="tab" aria-selected="false">Households</button>
+              <button type="button" class="census-chart-subtab" data-census-subtab="vital_events" role="tab" aria-selected="false">Vital Events</button>
+            </div>
+            <div class="census-chart-subpanels" id="censusChartSubpanels">
+              <div class="census-chart-subpanel census-chart-subpanel--active" data-subtab="population" role="tabpanel">
+                <div class="baseline-chart-wrap">
+                  <div class="baseline-chart-canvas-box">
+                    <canvas id="censusPopulationChart"></canvas>
+                  </div>
+                </div>
+              </div>
+              <div class="census-chart-subpanel" data-subtab="household" role="tabpanel">
+                <div class="baseline-chart-wrap">
+                  <div class="baseline-chart-canvas-box">
+                    <canvas id="censusHouseholdsChart"></canvas>
+                  </div>
+                </div>
+              </div>
+              <div class="census-chart-subpanel" data-subtab="vital_events" role="tabpanel">
+                <p class="census-chart-note">Deaths, pregnancies and pregnancy outcomes have no enumeration target — showing enumerated counts only.</p>
+                <div class="baseline-chart-wrap">
+                  <div class="baseline-chart-canvas-box">
+                    <canvas id="censusVitalEventsChart"></canvas>
+                  </div>
+                </div>
+              </div>
+              <div class="baseline-chart-overlay" id="baselineChartLoading">Loading census chart&hellip;</div>
+              <div class="baseline-chart-overlay" id="baselineChartEmpty" hidden>No census data available for this selection.</div>
+              <div class="baseline-chart-overlay" id="baselineChartError" hidden>Unable to load the census chart. Please try again.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="tab-pane dashboard-tab-panel fade {% if baseline_active_tab == 'social_mob' %}show active{% endif %}" id="tab-social-mob" data-tab-panel="social_mob" role="tabpanel" aria-labelledby="tab-social-mob-tab">
+        <div id="sm-view" class="sm-view">
+          <div class="sm-layout">
+          <div class="sm-side">
+            <div class="sm-subtabs" id="smViewTabs" role="tablist" aria-label="Social mobilization views">
+              <button type="button" class="sm-subtab sm-subtab--active" data-sm-view-tab="charts" role="tab" aria-selected="true"><span class="sm-subtab-label">Charts</span></button>
+              <button type="button" class="sm-subtab sm-subtab--tables" data-sm-view-tab="tables" role="tab" aria-selected="false"><span class="sm-subtab-label">Tables</span></button>
+            </div>
+          </div>
+          <div class="sm-main">
+          <div id="baselineSocialMobKpisSlot" class="sm-kpis-slot" data-component-slot data-component="social-mob-kpis" data-scope="social_mob" data-endpoint="{% url 'va_analytics:baseline-census-social-mobilization-kpis-component' %}" data-cache="off">
+            <div class="home-panel home-panel-placeholder">Loading social mobilization KPIs...</div>
+          </div>
+          <div class="sm-view-panel" data-sm-view-panel="tables" role="tabpanel" aria-label="Social mobilization tables">
+            <div class="sm-table-subtabs" id="smTableTabs" role="tablist" aria-label="Social mobilization table sections">
+              <button type="button" id="sm-table-tab-activity" class="sm-table-subtab sm-table-subtab--active" data-sm-table-tab="activity" role="tab" aria-selected="true" aria-controls="sm-table-panel-activity">Activity by Location</button>
+              <button type="button" id="sm-table-tab-rumour" class="sm-table-subtab" data-sm-table-tab="rumour" role="tab" aria-selected="false" aria-controls="sm-table-panel-rumour">Rumour Log</button>
+            </div>
+            <div id="baselineSocialMobSlot" data-component-slot data-component="social-mob" data-scope="social_mob" data-endpoint="{% url 'va_analytics:baseline-census-social-mobilization-component' %}" data-cache="off">
+              <div class="home-panel home-panel-placeholder">Loading social mobilization data...</div>
+            </div>
+          </div>
+          <div class="sm-view-panel sm-view-panel--active" data-sm-view-panel="charts" role="tabpanel" aria-label="Social mobilization charts">
+          <section class="sm-card">
+          <div id="sm-chart-view" class="sm-chart-view" data-endpoint="{% url 'va_analytics:baseline-census-social-mobilization-chart-data' %}">
+            <div class="baseline-chart-breadcrumb-row mb-2">
+              <h5 class="sm-section-title sm-chart-title">Trends &amp; breakdowns:</h5>
+              <button type="button" id="smChartBack" class="btn btn-sm btn-outline-secondary baseline-chart-back" hidden>&larr; Back</button>
+              <nav class="baseline-chart-breadcrumb" id="smChartBreadcrumb" aria-label="Social mobilization drill-down breadcrumb"></nav>
+              <span class="baseline-chart-hint" id="smChartHint">
+                Tip: click a province bar to drill down into its districts.
+              </span>
+            </div>
+            <div class="census-chart-subtabs" id="smChartTabs" role="tablist" aria-label="Social mobilization indicators">
+              <button type="button" class="census-chart-subtab census-chart-subtab--active" data-sm-subtab="reach" role="tab" aria-selected="true">Reach</button>
+              <button type="button" class="census-chart-subtab" data-sm-subtab="refusals" role="tab" aria-selected="false">Refusals</button>
+              <button type="button" class="census-chart-subtab" data-sm-subtab="rumours" role="tab" aria-selected="false">Rumours</button>
+              <button type="button" class="census-chart-subtab" data-sm-subtab="trend" role="tab" aria-selected="false">Trend</button>
+            </div>
+            <div class="census-chart-subpanels sm-chart-subpanels" id="smChartSubpanels">
+              <div class="census-chart-subpanel census-chart-subpanel--active" data-subtab="reach" role="tabpanel">
+                <div class="baseline-chart-wrap">
+                  <div class="baseline-chart-canvas-box">
+                    <canvas id="smReachChart"></canvas>
+                  </div>
+                </div>
+              </div>
+              <div class="census-chart-subpanel" data-subtab="refusals" role="tabpanel">
+                <p class="census-chart-note">Refusals identified vs managed by location, with the managed-rate line.</p>
+                <div class="baseline-chart-wrap">
+                  <div class="baseline-chart-canvas-box">
+                    <canvas id="smRefusalsChart"></canvas>
+                  </div>
+                </div>
+              </div>
+              <div class="census-chart-subpanel" data-subtab="rumours" role="tabpanel">
+                <p class="census-chart-note">Rumours reported, children affected and refusals attributed to rumours by location.</p>
+                <div class="baseline-chart-wrap">
+                  <div class="baseline-chart-canvas-box">
+                    <canvas id="smRumoursChart"></canvas>
+                  </div>
+                </div>
+              </div>
+              <div class="census-chart-subpanel" data-subtab="trend" role="tabpanel">
+                <p class="census-chart-note">Daily reach over the selected period (drill-down and filters apply).</p>
+                <div class="baseline-chart-wrap">
+                  <div class="baseline-chart-canvas-box">
+                    <canvas id="smTrendChart"></canvas>
+                  </div>
+                </div>
+              </div>
+              <div class="baseline-chart-overlay" id="smChartLoading">Loading charts&hellip;</div>
+              <div class="baseline-chart-overlay" id="smChartEmpty" hidden>No social mobilization data available for this selection.</div>
+              <div class="baseline-chart-overlay" id="smChartError" hidden>Unable to load the charts. Please try again.</div>
+            </div>
+          </div>
+          </section>
+          </div>
+          </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endwith %}
+  </div>
+</div>
+{% endblock %}
+
+{% block page_scripts %}
+  <script src="{% static 'js/dashboard_loader.js' %}"></script>
+  <script src="{% static 'js/dashboard_tabs.js' %}"></script>
+  <script src="{% static 'vendor/chartjs-3.7.1/chart.min.js' %}"></script>
+  <script src="{% static 'js/baseline_census_dashboard.js' %}"></script>
+  <script src="{% static 'js/baseline_social_mobilization.js' %}"></script>
+  {{ block.super }}
+{% endblock %}

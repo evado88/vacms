@@ -17,6 +17,7 @@ from va_explorer.users.models import User
 from va_explorer.va_data_management.constants import REDACTED_STRING
 from va_explorer.va_data_management.models import (
     Household,
+    ODKFormChoice,
     VerbalAutopsy,
 )
 
@@ -79,6 +80,7 @@ def test_index_with_valid_permission(user: User):
     response = client.get("/va_data_management/")
     assert response.status_code == 200
     assert bytes(va.Id10010, "utf-8") in response.content
+    assert b'name="deceased"' in response.content
 
 
 # Get the index and make sure the VA in the system is listed
@@ -94,6 +96,75 @@ def test_index_redacted(user: User):
     assert response.status_code == 200
     assert bytes(REDACTED_STRING, "utf-8") in response.content
     assert bytes(va.Id10017, "utf-8") not in response.content
+
+
+def test_index_without_pii_permission_does_not_error(user: User):
+    can_view_record = Permission.objects.filter(codename="view_verbalautopsy").first()
+    can_view_record_group = GroupFactory.create(permissions=[can_view_record])
+    user = UserFactory.create(groups=[can_view_record_group])
+
+    client = Client()
+    client.force_login(user=user)
+
+    response = client.get("/va_data_management/")
+
+    assert response.status_code == 200
+    assert b'name="deceased"' not in response.content
+
+
+def test_index_decodes_geography_labels_from_pregnancy_odk_choices(user: User):
+    can_view_record = Permission.objects.filter(codename="view_verbalautopsy").first()
+    can_view_pii = Permission.objects.filter(codename="view_pii").first()
+    can_view_record_group = GroupFactory.create(
+        permissions=[can_view_record, can_view_pii]
+    )
+    user = UserFactory.create(groups=[can_view_record_group])
+
+    ODKFormChoice.objects.bulk_create(
+        [
+            ODKFormChoice(
+                form_name="pregnancy",
+                field_name="province",
+                value="5",
+                label="Southern",
+            ),
+            ODKFormChoice(
+                form_name="pregnancy",
+                field_name="district",
+                value="10",
+                label="Choma",
+            ),
+            ODKFormChoice(
+                form_name="pregnancy",
+                field_name="ward",
+                value="9",
+                label="Macha Ward",
+            ),
+        ]
+    )
+
+    client = Client()
+    client.force_login(user=user)
+    va = VerbalAutopsyFactory.create(
+        province="05",
+        district="10",
+        constituency="C-77",
+        ward="9.0",
+    )
+
+    response = client.get("/va_data_management/")
+
+    assert response.status_code == 200
+    assert b"Southern" in response.content
+    assert b"Choma" in response.content
+    assert b">05<" not in response.content
+    assert b">10<" not in response.content
+
+    row = next(item for item in response.context["object_list"] if item["id"] == va.id)
+    assert row["province"] == "Southern"
+    assert row["district"] == "Choma"
+    assert row["constituency"] == "C-77"
+    assert row["ward"] == "Macha Ward"
 
 
 # Request the index without permissions and make sure its forbidden
@@ -115,10 +186,13 @@ def test_index_deceased_filter_no_space(user: User):
     user = UserFactory.create(groups=[can_view_record_group])
     client = Client()
     client.force_login(user=user)
-    va = VerbalAutopsyFactory.create(Id10017="Victim", Id10018="Name")
-    response = client.get("/va_data_management/", {"deceased": "Victim"})
+    matching_va = VerbalAutopsyFactory.create(Id10017="Victim", Id10018="Name")
+    other_va = VerbalAutopsyFactory.create(Id10017="Other", Id10018="Person")
+    response = client.get("/va_data_management/", {"deceased": "VictimName"})
     assert response.status_code == 200
-    assert bytes(va.Id10017, "utf-8") in response.content
+    assert bytes(matching_va.Id10017, "utf-8") in response.content
+    assert bytes(matching_va.Id10018, "utf-8") in response.content
+    assert bytes(other_va.Id10017, "utf-8") not in response.content
 
 
 # Filter VAs by deceased using a search term with spaces
@@ -131,11 +205,13 @@ def test_index_deceased_filter_with_space(user: User):
     user = UserFactory.create(groups=[can_view_record_group])
     client = Client()
     client.force_login(user=user)
-    va = VerbalAutopsyFactory.create(Id10017="Victim", Id10018="Name")
+    matching_va = VerbalAutopsyFactory.create(Id10017="Victim", Id10018="Name")
+    other_va = VerbalAutopsyFactory.create(Id10017="Someone", Id10018="Else")
     response = client.get("/va_data_management/", {"deceased": "Victim Name"})
     assert response.status_code == 200
-    assert bytes(va.Id10017, "utf-8") in response.content
-    assert bytes(va.Id10018, "utf-8") in response.content
+    assert bytes(matching_va.Id10017, "utf-8") in response.content
+    assert bytes(matching_va.Id10018, "utf-8") in response.content
+    assert bytes(other_va.Id10017, "utf-8") not in response.content
 
 
 # Show a VA and make sure the data is as expected

@@ -3,6 +3,14 @@
 
 {% block title %}{{ feedback.subject }}{% endblock %}
 {% block heading %}{% trans "Feedback Detail" %}{% endblock %}
+{% block breadcrumbs %}
+  <nav aria-label="{% trans 'Breadcrumb' %}">
+    <ol class="breadcrumb bg-transparent p-0 mb-0">
+      <li class="breadcrumb-item"><a href="{% url 'users:feedback_mailbox' %}">{% trans "Feedback Mailbox" %}</a></li>
+      <li class="breadcrumb-item active" aria-current="page">{% trans "Feedback Detail" %}</li>
+    </ol>
+  </nav>
+{% endblock %}
 
 {% block content %}
 <div class="card shadow-sm mb-3">

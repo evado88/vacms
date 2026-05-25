@@ -7,22 +7,13 @@
 {% block content %}
   {% include 'partials/_va_update_stats.html' %}
 
-  {% if download_url %}
-    <form id="vaDownloadForm" action="{{ download_url }}" method="post" class="d-none">
-      {% csrf_token %}
-    </form>
-  {% endif %}
-
-  <section class="ou-card ou-mb-3">
-    <div class="ou-card-header">
-      <h2 class="ou-card-title">Filters</h2>
-    </div>
+  <section class="ou-card ou-mb-3 ou-va-list-filter-panel">
     <div class="ou-card-body">
-      <small class="ou-filter-note">Filter verbal autopsies by interviewer, province, district, cause of death, error status, or interview date range.</small>
-      <form method="get" class="ou-filter-row ou-va-filter-row">
+      <small class="ou-filter-note">Filter verbal autopsies by interviewer, district, cause of death, or interview date range.</small>
+      <form method="get" class="ou-filter-row ou-va-filter-row ou-va-list-filter-row">
         {% for field in filterset.form %}
-          <div class="form-group mb-0">
-            {{ field.label_tag }}
+          <div class="form-group mb-0{% if field.name == 'start_date' or field.name == 'end_date' %} ou-date-filter-group{% endif %}">
+            {% if field.label %}<label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{% endif %}
             {{ field }}
           </div>
         {% endfor %}
@@ -33,18 +24,13 @@
             {% if filterset.is_valid %}
               <a class="btn btn-secondary" href="{% url 'data_management:index' %}">Reset</a>
             {% endif %}
-            {% if download_url == "" %}
-              <button class="btn btn-primary" disabled><i class="fas fa-download"></i> Data</button>
-            {% else %}
-              <button class="btn btn-primary" type="submit" form="vaDownloadForm"><i class="fas fa-download"></i> Data</button>
-            {% endif %}
           </div>
         </div>
       </form>
     </div>
   </section>
 
-  {% include "partials/card.html" with title="Verbal Autopsies" body_template="va_data_management/partials/_va_table_card_body.html" class_name="ou-mb-3" body_class="p-0" %}
+  {% include "partials/card.html" with body_template="va_data_management/partials/_va_table_card_body.html" class_name="ou-mb-3" body_class="p-0" %}
 
   {% if page_obj.has_other_pages %}
     {% include "partials/_pagination.html" %}

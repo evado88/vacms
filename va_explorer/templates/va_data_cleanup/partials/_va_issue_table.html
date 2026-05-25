@@ -1,0 +1,43 @@
+{# Verbal-autopsy issue table shared by the Coding Issues / Indeterminate / Errors
+   sub-tabs. Expects: rows (list of dicts from _get_context_for_va_table) and
+   empty_message. `user` comes from the surrounding context. #}
+<div class="ou-card-body p-0">
+  <div class="table-responsive">
+    <table class="table table-sm table-striped mb-0">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Interviewed</th>
+          {% if not user.is_fieldworker %}<th>Interviewer</th>{% endif %}
+          <th>Facility</th>
+          <th>Deceased</th>
+          <th>Deathdate</th>
+          <th>Cause</th>
+          <th>Warnings</th>
+          <th>Errors</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+          <tr>
+            <td>{{ row.id }}</td>
+            <td>{{ row.interviewed }}</td>
+            {% if not user.is_fieldworker %}<td>{{ row.interviewer }}</td>{% endif %}
+            <td>{{ row.facility }}</td>
+            <td>{{ row.deceased }}</td>
+            <td>{{ row.dod }}</td>
+            <td>{{ row.cause }}</td>
+            <td>{{ row.warnings }}</td>
+            <td>{{ row.errors }}</td>
+            <td><a class="btn btn-primary btn-sm" href="{% url 'va_data_management:show' id=row.id %}">View</a></td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="{% if user.is_fieldworker %}9{% else %}10{% endif %}">{{ empty_message }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>

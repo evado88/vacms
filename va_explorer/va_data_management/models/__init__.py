@@ -7,6 +7,8 @@ from .odk_reference import ODKFormChoice
 from .odk_state import ODKPullLock, ODKPullState
 from .pregnancy import Pregnancy
 from .pregnancy_outcome import PregnancyOutcome, PregnancyOutcomeBaby
+from .social_mobilization import SocialMobilization
+from .srs_ea_population_target import BaselineCensusProvince, SRSEAPopulationTarget
 from .verbal_autopsy import (
     CauseCodingIssue,
     CauseOfDeath,
@@ -37,5 +39,8 @@ __all__ = [
     "ODKPullState",
     "ODKPullLock",
     "CSADailyTracker",
+    "SocialMobilization",
     "CSASupervisorTargetMap",
+    "SRSEAPopulationTarget",
+    "BaselineCensusProvince",
 ]

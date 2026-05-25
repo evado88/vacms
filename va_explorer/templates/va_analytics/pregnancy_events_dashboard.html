@@ -49,6 +49,7 @@
             data-kpis-endpoint="{% url 'va_analytics:preg-events-kpis-api' %}"
             data-place-of-birth-endpoint="{% url 'va_analytics:preg-events-place-of-birth-api' %}"
             data-map-endpoint="{% url 'va_analytics:preg-events-map-api' %}"
+            data-user-pii="{% if perms.va_analytics.view_pii %}true{% else %}false{% endif %}"
           >
             <section class="sectionContainer panelView" id="poPanelSection">
               {% include "va_analytics/partials/_pe_summary_cards.html" %}
@@ -72,5 +73,9 @@
 {% block page_scripts %}
   <script type="text/javascript" src="{% static 'vendor/chartjs-3.7.1/chart.min.js' %}"></script>
   <script type="text/javascript" src="{% static 'vendor/leaflet-1.9.2/leaflet.js' %}"></script>
-  <script type="text/javascript" src="{% static 'js/pregnancy_events_dashboard.js' %}?v=20260427a"></script>
+  <script type="text/javascript" src="{% static 'vendor/leaflet-fullscreen/Control.FullScreen.umd.js' %}"></script>
+  <script type="text/javascript" src="{% static 'js/dashboard_gps_layer.js' %}?v=20260522a"></script>
+  <script type="text/javascript" src="{% static 'js/hierarchical_dashboard_map.js' %}?v=20260522a"></script>
+  <script type="text/javascript" src="{% static 'js/map_performance_wrapper.js' %}?v=20260522a"></script>
+  <script type="text/javascript" src="{% static 'js/pregnancy_events_dashboard.js' %}?v=20260522a"></script>
 {% endblock %}

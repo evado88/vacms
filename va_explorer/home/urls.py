@@ -28,6 +28,11 @@ urlpatterns = [
         name="regional_operations_csa_component",
     ),
     path(
+        "regional-operations/components/csa/export.csv",
+        view=views.RegionalOperationsCsaCsvExport.as_view(),
+        name="regional_operations_csa_csv_export",
+    ),
+    path(
         "regional-operations/components/mso/",
         view=views.RegionalOperationsMsoComponent.as_view(),
         name="regional_operations_mso_component",

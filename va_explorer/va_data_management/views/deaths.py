@@ -1,8 +1,12 @@
+import csv
+
 from django.contrib import messages
 from django.contrib.auth.mixins import PermissionRequiredMixin
 from django.contrib.messages.views import SuccessMessageMixin
+from django.http import HttpResponse
 from django.shortcuts import redirect
 from django.urls import reverse, reverse_lazy
+from django.utils import timezone
 from django.views.generic import (
     DeleteView,
     DetailView,
@@ -11,10 +15,19 @@ from django.views.generic import (
     UpdateView,
 )
 
-from va_explorer.utils.mixins import CustomAuthMixin, LocationRestrictedQuerySetMixin
+from va_explorer.utils.mixins import (
+    AjaxListTableMixin,
+    CsvDownloadPermissionMixin,
+    CustomAuthMixin,
+    LocationRestrictedQuerySetMixin,
+)
+from va_explorer.va_data_management.constants import DEATH_PII_FIELDS, REDACTED_STRING
 from va_explorer.va_data_management.filters import DeathFilter
 from va_explorer.va_data_management.forms import DeathForm
 from va_explorer.va_data_management.models import Death
+from va_explorer.va_data_management.utils.list_cleaning import (
+    exclude_rows_with_invalid_display_values,
+)
 from va_explorer.va_data_management.utils.location_access import (
     restrict_queryset_to_user_locations,
 )
@@ -22,11 +35,16 @@ from va_explorer.vacms.permissions import user_can_manage_va_schedule
 
 
 class Deaths(
-    CustomAuthMixin, PermissionRequiredMixin, LocationRestrictedQuerySetMixin, ListView
+    AjaxListTableMixin,
+    CustomAuthMixin,
+    PermissionRequiredMixin,
+    LocationRestrictedQuerySetMixin,
+    ListView,
 ):
     permission_required = "va_data_management.view_death"
     model = Death
     template_name = "va_data_management/deaths.html"
+    list_table_template = "partials/_death_table.html"
     paginate_by = 15
 
     _SORT_FIELDS = {
@@ -39,8 +57,20 @@ class Deaths(
         "DE_06": "DE_06",
     }
 
+    display_validation_fields = (
+        "enumerator",
+        "province",
+        "district",
+        "ward",
+        "DE_03",
+        "DE_06",
+    )
+
     def get_queryset(self):
-        queryset = super().get_queryset().filter(eventid__isnull=True)
+        queryset = exclude_rows_with_invalid_display_values(
+            super().get_queryset().filter(eventid__isnull=True),
+            self.display_validation_fields,
+        )
         self.filter = DeathFilter(self.request.GET, queryset=queryset)
         order_by_raw = self.request.GET.get("order_by", "-id")
         direction = "-" if order_by_raw.startswith("-") else ""
@@ -55,6 +85,52 @@ class Deaths(
                 self.filter.form.fields.pop(field, None)
         context["filter"] = self.filter
         return context
+
+
+class DeathsCsvExport(CsvDownloadPermissionMixin, Deaths):
+    """Download the (filtered) list of unscheduled VAs as a CSV.
+
+    Reuses the Deaths queryset (location scoping + ``eventid__isnull=True`` +
+    DeathFilter), so the export matches the on-screen list. Restricted to Data
+    Managers/Admins via CsvDownloadPermissionMixin; PII columns are redacted for
+    users without ``can_view_pii``.
+    """
+
+    paginate_by = None
+
+    def get(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        redact = not request.user.can_view_pii
+        field_names = [field.name for field in Death._meta.fields]
+        filename = timezone.now().strftime("unscheduled_vas_%Y%m%d_%H%M%S.csv")
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        writer = csv.writer(response)
+        writer.writerow(field_names)
+        row_count = 0
+        for death in queryset.iterator():
+            row = []
+            for name in field_names:
+                if redact and name in DEATH_PII_FIELDS:
+                    row.append(REDACTED_STRING)
+                    continue
+                value = getattr(death, name)
+                row.append("" if value is None else value)
+            writer.writerow(row)
+            row_count += 1
+
+        from va_explorer.users.models import UserActivity
+
+        UserActivity.log(
+            UserActivity.DATA_EXPORT,
+            user=request.user,
+            request=request,
+            module="death",
+            target_type="death",
+            details=f"Exported {row_count} unscheduled VA/death record(s) as csv.",
+            extra={"format": "csv", "rows": row_count, "redacted": redact},
+        )
+        return response
 
 
 class DeathDetail(

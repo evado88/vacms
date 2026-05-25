@@ -11,44 +11,59 @@
       <span class="badge badge-secondary">Admin Only</span>
     </div>
 
-    <div class="card mb-4">
-      <div class="card-header d-flex justify-content-between align-items-center">
-        <strong>Output Console</strong>
-        <div class="btn-group btn-group-sm">
-          <button type="button" class="btn btn-outline-secondary" id="vacmsConsoleCopyBtn">Copy Output</button>
-          <button type="button" class="btn btn-outline-secondary" id="vacmsConsoleClearBtn">Clear</button>
-        </div>
-      </div>
-      <div class="card-body border-bottom py-2">
-        <div class="d-flex flex-wrap align-items-center small text-muted" id="vacmsConsoleStatusLine">
-          <span class="mr-3">Last command: <strong id="vacmsStatusCommand">N/A</strong></span>
-          <span class="mr-3">Last run: <strong id="vacmsStatusRunAt">N/A</strong></span>
-          <span class="mr-3">Duration: <strong id="vacmsStatusDuration">N/A</strong></span>
-          <span id="vacmsStatusBadge" class="badge badge-light border">No runs</span>
-        </div>
-      </div>
-      <div class="card-body p-0">
-        <pre id="vacmsCommandConsole" class="mb-0 p-3" style="max-height: 320px; overflow-y: auto; background: #0f172a; color: #e2e8f0; font-family: SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; font-size: 0.85rem;"></pre>
-      </div>
-    </div>
+    <ul class="nav nav-tabs" id="vacmsAdminPanelTabs" role="tablist">
+      <li class="nav-item" role="presentation">
+        <a class="nav-link active" id="adminTabCommands-tab" data-toggle="tab" href="#adminTabCommands" role="tab" aria-controls="adminTabCommands" aria-selected="true">Commands</a>
+      </li>
+      <li class="nav-item" role="presentation">
+        <a class="nav-link" id="adminTabCensus-tab" data-toggle="tab" href="#adminTabCensus" role="tab" aria-controls="adminTabCensus" aria-selected="false">Census Config</a>
+      </li>
+      <li class="nav-item" role="presentation">
+        <a class="nav-link" id="adminTabAlerts-tab" data-toggle="tab" href="#adminTabAlerts" role="tab" aria-controls="adminTabAlerts" aria-selected="false">Alerts</a>
+      </li>
+      <li class="nav-item" role="presentation">
+        <a class="nav-link" id="adminTabAudit-tab" data-toggle="tab" href="#adminTabAudit" role="tab" aria-controls="adminTabAudit" aria-selected="false">System Audit Trail</a>
+      </li>
+    </ul>
 
-    <div class="d-flex flex-wrap align-items-center justify-content-between mb-3">
-      <div class="input-group mb-2 mb-md-0" style="max-width: 480px;">
-        <div class="input-group-prepend">
-          <span class="input-group-text"><i class="fas fa-search"></i></span>
+    <div class="tab-content border border-top-0 p-3" id="vacmsAdminPanelTabsContent">
+      <div class="tab-pane fade show active" id="adminTabCommands" role="tabpanel" aria-labelledby="adminTabCommands-tab">
+        <div class="card mb-4">
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <strong>Output Console</strong>
+            <div class="btn-group btn-group-sm">
+              <button type="button" class="btn btn-outline-secondary" id="vacmsConsoleCopyBtn">Copy Output</button>
+              <button type="button" class="btn btn-outline-secondary" id="vacmsConsoleClearBtn">Clear</button>
+            </div>
+          </div>
+          <div class="card-body border-bottom py-2">
+            <div class="d-flex flex-wrap align-items-center small text-muted" id="vacmsConsoleStatusLine">
+              <span class="mr-3">Last command: <strong id="vacmsStatusCommand">N/A</strong></span>
+              <span class="mr-3">Last run: <strong id="vacmsStatusRunAt">N/A</strong></span>
+              <span class="mr-3">Duration: <strong id="vacmsStatusDuration">N/A</strong></span>
+              <span id="vacmsStatusBadge" class="badge badge-light border">No runs</span>
+            </div>
+          </div>
+          <div class="card-body p-0">
+            <pre id="vacmsCommandConsole" class="mb-0 p-3" style="max-height: 320px; overflow-y: auto; background: #0f172a; color: #e2e8f0; font-family: SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; font-size: 0.85rem;"></pre>
+          </div>
         </div>
-        <input id="vacmsCommandSearch" type="text" class="form-control" placeholder="Search commands by name or description">
-      </div>
-      <div class="btn-toolbar">
-        <a class="btn btn-outline-secondary btn-sm mr-2" href="{% url 'va_admin:logs' %}">Open Logs</a>
-        <button type="button" class="btn btn-outline-primary btn-sm mr-2" id="vacmsBulkUploadBtn">Bulk Upload Files</button>
-        <button type="button" class="btn btn-outline-secondary btn-sm" id="vacmsRefreshCommandsBtn">Refresh List</button>
-      </div>
-    </div>
 
-    <div class="row">
-      <div class="col-lg-8">
-        <ul class="nav nav-tabs" id="vacmsCommandTabs" role="tablist">
+        <div class="d-flex flex-wrap align-items-center justify-content-between mb-3">
+          <div class="input-group mb-2 mb-md-0" style="max-width: 480px;">
+            <div class="input-group-prepend">
+              <span class="input-group-text"><i class="fas fa-search"></i></span>
+            </div>
+            <input id="vacmsCommandSearch" type="text" class="form-control" placeholder="Search commands by name or description">
+          </div>
+          <div class="btn-toolbar">
+            <a class="btn btn-outline-secondary btn-sm mr-2" href="{% url 'va_admin:logs' %}">Open Logs</a>
+            <button type="button" class="btn btn-outline-primary btn-sm mr-2" id="vacmsBulkUploadBtn">Bulk Upload Files</button>
+            <button type="button" class="btn btn-outline-secondary btn-sm" id="vacmsRefreshCommandsBtn">Refresh List</button>
+          </div>
+        </div>
+
+        <ul class="nav nav-pills mb-3" id="vacmsCommandTabs" role="tablist">
           {% for group in command_categories %}
           <li class="nav-item" role="presentation">
             <a class="nav-link {% if forloop.first %}active{% endif %}" id="tab-{{ forloop.counter }}-tab" data-toggle="tab" href="#tab-{{ forloop.counter }}" role="tab">
@@ -58,7 +73,7 @@
           {% endfor %}
         </ul>
 
-        <div class="tab-content border border-top-0 p-3" id="vacmsCommandTabsContent">
+        <div class="tab-content border rounded p-3" id="vacmsCommandTabsContent">
           {% for group in command_categories %}
           <section class="tab-pane fade {% if forloop.first %}show active{% endif %}" id="tab-{{ forloop.counter }}" role="tabpanel">
             <div class="row">
@@ -144,7 +159,77 @@
         </div>
       </div>
 
-      <div class="col-lg-4 mt-4 mt-lg-0">
+      <div class="tab-pane fade" id="adminTabCensus" role="tabpanel" aria-labelledby="adminTabCensus-tab">
+        <section class="card mb-0" id="baselineCensusConfigSection">
+          <div class="card-header">
+            <strong>Baseline Census Config</strong>
+          </div>
+          <div class="card-body">
+            <p class="small text-muted">
+              The Baseline Census Dashboard always shows only <strong>Activated Provinces</strong>.
+              When the &ldquo;Current Census&rdquo; filter is checked, the dashboard narrows
+              further to provinces that are also part of the <strong>Current Baseline Census</strong>.
+            </p>
+            <form method="post" action="{% url 'va_admin:baseline-census-config' %}" id="baselineCensusConfigForm">
+              {% csrf_token %}
+              <div class="row">
+                <div class="col-lg-6 mb-3 pr-lg-4" style="border-right: 3px solid #6c757d;">
+                  <h6 class="mb-3">Current Baseline Census</h6>
+                  <div class="row">
+                    {% for province in baseline_census_provinces %}
+                    <div class="col-md-6 col-sm-6 mb-2">
+                      <div class="custom-control custom-checkbox">
+                        <input type="checkbox" class="custom-control-input" id="bccCurrentProvince{{ forloop.counter }}"
+                               name="current_provinces" value="{{ province.province_name }}"
+                               {% if province.is_current %}checked{% endif %}>
+                        <label class="custom-control-label" for="bccCurrentProvince{{ forloop.counter }}">
+                          {{ province.province_name }}
+                        </label>
+                      </div>
+                    </div>
+                    {% empty %}
+                    <div class="col-12">
+                      <p class="small text-muted mb-0">
+                        No provinces found. Load SRS EA population targets first.
+                      </p>
+                    </div>
+                    {% endfor %}
+                  </div>
+                </div>
+
+                <div class="col-lg-6 mb-3 pl-lg-4">
+                  <h6 class="mb-3">Activated Provinces</h6>
+                  <div class="row">
+                    {% for province in baseline_census_provinces %}
+                    <div class="col-md-6 col-sm-6 mb-2">
+                      <div class="custom-control custom-checkbox">
+                        <input type="checkbox" class="custom-control-input" id="bccActiveProvince{{ forloop.counter }}"
+                               name="active_provinces" value="{{ province.province_name }}"
+                               {% if province.is_active %}checked{% endif %}>
+                        <label class="custom-control-label" for="bccActiveProvince{{ forloop.counter }}">
+                          {{ province.province_name }}
+                        </label>
+                      </div>
+                    </div>
+                    {% empty %}
+                    <div class="col-12">
+                      <p class="small text-muted mb-0">
+                        No provinces found. Load SRS EA population targets first.
+                      </p>
+                    </div>
+                    {% endfor %}
+                  </div>
+                </div>
+              </div>
+              {% if baseline_census_provinces %}
+              <button type="submit" class="btn btn-sm btn-primary mt-2">Save Baseline Census Config</button>
+              {% endif %}
+            </form>
+          </div>
+        </section>
+      </div>
+
+      <div class="tab-pane fade" id="adminTabAlerts" role="tabpanel" aria-labelledby="adminTabAlerts-tab">
         <section class="card vacms-alerts-panel">
           <div class="card-header d-flex justify-content-between align-items-center">
             <strong>Alerts</strong>
@@ -172,6 +257,10 @@
           </div>
         </section>
       </div>
+
+      <div class="tab-pane fade" id="adminTabAudit" role="tabpanel" aria-labelledby="adminTabAudit-tab">
+        {% include "va_admin/_audit_trail.html" %}
+      </div>
     </div>
   </div>
 </div>
@@ -186,13 +275,20 @@
         </button>
       </div>
       <div class="modal-body">
-        <div class="small text-muted mb-3">Files must be in <code>va_explorer/static/data/</code>. Enter filename only.</div>
+        <div class="small text-muted mb-3">Files must already be uploaded to the admin-panel upload directory. Enter filename only.</div>
         <form id="vacmsRunCommandForm">
           {% csrf_token %}
           <div id="vacmsRunModalInputs"></div>
           <div id="vacmsDangerConfirmWrap" class="form-group d-none">
             <label class="small font-weight-bold text-danger">Type RUN to confirm destructive command</label>
             <input id="vacmsDangerConfirmInput" type="text" class="form-control form-control-sm" autocomplete="off">
+          </div>
+          <div id="vacmsPasswordConfirmWrap" class="form-group d-none">
+            <label class="small font-weight-bold" for="vacmsPasswordConfirmInput">
+              Confirm your password to run this database-altering command
+            </label>
+            <input id="vacmsPasswordConfirmInput" type="password" class="form-control form-control-sm" autocomplete="off">
+            <small class="form-text text-muted">Your password is verified server-side and is never stored or logged.</small>
           </div>
           <div id="vacmsRunModalError" class="alert alert-danger d-none mb-0"></div>
         </form>
@@ -217,7 +313,7 @@
       </div>
       <div class="modal-body">
         <p class="small text-muted mb-2">
-          Select one or more files to upload into <code>va_explorer/static/data/</code>.
+          Select one or more files to upload into the admin-panel upload directory.
           Existing files with the same names will be overwritten by default.
         </p>
         <form id="vacmsBulkUploadForm">
@@ -308,5 +404,24 @@
       csrfToken: "{{ csrf_token|escapejs }}"
     };
   </script>
-  <script src="{% static 'js/vacms_admin_panel.js' %}?v=20260219a"></script>
+  <script>
+    // Remember the active top-level admin panel tab across reloads so that, for
+    // example, saving the Baseline Census Config (a POST that redirects back to
+    // this page) reopens on the Census Config tab.
+    (function () {
+      var KEY = "vacmsAdminPanelActiveTab";
+      var $tabs = $('#vacmsAdminPanelTabs a[data-toggle="tab"]');
+      try {
+        var saved = window.localStorage.getItem(KEY);
+        if (saved && $('#' + saved).length) {
+          $('#' + saved).tab('show');
+        }
+      } catch (_) {}
+      $tabs.on('shown.bs.tab', function (e) {
+        try { window.localStorage.setItem(KEY, e.target.id); } catch (_) {}
+      });
+    })();
+  </script>
+  <script src="{% static 'js/vacms_admin_panel.js' %}?v=20260525a"></script>
+  <script src="{% static 'js/list_table.js' %}"></script>
 {% endblock %}

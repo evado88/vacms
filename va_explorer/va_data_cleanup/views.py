@@ -1,7 +1,10 @@
+from collections import defaultdict
+
 from django.contrib.auth import get_user_model
 from django.contrib.auth.mixins import PermissionRequiredMixin
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import PermissionDenied
+from django.core.paginator import Paginator
 from django.db.models import CharField, Q
 from django.db.models import Value as V
 from django.db.models.functions import Concat
@@ -24,17 +27,105 @@ from ..va_data_management.utils.date_parsing import parse_date
 from .models import DataCleanup
 
 User = get_user_model()
-MAX_DQ_RELATED_ROWS = 500
-MAX_VA_TABLE_ROWS = 5
+VA_SUBTAB_PER_PAGE = 10
+VA_SUBTABS = {"duplicates", "coding-issues", "indeterminate", "errors", "missing-gps"}
 
 
-def _norm_ref(value):
-    if value is None:
-        return ""
-    normalized = str(value).strip().lower()
-    if normalized in {"", "nan", "none", "null", "n/a", "dk"}:
-        return ""
-    return normalized
+def _paginate(request, queryset, page_param, per_page=VA_SUBTAB_PER_PAGE):
+    """Return the requested Django ``Page`` for ``queryset`` using ``page_param``."""
+    paginator = Paginator(queryset, per_page)
+    return paginator.get_page(request.GET.get(page_param))
+
+
+def _dq_rows_for_model(model, build_row, only_fields):
+    """Build display rows for a model's own open DataQualityIssues.
+
+    Returns ``(rows, issue_group_count)``. Each record is annotated with the sorted
+    set of human-readable issue labels affecting it (via DataQualityIssueMember).
+    """
+    content_type = ContentType.objects.get_for_model(model)
+    issues = (
+        DataQualityIssue.objects.filter(
+            target_model=content_type,
+            status=DataQualityIssue.OPEN,
+        )
+        .prefetch_related("members")
+        .order_by("-detected_at", "-id")
+    )
+
+    labels_by_object = defaultdict(set)
+    for issue in issues:
+        label = _issue_label(issue)
+        for member in issue.members.all():
+            labels_by_object[member.object_id].add(label)
+
+    issue_count = len(issues)
+    if not labels_by_object:
+        return [], issue_count
+
+    records = model.objects.filter(id__in=labels_by_object.keys()).only(*only_fields)
+    rows = [
+        build_row(record, sorted(labels_by_object[record.id]))
+        for record in records
+        if record.id in labels_by_object
+    ]
+    rows.sort(key=lambda row: row["id"], reverse=True)
+    return rows, issue_count
+
+
+def _household_row(record, issues):
+    return {
+        "id": record.id,
+        "key": record.key,
+        "hhn": record.hhn,
+        "province": record.province or "-",
+        "district": record.district or "-",
+        "ward": record.ward or "-",
+        "ea": record.ea or "-",
+        "issues": issues,
+    }
+
+
+def _pregnancy_row(record, issues):
+    return {
+        "id": record.id,
+        "record_name": record.PE_06 or "-",
+        "household_ref": record.PE_04 or "-",
+        "enumerator": record.enumerator or "-",
+        "province": record.province or "-",
+        "district": record.district or "-",
+        "ward": record.ward or "-",
+        "issues": issues,
+    }
+
+
+def _pregnancy_outcome_row(record, issues):
+    return {
+        "id": record.id,
+        "record_name": record.PO_04 or "-",
+        "household_ref": record.PO_02 or "-",
+        "outcome_date": record.PO_41 or "-",
+        "outcome_type": record.PO_46 or "-",
+        "enumerator": record.enumerator or "-",
+        "province": record.province or "-",
+        "district": record.district or "-",
+        "ward": record.ward or "-",
+        "issues": issues,
+    }
+
+
+def _death_row(record, issues):
+    return {
+        "id": record.id,
+        "record_name": record.DE_03 or "-",
+        "household_ref": record.DE_01 or "-",
+        "death_date": record.DE_06 or "-",
+        "enumerator": record.enumerator or "-",
+        "province": record.province or "-",
+        "district": record.district or "-",
+        "ward": record.ward or "-",
+        "issues": issues,
+    }
 
 
 def _first_cause(va):
@@ -133,28 +224,7 @@ class DataCleanupIndexView(CustomAuthMixin, PermissionRequiredMixin, ListView):
             )
         context["object_list"] = va_duplicate_rows
         context["va_duplicate_rows"] = va_duplicate_rows
-        # Keep parity with the former Home VA Statistics tables.
-        uncoded_vas = (
-            user_vas.filter(causes__isnull=True)
-            .prefetch_related("causes", "coding_issues", "location")
-            .distinct()
-        )
-        indeterminate_vas = (
-            user_vas.filter(causes__cause="Indeterminate")
-            .prefetch_related("causes", "coding_issues", "location")
-            .distinct()
-        )
-        context["va_coding_issue_rows"] = _get_context_for_va_table(
-            uncoded_vas[:MAX_VA_TABLE_ROWS], self.request.user
-        )
-        context["va_indeterminate_cod_rows"] = _get_context_for_va_table(
-            indeterminate_vas[:MAX_VA_TABLE_ROWS], self.request.user
-        )
-        context["additional_issues"] = max(uncoded_vas.count() - MAX_VA_TABLE_ROWS, 0)
-        context["additional_indeterminate_cods"] = max(
-            indeterminate_vas.count() - MAX_VA_TABLE_ROWS,
-            0,
-        )
+
         active_tab = self.request.GET.get("tab", "verbal-autopsy").strip().lower()
         allowed_tabs = {
             "household",
@@ -167,125 +237,85 @@ class DataCleanupIndexView(CustomAuthMixin, PermissionRequiredMixin, ListView):
             active_tab = "verbal-autopsy"
         context["active_cleanup_tab"] = active_tab
 
-        household_content_type = ContentType.objects.get_for_model(Household)
-        household_issues = (
-            DataQualityIssue.objects.filter(
-                target_model=household_content_type,
-                status=DataQualityIssue.OPEN,
-            )
-            .prefetch_related("members")
-            .order_by("-detected_at", "-id")
+        # ---- Verbal Autopsy sub-tabs -------------------------------------- #
+        # Coding Issues = not yet coded; Indeterminate = coded "Indeterminate";
+        # Errors = has a CauseCodingIssue with severity="error". Each sub-tab is a
+        # full, independently paginated list; only the active sub-tab builds rows.
+        active_va_subtab = (
+            self.request.GET.get("va_subtab", "duplicates").strip().lower()
         )
+        if active_va_subtab not in VA_SUBTABS:
+            active_va_subtab = "duplicates"
+        context["active_va_subtab"] = active_va_subtab
 
-        household_issue_labels = {}
-        for issue in household_issues:
-            label = _issue_label(issue)
-            for member in issue.members.all():
-                if member.object_id not in household_issue_labels:
-                    household_issue_labels[member.object_id] = set()
-                household_issue_labels[member.object_id].add(label)
+        uncoded_vas = user_vas.filter(causes__isnull=True).order_by("id").distinct()
+        indeterminate_vas = (
+            user_vas.filter(causes__cause="Indeterminate").order_by("id").distinct()
+        )
+        error_vas = (
+            user_vas.filter(coding_issues__severity="error").order_by("id").distinct()
+        )
+        # "Missing GPS" = geopoint never captured (empty/whitespace), matching the
+        # download_va_with_cod_csv "missing" classification (not "invalid").
+        missing_gps_vas = user_vas.filter(
+            Q(geopoint__isnull=True) | Q(geopoint__regex=r"^\s*$")
+        ).order_by("id")
 
-        if not household_issue_labels:
-            context["household_issue_rows"] = []
-            context["pregnancy_issue_rows"] = []
-            context["pregnancy_outcome_issue_rows"] = []
-            context["death_issue_rows"] = []
-            context["dq_issue_total"] = 0
-            return context
+        # Counts feed the sub-tab badges (cheap; no row building).
+        context["va_coding_issue_count"] = uncoded_vas.count()
+        context["va_indeterminate_count"] = indeterminate_vas.count()
+        context["va_error_count"] = error_vas.count()
+        context["va_missing_gps_count"] = missing_gps_vas.count()
 
-        household_records = {
-            household.id: household
-            for household in Household.objects.filter(
-                id__in=household_issue_labels.keys()
-            ).only("id", "key", "hhn", "hun", "province", "district", "ward", "ea")
+        subtab_sources = {
+            "coding-issues": (uncoded_vas, "ci_page", "va_coding_issue_rows"),
+            "indeterminate": (
+                indeterminate_vas,
+                "ind_page",
+                "va_indeterminate_cod_rows",
+            ),
+            "errors": (error_vas, "err_page", "va_error_rows"),
+            "missing-gps": (missing_gps_vas, "gps_page", "va_missing_gps_rows"),
         }
-
-        household_reference_map = {}
-        for household_id, household in household_records.items():
-            for raw_ref in {household.key, household.hhn}:
-                normalized = _norm_ref(raw_ref)
-                if not normalized:
-                    continue
-                household_reference_map.setdefault(normalized, set()).add(household_id)
-
-        household_issue_rows = []
-        for household_id, issue_labels in household_issue_labels.items():
-            household = household_records.get(household_id)
-            if household is None:
-                continue
-            household_issue_rows.append(
-                {
-                    "id": household.id,
-                    "key": household.key,
-                    "hhn": household.hhn,
-                    "province": household.province or "-",
-                    "district": household.district or "-",
-                    "ward": household.ward or "-",
-                    "ea": household.ea or "-",
-                    "issues": sorted(issue_labels),
-                }
+        context["va_coding_issue_rows"] = []
+        context["va_indeterminate_cod_rows"] = []
+        context["va_error_rows"] = []
+        context["va_missing_gps_rows"] = []
+        if active_va_subtab in subtab_sources:
+            queryset, page_param, rows_key = subtab_sources[active_va_subtab]
+            page = _paginate(
+                self.request,
+                queryset.prefetch_related("causes", "coding_issues", "location"),
+                page_param,
             )
-        household_issue_rows.sort(key=lambda row: row["id"], reverse=True)
-        context["household_issue_rows"] = household_issue_rows
-        context["dq_issue_total"] = len(household_issues)
-
-        reference_values = [ref for ref in household_reference_map if ref]
-        if not reference_values:
-            context["pregnancy_issue_rows"] = []
-            context["pregnancy_outcome_issue_rows"] = []
-            context["death_issue_rows"] = []
-            return context
-
-        reference_candidates = set(reference_values)
-        reference_candidates.update({value.upper() for value in reference_values})
-        reference_candidates.update({value.lower() for value in reference_values})
-
-        def map_issue_labels(reference):
-            normalized = _norm_ref(reference)
-            if not normalized:
-                return []
-            household_ids = household_reference_map.get(normalized, set())
-            labels = set()
-            for household_id in household_ids:
-                labels.update(household_issue_labels.get(household_id, set()))
-            return sorted(labels)
-
-        pregnancies = (
-            Pregnancy.objects.filter(Q(PE_04__in=reference_candidates))
-            .only(
-                "id",
-                "PE_04",
-                "PE_06",
-                "PE_07",
-                "enumerator",
-                "province",
-                "district",
-                "ward",
+            context[rows_key] = _get_context_for_va_table(
+                page.object_list, self.request.user
             )
-            .order_by("-id")
-        )[:MAX_DQ_RELATED_ROWS]
-        pregnancy_rows = []
-        for record in pregnancies:
-            issues = map_issue_labels(record.PE_04)
-            if not issues:
-                continue
-            pregnancy_rows.append(
-                {
-                    "id": record.id,
-                    "record_name": record.PE_06 or "-",
-                    "household_ref": record.PE_04 or "-",
-                    "enumerator": record.enumerator or "-",
-                    "province": record.province or "-",
-                    "district": record.district or "-",
-                    "ward": record.ward or "-",
-                    "issues": issues,
-                }
-            )
+            context["va_subtab_page"] = page
+            context["va_subtab_page_param"] = page_param
+
+        # Each tab shows the data quality issues detected on its own records,
+        # generated automatically on load (or via the dq_* management commands).
+        household_rows, household_total = _dq_rows_for_model(
+            Household,
+            _household_row,
+            ("id", "key", "hhn", "province", "district", "ward", "ea"),
+        )
+        context["household_issue_rows"] = household_rows
+        context["dq_issue_total"] = household_total
+
+        pregnancy_rows, pregnancy_total = _dq_rows_for_model(
+            Pregnancy,
+            _pregnancy_row,
+            ("id", "PE_04", "PE_06", "enumerator", "province", "district", "ward"),
+        )
         context["pregnancy_issue_rows"] = pregnancy_rows
+        context["dq_pregnancy_total"] = pregnancy_total
 
-        outcomes = (
-            PregnancyOutcome.objects.filter(Q(PO_02__in=reference_candidates))
-            .only(
+        outcome_rows, outcome_total = _dq_rows_for_model(
+            PregnancyOutcome,
+            _pregnancy_outcome_row,
+            (
                 "id",
                 "PO_02",
                 "PO_04",
@@ -295,33 +325,15 @@ class DataCleanupIndexView(CustomAuthMixin, PermissionRequiredMixin, ListView):
                 "province",
                 "district",
                 "ward",
-            )
-            .order_by("-id")
-        )[:MAX_DQ_RELATED_ROWS]
-        pregnancy_outcome_rows = []
-        for record in outcomes:
-            issues = map_issue_labels(record.PO_02)
-            if not issues:
-                continue
-            pregnancy_outcome_rows.append(
-                {
-                    "id": record.id,
-                    "record_name": record.PO_04 or "-",
-                    "household_ref": record.PO_02 or "-",
-                    "outcome_date": record.PO_41 or "-",
-                    "outcome_type": record.PO_46 or "-",
-                    "enumerator": record.enumerator or "-",
-                    "province": record.province or "-",
-                    "district": record.district or "-",
-                    "ward": record.ward or "-",
-                    "issues": issues,
-                }
-            )
-        context["pregnancy_outcome_issue_rows"] = pregnancy_outcome_rows
+            ),
+        )
+        context["pregnancy_outcome_issue_rows"] = outcome_rows
+        context["dq_pregnancy_outcome_total"] = outcome_total
 
-        deaths = (
-            Death.objects.filter(Q(DE_01__in=reference_candidates))
-            .only(
+        death_rows, death_total = _dq_rows_for_model(
+            Death,
+            _death_row,
+            (
                 "id",
                 "DE_01",
                 "DE_03",
@@ -330,28 +342,10 @@ class DataCleanupIndexView(CustomAuthMixin, PermissionRequiredMixin, ListView):
                 "province",
                 "district",
                 "ward",
-            )
-            .order_by("-id")
-        )[:MAX_DQ_RELATED_ROWS]
-        death_rows = []
-        for record in deaths:
-            issues = map_issue_labels(record.DE_01)
-            if not issues:
-                continue
-            death_rows.append(
-                {
-                    "id": record.id,
-                    "record_name": record.DE_03 or "-",
-                    "household_ref": record.DE_01 or "-",
-                    "death_date": record.DE_06 or "-",
-                    "enumerator": record.enumerator or "-",
-                    "province": record.province or "-",
-                    "district": record.district or "-",
-                    "ward": record.ward or "-",
-                    "issues": issues,
-                }
-            )
+            ),
+        )
         context["death_issue_rows"] = death_rows
+        context["dq_death_total"] = death_total
 
         return context
 

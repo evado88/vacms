@@ -1,10 +1,32 @@
 {% if messages %}
-    {% for message in messages %}
-        <div class="alert {% if message.tags %}alert-{{ message.tags }}{% endif %}">
-          {{ message }}
-          <button type="button" class="close" data-dismiss="alert" aria-label="Close">
+  <div class="vacms-flash-overlay" id="vacmsFlashOverlay" role="status" aria-live="polite">
+    <div class="vacms-flash-backdrop" data-flash-dismiss></div>
+    <div class="vacms-flash-stack">
+      {% for message in messages %}
+        <div class="alert vacms-flash-alert {% if message.tags %}alert-{{ message.tags }}{% endif %}">
+          <span class="vacms-flash-text">{{ message }}</span>
+          <button type="button" class="close vacms-flash-close" data-flash-dismiss aria-label="Close">
             <span aria-hidden="true">&times;</span>
           </button>
         </div>
-    {% endfor %}
+      {% endfor %}
+    </div>
+  </div>
+  <script>
+    (function () {
+      var overlay = document.getElementById('vacmsFlashOverlay');
+      if (!overlay) return;
+      var hide = function () {
+        if (!overlay.parentNode) return;
+        overlay.classList.add('vacms-flash-hide');
+        setTimeout(function () {
+          if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+        }, 250);
+      };
+      overlay.querySelectorAll('[data-flash-dismiss]').forEach(function (el) {
+        el.addEventListener('click', hide);
+      });
+      setTimeout(hide, 4000);
+    })();
+  </script>
 {% endif %}

@@ -543,15 +543,26 @@ def test_loading_from_dataframe_with_key():
     assert result["created"][1].location.name == "Unknown"
 
 
-def test_load_va_csv_command():
+def test_load_va_csv_command(tmp_path):
     # Location gets assigned automatically/randomly if hospital is not a facility
     # If that changes in loading.py it needs to change here too
     Location.add_root(
         name="Test Location", key="test_location", location_type="facility"
     )
 
-    # Find path to data file
-    test_data = Path(__file__).parent / "test-input-data.csv"
+    test_data = tmp_path / "test-input-data.csv"
+    test_data.write_text(
+        "\n".join(
+            [
+                "instanceid,Id10017,Id10018,Id10012,instancename,testing-dashes-Id10007,hospital",
+                "instance1,name,1,2021-03-21,_Dec---name 1---2021-03-21,name1,test_location",
+                "instance2,name,2,2021-03-22,_Dec---name 2---2021-03-22,name2,test_location",
+                "instance3,name,3,2021-03-23,_Dec---name 3---2021-03-23,name3,test_location",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
     assert VerbalAutopsy.objects.count() == 0
 

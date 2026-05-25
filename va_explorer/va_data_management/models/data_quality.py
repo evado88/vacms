@@ -12,6 +12,7 @@ class DataQualityIssue(models.Model):
     CONSENT = "consent"
     DURATION = "duration"
     TIMELINESS = "timeliness"
+    VALIDITY = "validity"
 
     ISSUE_CHOICES = [
         (DUPLICATE, "Duplicate"),
@@ -19,6 +20,7 @@ class DataQualityIssue(models.Model):
         (CONSENT, "Consent"),
         (DURATION, "Duration"),
         (TIMELINESS, "Timeliness"),
+        (VALIDITY, "Implausible / invalid value"),
     ]
 
     # ----- Status -----

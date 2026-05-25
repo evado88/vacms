@@ -4,6 +4,7 @@ from .deaths import (
     DeathDetail,
     DeathEdit,
     Deaths,
+    DeathsCsvExport,
 )
 from .households import (
     HouseholdDelete,
@@ -62,6 +63,7 @@ __all__ = [
     "PregnancyOutcomeDelete",
     "PregnancyOutcomeDeleteAll",
     "Deaths",
+    "DeathsCsvExport",
     "DeathDetail",
     "DeathEdit",
     "DeathDelete",

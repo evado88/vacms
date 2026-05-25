@@ -1,0 +1,87 @@
+{% load static i18n %}
+
+{# System Audit Trail tab. Filtering/paging is driven by list_table.js against
+   the component endpoint; only the [data-list-slot] fragment is swapped. #}
+<section class="card mb-0">
+  <div class="card-header">
+    <strong>System Audit Trail</strong>
+  </div>
+  <div class="card-body">
+    <p class="small text-muted">
+      This log records significant system actions — authentication events, changes to
+      users, roles and permissions, record create/update/delete, data imports and
+      exports/downloads, form and configuration changes, and background tasks. Records
+      are read-only; sensitive values are masked.
+    </p>
+
+    <div data-list-table>
+      <form data-list-filter class="form-inline flex-wrap mb-3" id="audit-filter-form">
+        <div class="form-group mr-2 mb-2">
+          <label for="audit-filter-action" class="mr-1 small">Type</label>
+          <select id="audit-filter-action" name="action" class="form-control form-control-sm">
+            <option value="">All Actions</option>
+            {% for group_label, options in grouped_actions %}
+            <optgroup label="{{ group_label }}">
+              {% for value, label in options %}
+              <option value="{{ value }}" {% if filters.action == value %}selected{% endif %}>{{ group_label }} › {{ label }}</option>
+              {% endfor %}
+            </optgroup>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-group mr-2 mb-2">
+          <label for="audit-filter-status" class="mr-1 small">Status</label>
+          <select id="audit-filter-status" name="status" class="form-control form-control-sm">
+            <option value="">All</option>
+            {% for value, label in status_choices %}
+            <option value="{{ value }}" {% if filters.status == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-group mr-2 mb-2">
+          <label for="audit-filter-user" class="mr-1 small">Initiator</label>
+          <input type="text" id="audit-filter-user" name="user_email" class="form-control form-control-sm"
+                 placeholder="e.g. jane@example.com" value="{{ filters.user_email|default:'' }}">
+        </div>
+        <div class="form-group mr-2 mb-2">
+          <label for="audit-filter-module" class="mr-1 small">Module/Target</label>
+          <input type="text" id="audit-filter-module" name="module" class="form-control form-control-sm"
+                 placeholder="e.g. odk, death" value="{{ filters.module|default:'' }}">
+        </div>
+        <div class="form-group mr-2 mb-2">
+          <label for="audit-filter-ip" class="mr-1 small">IP</label>
+          <input type="text" id="audit-filter-ip" name="ip_address" class="form-control form-control-sm"
+                 placeholder="IP address" value="{{ filters.ip_address|default:'' }}">
+        </div>
+        <div class="form-group mr-2 mb-2">
+          <label for="audit-filter-q" class="mr-1 small">Search</label>
+          <input type="text" id="audit-filter-q" name="q" class="form-control form-control-sm"
+                 placeholder="Keyword" value="{{ filters.q|default:'' }}">
+        </div>
+        <div class="form-group mr-2 mb-2">
+          <label for="audit-filter-start" class="mr-1 small">From</label>
+          <input type="date" id="audit-filter-start" name="start_date" class="form-control form-control-sm"
+                 value="{{ filters.start_date|default:'' }}">
+        </div>
+        <div class="form-group mr-2 mb-2">
+          <label for="audit-filter-end" class="mr-1 small">To</label>
+          <input type="date" id="audit-filter-end" name="end_date" class="form-control form-control-sm"
+                 value="{{ filters.end_date|default:'' }}">
+        </div>
+        <div class="mb-2 ml-auto">
+          <a href="{% url 'va_admin:activity-log-download' %}"
+             data-list-download
+             class="btn btn-sm btn-outline-success"
+             aria-label="Download CSV"
+             title="Download CSV">
+            <i class="fas fa-download" aria-hidden="true"></i> Download CSV
+          </a>
+        </div>
+      </form>
+
+      <div data-list-slot data-endpoint="{% url 'va_admin:activity-log' %}?component=1">
+        {% include "va_admin/_audit_trail_table.html" %}
+      </div>
+    </div>
+  </div>
+</section>

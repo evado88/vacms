@@ -13,6 +13,7 @@ from va_explorer.va_data_management.models import (
     VerbalAutopsy,
 )
 from va_explorer.vacms.cmsmodels.events import Event
+from va_explorer.vacms.models import AdminCommandRun
 
 GROUPS_PERMISSIONS = {
     "Admins": {
@@ -30,9 +31,10 @@ GROUPS_PERMISSIONS = {
         Death: ["view_death", "change_death"],
         Event: ["view_event", "change_event"],
         DataCleanup: ["view_datacleanup", "download", "bulk_download"],
+        AdminCommandRun: ["can_run_admin_commands"],
     },
     "Data Managers": {
-        Dashboard: ["view_dashboard", "view_pii", "supervise_users"],
+        Dashboard: ["view_dashboard", "download_data", "view_pii", "supervise_users"],
         User: [],
         VerbalAutopsy: [
             "change_verbalautopsy",

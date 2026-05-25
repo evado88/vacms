@@ -276,9 +276,6 @@ class UserUpdateView(
         return self._cached_object
 
     def form_valid(self, form):
-        # refresh the updated users session to apply their new role permissions
-        user = User.objects.get(pk=self.kwargs["pk"])
-        update_session_auth_hash(self.request, user)
         return super().form_valid(form)
 
     def get_initial(self):

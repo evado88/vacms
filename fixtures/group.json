@@ -118,6 +118,11 @@
                "bulk_download",
                "va_data_cleanup",
                "datacleanup"
+            ],
+            [
+               "can_run_admin_commands",
+               "vacms",
+               "admincommandrun"
             ]
          ]
       }
@@ -129,6 +134,11 @@
          "permissions": [
             [
                "view_dashboard",
+               "va_analytics",
+               "dashboard"
+            ],
+            [
+               "download_data",
                "va_analytics",
                "dashboard"
             ],

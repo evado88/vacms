@@ -1,2 +1,2 @@
-<button class="btn btn-primary" type="submit">Apply Filters</button>
 <a href="{% url 'cms-event-list' %}" class="btn btn-secondary">Reset</a>
+{% if request.user.can_download_csv_exports %}<a href="{% url 'cms-event-list-csv' %}{% if request.GET.urlencode %}?{{ request.GET.urlencode }}{% endif %}" class="btn btn-outline-secondary" data-list-download aria-label="Download CSV" title="Download CSV"><i class="fas fa-download" aria-hidden="true"></i></a>{% endif %}

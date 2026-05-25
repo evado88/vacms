@@ -101,6 +101,9 @@ def process_user_data(user, cleaned_data):
             "content_type__app_label", "codename"
         )
     }
+    # Lift stale denials for permissions now granted by the assigned group so
+    # that a role change doesn't silently leave old overrides in place.
+    denied_permissions -= group_permissions
 
     # Handle individual permission checkboxes as per-user overrides:
     # - checked: ensure user effectively has permission

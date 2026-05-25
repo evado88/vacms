@@ -3,7 +3,7 @@ from datetime import timedelta
 
 from django.core.exceptions import FieldDoesNotExist
 from django.db.models import Count, Max, Q, TextField
-from django.db.models.functions import Greatest
+from django.db.models.functions import Greatest, Lower
 from django.utils import timezone
 
 from va_explorer.home.services.common import (
@@ -311,6 +311,28 @@ def _build_scoped_querysets(request, location_level, location_value):
     return households_qs, pregnancies_qs, pregnancy_outcomes_qs, deaths_qs, va_qs
 
 
+def _exclude_census_querysets_by_province(querysets, excluded_provinces):
+    """Drop rows in ``excluded_provinces`` from the four census querysets.
+
+    Used by the Baseline Census Dashboard's overview KPIs when the "Current
+    Baseline Census" filter is on. Matching is case-insensitive against the
+    denormalised ``province`` text field. The VerbalAutopsy queryset (5th) is
+    returned untouched — it has no plain ``province`` field and the
+    baseline-census overview does not surface VAs.
+    """
+    lowered = {str(p).strip().lower() for p in (excluded_provinces or []) if p}
+    if not lowered:
+        return querysets
+    households_qs, pregnancies_qs, pregnancy_outcomes_qs, deaths_qs, va_qs = querysets
+    filtered = tuple(
+        qs.annotate(_province_lower=Lower("province")).exclude(
+            _province_lower__in=lowered
+        )
+        for qs in (households_qs, pregnancies_qs, pregnancy_outcomes_qs, deaths_qs)
+    )
+    return (*filtered, va_qs)
+
+
 def _prefilter_by_submissiondate(querysets, start_dt):
     if start_dt is None:
         return querysets
@@ -330,9 +352,16 @@ def get_national_operational_view_data(
     location_level="national",
     location_value="",
     include_chart_series=True,
+    census_province_exclude=None,
 ):
     if end_dt is None:
         end_dt = timezone.localtime(timezone.now())
+
+    scoped_querysets = _build_scoped_querysets(request, location_level, location_value)
+    if census_province_exclude:
+        scoped_querysets = _exclude_census_querysets_by_province(
+            scoped_querysets, census_province_exclude
+        )
 
     (
         households_qs,
@@ -340,10 +369,7 @@ def get_national_operational_view_data(
         pregnancy_outcomes_qs,
         deaths_qs,
         va_qs,
-    ) = _prefilter_by_submissiondate(
-        _build_scoped_querysets(request, location_level, location_value),
-        start_dt,
-    )
+    ) = _prefilter_by_submissiondate(scoped_querysets, start_dt)
 
     with timed_block("home.nov.kpi_counts.households", request=request):
         households_totals = _db_windowed_counts(

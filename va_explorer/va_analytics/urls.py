@@ -1,3 +1,4 @@
+from django.db import transaction
 from django.urls import path
 
 from va_explorer.home.views import (
@@ -37,17 +38,77 @@ from va_explorer.va_analytics.views import (
     PregnancyOutcomesTrendAPIView,
     PregnancySummaryAPIView,
     PregnancyTrendAPIView,
+    baseline_census_chart_data_view,
+    baseline_census_dashboard_view,
+    baseline_census_overview_filter_data_view,
+    baseline_census_overview_kpis_component_view,
+    baseline_census_overview_map_data_view,
+    baseline_census_province_table_component_view,
+    baseline_census_table_csv_export_view,
     dashboard_map_view,
     dashboard_view,
     outcomes_dashboard_view,
     pregnancy_dashboard_view,
     pregnancy_events_dashboard_view,
+    social_mobilization_chart_data_view,
+    social_mobilization_component_view,
+    social_mobilization_kpis_component_view,
     user_supervision_view,
 )
 
 app_name = "va_analytics"
 urlpatterns = [
     path("dashboard/", view=dashboard_view, name="dashboard"),
+    path(
+        "baseline-census-dashboard/",
+        view=baseline_census_dashboard_view,
+        name="baseline-census-dashboard",
+    ),
+    path(
+        "baseline-census/overview/filter-data/",
+        view=transaction.non_atomic_requests(baseline_census_overview_filter_data_view),
+        name="baseline-census-overview-filter-data",
+    ),
+    path(
+        "baseline-census/overview/map-data/",
+        view=transaction.non_atomic_requests(baseline_census_overview_map_data_view),
+        name="baseline-census-overview-map-data",
+    ),
+    path(
+        "baseline-census/components/overview/kpis/",
+        view=baseline_census_overview_kpis_component_view,
+        name="baseline-census-overview-kpis-component",
+    ),
+    path(
+        "baseline-census/components/overview/province-table/",
+        view=baseline_census_province_table_component_view,
+        name="baseline-census-province-table-component",
+    ),
+    path(
+        "baseline-census/components/overview/province-table/export.csv",
+        view=baseline_census_table_csv_export_view,
+        name="baseline-census-province-table-csv-export",
+    ),
+    path(
+        "baseline-census/components/chart/census-chart-data/",
+        view=baseline_census_chart_data_view,
+        name="baseline-census-chart-data",
+    ),
+    path(
+        "baseline-census/components/social-mobilization/",
+        view=social_mobilization_component_view,
+        name="baseline-census-social-mobilization-component",
+    ),
+    path(
+        "baseline-census/components/social-mobilization/kpis/",
+        view=social_mobilization_kpis_component_view,
+        name="baseline-census-social-mobilization-kpis-component",
+    ),
+    path(
+        "baseline-census/components/social-mobilization/chart-data/",
+        view=social_mobilization_chart_data_view,
+        name="baseline-census-social-mobilization-chart-data",
+    ),
     path(
         "pregnancy-dashboard/",
         view=pregnancy_dashboard_view,

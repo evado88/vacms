@@ -1,4 +1,4 @@
-<main
+<section
   id="rumorDetailsDashboardApp"
   class="outcomes-dashboard-root"
   data-component="dashboard"
@@ -8,57 +8,7 @@
   data-word-cloud-endpoint="{% url 'home:rumor_details_word_cloud_api' %}"
   data-user-pii="{% if perms.va_analytics.view_pii %}true{% else %}false{% endif %}"
 >
-  <!-- Row 1: Filters -->
-  <div class="rumor-details-filters-row">
-    <section class="sectionContainer" id="rumorDetailsFiltersSection" data-component="filters">
-      <form id="rumorDetailsFiltersForm" class="controls" data-component="filters" method="get" action="{% url 'home:index' %}">
-        <small class="dashboard-note">
-          Note: this dashboard visualizes CSA rumor events; all charts reflect the filtered total above.
-        </small>
-
-        <div class="filtersRow">
-          <div class="mainFiltersContainer">
-            <label for="rumorDetailsFilterTimePreset">Rumor Date:</label>
-            <select id="rumorDetailsFilterTimePreset" class="select" name="time_preset">
-              <option value="all_time" {% if filter_time_preset == "all_time" %}selected{% endif %}>All time</option>
-              <option value="last_30_days" {% if filter_time_preset == "last_30_days" %}selected{% endif %}>Last 30 days</option>
-              <option value="last_7_days" {% if filter_time_preset == "last_7_days" %}selected{% endif %}>Last 7 days</option>
-              <option value="last_24_hours" {% if filter_time_preset == "last_24_hours" %}selected{% endif %}>Last 24 hours</option>
-              <option value="custom" {% if filter_time_preset == "custom" %}selected{% endif %}>Custom</option>
-            </select>
-          </div>
-
-          <div class="betweenDatesContainer customDatesContainer">
-            <span>Between</span>
-            <label for="rumorDetailsFilterStartDatetime" class="sr-only">Start Date</label>
-            <input id="rumorDetailsFilterStartDatetime" class="input" type="date" name="start_datetime" value="{{ filter_start_datetime }}">
-            <span>and</span>
-            <label for="rumorDetailsFilterEndDatetime" class="sr-only">End Date</label>
-            <input id="rumorDetailsFilterEndDatetime" class="input" type="date" name="end_datetime" value="{{ filter_end_datetime }}">
-          </div>
-
-          <div class="mainFiltersContainer">
-            <label for="rumorDetailsFilterGeoLevel">Geography:</label>
-            <select id="rumorDetailsFilterGeoLevel" class="select" name="geography_level">
-              <option value="" {% if not filter_geography_level %}selected{% endif %}>All</option>
-              <option value="province" {% if filter_geography_level == "province" %}selected{% endif %}>Province</option>
-              <option value="district" {% if filter_geography_level == "district" %}selected{% endif %}>District</option>
-              <option value="constituency" {% if filter_geography_level == "constituency" %}selected{% endif %}>Constituency</option>
-              <option value="ward" {% if filter_geography_level == "ward" %}selected{% endif %}>Ward</option>
-            </select>
-            <label for="rumorDetailsFilterGeoValue" class="sr-only">Geography value</label>
-            <input id="rumorDetailsFilterGeoValue" class="input" type="text" name="geography_value" placeholder="Name (e.g. Lusaka Province)" value="{{ filter_geography_value }}">
-          </div>
-
-          <div class="formBtnsContainer">
-            <button id="rumorDetailsFiltersReset" type="button" class="button resetBtn">Reset</button>
-          </div>
-        </div>
-      </form>
-    </section>
-  </div>
-
-  <!-- Row 2: Word cloud (left) + tables (right) -->
+  <!-- Word cloud (left) + tables (right) -->
   <div class="rumor-details-content-row">
     <div class="rumor-details-col-left">
       <section class="sectionContainer" id="rumorDetailsWordCloudSection">
@@ -131,4 +81,4 @@
       </section>
     </div>
   </div>
-</main>
+</section>

@@ -1,16 +1,11 @@
 from crispy_forms.helper import FormHelper
 from django import forms
 from django.core.exceptions import ValidationError
-from django.forms import Select, TextInput
-from django_filters import BooleanFilter, CharFilter, DateFilter, FilterSet
+from django.forms import TextInput
+from django_filters import CharFilter, DateFilter, FilterSet
 from fuzzywuzzy import fuzz
 
 from .models import Death, Household, Pregnancy, PregnancyOutcome, VerbalAutopsy
-
-TRUE_FALSE_CHOICES = (
-    (False, "No"),
-    (True, "Yes"),
-)
 
 
 def validate_integer(value: str):
@@ -25,8 +20,18 @@ class DateInput(forms.DateInput):
     input_type = "date"
 
 
+def date_filter_widget(placeholder: str):
+    return DateInput(
+        attrs={
+            "class": "form-date datepicker",
+            "placeholder": placeholder,
+            "aria-label": placeholder,
+        }
+    )
+
+
 # =============================================================
-# Shared base filter — province / district / ward / enumerator
+# Shared base filter — district / ward / enumerator
 # are declared on every list FilterSet.  Subclasses inherit
 # these fields and only need to declare model-specific extras.
 # =============================================================
@@ -34,37 +39,55 @@ class GeoEnumeratorFilterSet(FilterSet):
     """Abstract base providing shared geography + enumerator filters.
 
     Concrete subclasses must declare their own ``class Meta`` with ``model``
-    and ``fields``; they do NOT need to redeclare province/district/ward/enumerator.
+    and ``fields``; they do NOT need to redeclare district/ward/enumerator.
     """
 
-    province = CharFilter(
-        field_name="province",
-        lookup_expr="icontains",
-        label="Province",
-        widget=TextInput(attrs={"class": "form-text"}),
-    )
     district = CharFilter(
         field_name="district",
         lookup_expr="icontains",
-        label="District",
-        widget=TextInput(attrs={"class": "form-text"}),
+        label="",
+        widget=TextInput(
+            attrs={
+                "class": "form-text",
+                "placeholder": "District",
+                "aria-label": "District",
+            }
+        ),
     )
     ward = CharFilter(
         field_name="ward",
         lookup_expr="icontains",
-        label="Ward",
-        widget=TextInput(attrs={"class": "form-text"}),
+        label="",
+        widget=TextInput(
+            attrs={"class": "form-text", "placeholder": "Ward", "aria-label": "Ward"}
+        ),
     )
     enumerator = CharFilter(
         field_name="enumerator",
         lookup_expr="icontains",
-        label="Enumerator",
-        widget=TextInput(attrs={"class": "form-text"}),
+        label="",
+        widget=TextInput(
+            attrs={
+                "class": "form-text",
+                "placeholder": "Enumerator",
+                "aria-label": "Enumerator",
+            }
+        ),
     )
 
     class Meta:
         abstract = True
         fields = []
+
+    field_order = ()
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.form.helper = FormHelper()
+        self.form.helper.form_tag = False
+        self.form.helper.disable_csrf = True
+        if self.field_order:
+            self.form.order_fields(self.field_order)
 
 
 # =========================
@@ -74,43 +97,57 @@ class VAFilter(FilterSet):
     interviewer = CharFilter(
         field_name="Id10010",
         lookup_expr="icontains",
-        label="Interviewer",
-        widget=TextInput(attrs={"class": "form-text"}),
+        label="",
+        widget=TextInput(
+            attrs={
+                "class": "form-text",
+                "placeholder": "Interviewer",
+                "aria-label": "Interviewer",
+            }
+        ),
     )
-    province = CharFilter(
-        field_name="province",
-        lookup_expr="icontains",
-        label="Province",
-        widget=TextInput(attrs={"class": "form-text"}),
+    deceased = CharFilter(
+        method="filter_deceased",
+        label="",
+        widget=TextInput(
+            attrs={
+                "class": "form-text",
+                "placeholder": "Deceased",
+                "aria-label": "Deceased",
+            }
+        ),
     )
     district = CharFilter(
         field_name="district",
         lookup_expr="icontains",
-        label="District",
-        widget=TextInput(attrs={"class": "form-text"}),
+        label="",
+        widget=TextInput(
+            attrs={
+                "class": "form-text",
+                "placeholder": "District",
+                "aria-label": "District",
+            }
+        ),
     )
     start_date = DateFilter(
         field_name="Id10023",
         lookup_expr="gte",
-        label="Earliest Date",
-        widget=DateInput(attrs={"class": "form-date datepicker"}),
+        label="Earliest",
+        widget=date_filter_widget("Earliest Date"),
     )
     end_date = DateFilter(
         field_name="Id10023",
         lookup_expr="lte",
-        label="Latest Date",
-        widget=DateInput(attrs={"class": "form-date datepicker"}),
+        label="Latest",
+        widget=date_filter_widget("Latest Date"),
     )
     cause = CharFilter(
         field_name="causes__cause",
         lookup_expr="icontains",
-        label="Cause",
-        widget=TextInput(attrs={"class": "form-text"}),
-    )
-    only_errors = BooleanFilter(
-        method="filter_errors",
-        label="Only Errors",
-        widget=Select(choices=TRUE_FALSE_CHOICES, attrs={"class": "custom-select"}),
+        label="",
+        widget=TextInput(
+            attrs={"class": "form-text", "placeholder": "Cause", "aria-label": "Cause"}
+        ),
     )
 
     class Meta:
@@ -131,17 +168,14 @@ class VAFilter(FilterSet):
                 va.get("id")
                 for va in vas
                 if fuzz.token_set_ratio(
-                    value, " ".join([va.get("Id10017"), va.get("Id10018")])
+                    value,
+                    " ".join(
+                        part for part in [va.get("Id10017"), va.get("Id10018")] if part
+                    ),
                 )
                 > threshold
             ]
             return queryset.filter(id__in=matches)
-        return queryset
-
-    def filter_errors(self, queryset, name, value):
-        # Keep as-is for VA: project-specific relation "coding_issues"
-        if value:
-            return queryset.filter(coding_issues__severity="error").distinct()
         return queryset
 
 
@@ -149,23 +183,27 @@ class VAFilter(FilterSet):
 # Pregnancy list
 # =========================
 class PregnancyFilter(GeoEnumeratorFilterSet):
+    field_order = ("id", "enumerator", "district", "ward", "start_date", "end_date")
+
     id = CharFilter(
         field_name="id",
         lookup_expr="icontains",
-        label="ID",
-        widget=TextInput(attrs={"class": "form-text"}),
+        label="",
+        widget=TextInput(
+            attrs={"class": "form-text", "placeholder": "ID", "aria-label": "ID"}
+        ),
     )
     start_date = DateFilter(
         field_name="created",
         lookup_expr="gte",
-        label="Earliest Record Date",
-        widget=DateInput(attrs={"class": "form-date datepicker"}),
+        label="Earliest",
+        widget=date_filter_widget("Earliest Date"),
     )
     end_date = DateFilter(
         field_name="created",
         lookup_expr="lte",
-        label="Latest Record Date",
-        widget=DateInput(attrs={"class": "form-date datepicker"}),
+        label="Latest",
+        widget=date_filter_widget("Latest Date"),
     )
 
     class Meta:
@@ -177,17 +215,15 @@ class PregnancyFilter(GeoEnumeratorFilterSet):
 # Household list
 # =========================
 class HouseholdFilter(GeoEnumeratorFilterSet):
+    field_order = ("id", "enumerator", "district", "ward")
+
     id = CharFilter(
         field_name="id",
         lookup_expr="icontains",
-        label="ID",
-        widget=TextInput(attrs={"class": "form-text"}),
-    )
-    supervisor = CharFilter(
-        field_name="supervisor",
-        lookup_expr="icontains",
-        label="Supervisor",
-        widget=TextInput(attrs={"class": "form-text"}),
+        label="",
+        widget=TextInput(
+            attrs={"class": "form-text", "placeholder": "ID", "aria-label": "ID"}
+        ),
     )
 
     class Meta:
@@ -199,23 +235,38 @@ class HouseholdFilter(GeoEnumeratorFilterSet):
 # Pregnancy Outcome list
 # =========================
 class PregnancyOutcomeFilter(GeoEnumeratorFilterSet):
+    field_order = (
+        "enumerator",
+        "district",
+        "ward",
+        "outcome_type",
+        "start_date",
+        "end_date",
+    )
+
     outcome_type = CharFilter(
         field_name="po_group",
         lookup_expr="icontains",
-        label="Pregnancy Outcome",
-        widget=TextInput(attrs={"class": "form-text"}),
+        label="",
+        widget=TextInput(
+            attrs={
+                "class": "form-text",
+                "placeholder": "Pregnancy Outcome",
+                "aria-label": "Pregnancy Outcome",
+            }
+        ),
     )
     start_date = DateFilter(
         field_name="PO_41",
         lookup_expr="gte",
-        label="Earliest Date of Delivery",
-        widget=DateInput(attrs={"class": "form-date datepicker"}),
+        label="Earliest",
+        widget=date_filter_widget("Earliest Date"),
     )
     end_date = DateFilter(
         field_name="PO_41",
         lookup_expr="lte",
-        label="Latest Date of Delivery",
-        widget=DateInput(attrs={"class": "form-date datepicker"}),
+        label="Latest",
+        widget=date_filter_widget("Latest Date"),
     )
 
     class Meta:
@@ -227,23 +278,38 @@ class PregnancyOutcomeFilter(GeoEnumeratorFilterSet):
 # Death list
 # =========================
 class DeathFilter(GeoEnumeratorFilterSet):
+    field_order = (
+        "enumerator",
+        "district",
+        "ward",
+        "deceased",
+        "start_date",
+        "end_date",
+    )
+
     deceased = CharFilter(
         field_name="DE_03",
         lookup_expr="icontains",
-        label="Deceased",
-        widget=TextInput(attrs={"class": "form-text"}),
+        label="",
+        widget=TextInput(
+            attrs={
+                "class": "form-text",
+                "placeholder": "Deceased",
+                "aria-label": "Deceased",
+            }
+        ),
     )
     start_date = DateFilter(
         field_name="DE_06",
         lookup_expr="gte",
-        label="Earliest Date of Death",
-        widget=DateInput(attrs={"class": "form-date datepicker"}),
+        label="Earliest",
+        widget=date_filter_widget("Earliest Date"),
     )
     end_date = DateFilter(
         field_name="DE_06",
         lookup_expr="lte",
-        label="Latest Date of Death",
-        widget=DateInput(attrs={"class": "form-date datepicker"}),
+        label="Latest",
+        widget=date_filter_widget("Latest Date"),
     )
 
     class Meta:

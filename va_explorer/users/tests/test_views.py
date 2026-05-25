@@ -1,7 +1,10 @@
+from unittest.mock import Mock, patch
+
 import pytest
 from django.contrib.auth.models import AnonymousUser, Group, Permission
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import PermissionDenied
+from django.http import HttpResponse
 from django.test import Client, RequestFactory
 from django.urls import reverse
 
@@ -268,6 +271,33 @@ class TestUserUpdateView:
 
         assert "group_permissions_json" in context
         assert '"Admins"' in context["group_permissions_json"]
+
+    def test_form_valid_does_not_refresh_session_auth_hash(
+        self, user: User, rf: RequestFactory
+    ):
+        admin_group = seeded_group("Admins")
+        acting_user = UserFactory.create(groups=[admin_group])
+        target_user = UserFactory.create(groups=[admin_group])
+
+        view = UserUpdateView()
+        request = rf.post(f"/users/update/{target_user.id}/")
+        request.user = acting_user
+
+        view.setup(request, pk=target_user.id)
+        view.object = target_user
+
+        with (
+            patch(
+                "django.contrib.messages.views.SuccessMessageMixin.form_valid",
+                return_value=HttpResponse(status=302),
+            ) as mock_super,
+            patch("va_explorer.users.views.update_session_auth_hash") as mock_hash,
+        ):
+            response = view.form_valid(Mock())
+
+        assert response.status_code == 302
+        mock_super.assert_called_once()
+        mock_hash.assert_not_called()
 
 
 class TestUserSetPasswordView:

@@ -140,7 +140,7 @@ def import_from_kobo():
         num_corrected = num_corrected + len(results["corrected"])
         num_invalid = num_invalid + len(results["removed"])
 
-    return {
+    counts = {
         "num_ignored": num_ignored,
         "num_outdated": num_outdated,
         "num_created": num_created,
@@ -148,6 +148,17 @@ def import_from_kobo():
         "num_corrected": num_corrected,
         "num_removed": num_invalid,
     }
+
+    from va_explorer.users.models import UserActivity
+
+    UserActivity.log(
+        UserActivity.DATA_IMPORT,
+        module="kobo",
+        details=f"Kobo import: {num_created} created, {num_enriched} enriched, "
+        f"{num_corrected} corrected, {num_ignored} ignored, {num_invalid} removed.",
+        extra=counts,
+    )
+    return counts
 
 
 @app.task()
@@ -180,6 +191,15 @@ def pull_odk_scheduled(schedule_key=None):
     summary = service.pull_forms(configs)
     logger.info(
         "ODK scheduled pull complete",
+        extra={"schedule_key": schedule_key, "summary": summary},
+    )
+
+    from va_explorer.users.models import UserActivity
+
+    UserActivity.log(
+        UserActivity.DATA_IMPORT,
+        module="odk",
+        details=f"ODK scheduled pull complete (schedule={schedule_key or 'all'}).",
         extra={"schedule_key": schedule_key, "summary": summary},
     )
     return summary

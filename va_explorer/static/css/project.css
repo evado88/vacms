@@ -10,6 +10,61 @@
   color: #b94a48;
 }
 
+.vacms-flash-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1080;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: none;
+  animation: vacms-flash-fade-in 150ms ease-out;
+}
+
+.vacms-flash-overlay.vacms-flash-hide {
+  animation: vacms-flash-fade-out 250ms ease-in forwards;
+}
+
+.vacms-flash-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.vacms-flash-stack {
+  position: relative;
+  margin-top: 80px;
+  width: min(560px, calc(100% - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+.vacms-flash-alert {
+  margin: 0;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.vacms-flash-close {
+  margin-left: auto;
+}
+
+@keyframes vacms-flash-fade-in {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes vacms-flash-fade-out {
+  to { opacity: 0; transform: translateY(-8px); }
+}
+
 body {
   padding-bottom: 70px;
 }
@@ -46,6 +101,76 @@ body {
 
 .filter-button {
   margin-left: 5px;
+}
+
+/* Census-style AJAX list tables (deaths, pregnancies, outcomes, households, events) */
+.vacms-list-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.vacms-list-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f5f6f7;
+  border-bottom: 2px solid #e0e3e6;
+  padding: 8px 10px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.vacms-list-table thead th a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.vacms-list-table thead th a:hover {
+  text-decoration: underline;
+}
+
+.vacms-list-table tbody td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #eef0f2;
+  vertical-align: middle;
+}
+
+.vacms-list-table tbody tr:hover {
+  background: #f8fbf9;
+}
+
+[data-list-slot] .ou-pagination-nav {
+  margin-top: 12px;
+}
+
+.vacms-list-tabs {
+  background: transparent;
+  margin: 0;
+  padding: 0 8px;
+}
+
+.vacms-list-tabs .nav-link {
+  cursor: pointer;
+}
+
+.app-page-container .vacms-list-tabs.nav-tabs .nav-link {
+  background: var(--vacms-card);
+  border-color: var(--vacms-border-strong) var(--vacms-border-strong) var(--vacms-card);
+  font-weight: 600;
+}
+
+.app-page-container .vacms-list-tabs.nav-tabs .nav-link.active {
+  background: linear-gradient(180deg, #dff7e8 0%, #f5fff8 100%);
+  border-color: #e9ecef #e9ecef var(--vacms-border-strong);
+}
+
+.vacms-list-tabs .nav-link .badge {
+  margin-left: 4px;
+}
+
+.vacms-list-table-card {
+  margin-top: -1px;
 }
 
 .form-date {
@@ -317,6 +442,18 @@ a.auth-title-link:active {
   margin-right: -15px;
   display: flex;
   margin-top: 1rem!important;
+}
+
+.data-management-detail-content {
+  margin-left: 10px;
+  max-width: calc(100% - 10px);
+}
+
+.data-management-detail-content .tab-spacing,
+.data-management-detail-content > .row,
+.data-management-detail-content > .tab-content > .tab-pane > .row {
+  margin-left: 0;
+  margin-right: 0;
 }
 
 .msg-header {
@@ -1322,6 +1459,14 @@ body.modal-open {
   min-width: 0;
 }
 
+.top-navigation-wrapper .top-nav-collapse {
+  min-width: 0;
+}
+
+.top-navigation-wrapper .top-nav-spacer {
+  min-width: 0;
+}
+
 .top-navigation-wrapper .navbar-brand {
   align-items: center;
   display: flex;
@@ -1343,6 +1488,61 @@ body.modal-open {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.top-navigation-wrapper .top-nav-right-group {
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 0.1rem;
+}
+
+.top-navigation-wrapper .top-nav-right-group .nav-link {
+  white-space: nowrap;
+}
+
+.top-navigation-wrapper .top-nav-dashboard-item .nav-link {
+  font-weight: 500;
+  padding-left: 0.75rem;
+  padding-right: 0.75rem;
+}
+
+.top-navigation-wrapper .top-nav-dashboard-item .nav-link.active,
+.top-navigation-wrapper .top-nav-dashboard-item .nav-link.active:hover,
+.top-navigation-wrapper .top-nav-dashboard-item .nav-link.active:focus {
+  background: transparent !important;
+  border-right: 0;
+  color: #e67816 !important;
+}
+
+/* Top-nav hover tooltips — mirror the sidebar tooltip styling
+   (#sidebar-tooltip in sidebar.css) but anchored below the menu item. */
+.top-navigation-wrapper .top-nav-dashboard-item {
+  position: relative;
+}
+
+.top-navigation-wrapper .top-nav-dashboard-item .nav-link[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 6px;
+  background: rgba(30, 30, 30, 0.7);
+  color: #fff;
+  padding: 5px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: bold;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  z-index: 9999;
+}
+
+.top-navigation-wrapper .top-nav-dashboard-item .nav-link[data-tooltip]:hover::after,
+.top-navigation-wrapper .top-nav-dashboard-item .nav-link[data-tooltip]:focus::after {
+  opacity: 1;
 }
 
 body {
@@ -1397,6 +1597,10 @@ body {
   margin-top: 0.25rem;
   color: #6b7280;
   font-size: 0.82rem;
+}
+
+.breadcrumb-item + .breadcrumb-item::before {
+  content: ">";
 }
 
 .vacms-page-actions {

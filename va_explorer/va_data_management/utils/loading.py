@@ -389,8 +389,78 @@ def load_odk_csv_to_model(
     return objects
 
 
+def _gps_text(value):
+    return "" if not _has_meaningful_value(value) else str(value).strip()
+
+
+def upsert_gps_for_existing(*, model, df, key_field, gps_field, dry_run=False):
+    """Update one GPS field for existing rows matched by key_field."""
+    stats = {
+        "updated": 0,
+        "skipped_no_change": 0,
+        "skipped_no_value": 0,
+        "sample": [],
+    }
+    if df.empty or key_field not in df.columns:
+        return stats
+
+    incoming = {}
+    for row in df.to_dict(orient="records"):
+        key = row.get(key_field)
+        if not _has_meaningful_value(key):
+            continue
+        incoming[str(key).strip()] = row.get(gps_field) if gps_field in row else None
+
+    if not incoming:
+        return stats
+
+    updates = []
+    existing_qs = model.objects.filter(**{f"{key_field}__in": list(incoming.keys())})
+    for obj in existing_qs:
+        key = str(getattr(obj, key_field)).strip()
+        incoming_value = incoming.get(key)
+        if not _has_meaningful_value(incoming_value):
+            stats["skipped_no_value"] += 1
+            continue
+
+        existing_value = getattr(obj, gps_field, None)
+        incoming_text = _gps_text(incoming_value)
+        existing_text = _gps_text(existing_value)
+        if existing_text == incoming_text:
+            stats["skipped_no_change"] += 1
+            continue
+
+        if len(stats["sample"]) < 10:
+            stats["sample"].append(
+                {
+                    "key": key,
+                    "existing": existing_text,
+                    "incoming": incoming_text,
+                }
+            )
+        setattr(obj, gps_field, incoming_text)
+        updates.append(obj)
+
+    stats["updated"] = len(updates)
+    if updates and not dry_run:
+        bulk_update_with_history(
+            updates,
+            model,
+            fields=[gps_field],
+            batch_size=500,
+        )
+    return stats
+
+
 # load VA records into django database
-def load_records_from_dataframe(record_df, random_locations=False, debug=False):
+def load_records_from_dataframe(
+    record_df,
+    random_locations=False,
+    debug=False,
+    *,
+    upsert_gps=False,
+    dry_run=False,
+):
     logger = None if not debug else logging.getLogger("debug")
     if logger:
         header = "=" * 10 + "DATA INGEST" + "=" * 10
@@ -473,7 +543,8 @@ def load_records_from_dataframe(record_df, random_locations=False, debug=False):
         to_remove = VerbalAutopsy.objects.filter(instanceid__in=invalid_uuids)
         for va in to_remove:
             invalid_vas.append(va)
-        to_remove.delete()
+        if not dry_run:
+            to_remove.delete()
         record_df = record_df.drop(labels=invalid.index.values, axis=0)
 
     print("de-duplicating fields...")
@@ -518,6 +589,13 @@ def load_records_from_dataframe(record_df, random_locations=False, debug=False):
     outdated_vas = []
     created_vas = []
     enriched_vas = []
+    enriched_instanceids = set()
+    gps_upsert_stats = {
+        "updated": 0,
+        "skipped_no_change": 0,
+        "skipped_no_value": 0,
+        "sample": [],
+    }
     location_map = {}
 
     # build location mapper to map csv locations to known db locations
@@ -535,12 +613,19 @@ def load_records_from_dataframe(record_df, random_locations=False, debug=False):
     if random_locations:
         field_workers = list(User.objects.filter(groups__name="Field Workers"))
         if len(field_workers) <= 1:
-            print(
-                "WARNING: no field workers in system. \
-                Generating random ones now..."
-            )
-            make_field_workers_for_facilities()
-            field_workers = list(User.objects.filter(groups__name="Field Workers"))
+            if dry_run:
+                print(
+                    "WARNING: no field workers in system. "
+                    "Skipping random location assignment for dry run..."
+                )
+                field_workers = []
+            else:
+                print(
+                    "WARNING: no field workers in system. \
+                    Generating random ones now..."
+                )
+                make_field_workers_for_facilities()
+                field_workers = list(User.objects.filter(groups__name="Field Workers"))
 
     # pull in all existing VA instanceIDs from db for de-duping purposes
     print("pulling in instance ids...")
@@ -553,10 +638,9 @@ def load_records_from_dataframe(record_df, random_locations=False, debug=False):
         for instanceid in record_df["instanceid"].dropna().unique().tolist()
         if _has_meaningful_value(instanceid)
     ]
-    existing_empty_geopoint_by_instanceid = {
+    existing_by_instanceid = {
         va.instanceid: va
         for va in VerbalAutopsy.objects.filter(instanceid__in=incoming_instance_ids)
-        if not _has_meaningful_value(va.geopoint)
     }
 
     if debug:
@@ -578,16 +662,35 @@ def load_records_from_dataframe(record_df, random_locations=False, debug=False):
         if row["instanceid"]:
             va_exists = row["instanceid"] in va_instance_ids
             if va_exists:
-                if (
-                    _has_meaningful_value(row.get("geopoint"))
-                    and row["instanceid"] in existing_empty_geopoint_by_instanceid
-                ):
-                    existing_va = existing_empty_geopoint_by_instanceid.pop(
-                        row["instanceid"]
-                    )
-                    existing_va.geopoint = row["geopoint"]
-                    enriched_vas.append(existing_va)
+                existing_va = existing_by_instanceid.get(row["instanceid"])
+                incoming_geopoint = row.get("geopoint")
+                if row["instanceid"] in enriched_instanceids:
+                    ignored_vas.append(va)
                     continue
+                if not _has_meaningful_value(incoming_geopoint):
+                    gps_upsert_stats["skipped_no_value"] += 1
+                elif existing_va is not None:
+                    incoming_text = _gps_text(incoming_geopoint)
+                    existing_text = _gps_text(existing_va.geopoint)
+                    should_update_geopoint = not _has_meaningful_value(
+                        existing_va.geopoint
+                    ) or (upsert_gps and existing_text != incoming_text)
+                    if existing_text == incoming_text:
+                        gps_upsert_stats["skipped_no_change"] += 1
+                    elif should_update_geopoint:
+                        if len(gps_upsert_stats["sample"]) < 10:
+                            gps_upsert_stats["sample"].append(
+                                {
+                                    "key": row["instanceid"],
+                                    "existing": existing_text,
+                                    "incoming": incoming_text,
+                                }
+                            )
+                        existing_va.geopoint = incoming_text
+                        enriched_instanceids.add(row["instanceid"])
+                        gps_upsert_stats["updated"] += 1
+                        enriched_vas.append(existing_va)
+                        continue
 
                 ignored_vas.append(va)
                 continue
@@ -614,7 +717,8 @@ def load_records_from_dataframe(record_df, random_locations=False, debug=False):
                         if existing_geopoint:
                             va.geopoint = existing_geopoint
                     outdated_vas.append(outdated_va)
-                    outdated_va.delete()
+                    if not dry_run:
+                        outdated_va.delete()
 
                 va_instance_ids.add(row["instanceid"])
 
@@ -648,7 +752,7 @@ def load_records_from_dataframe(record_df, random_locations=False, debug=False):
         # if random_locations, assign random field worker to VA which can be used
         # to determine location.
         # Otherwise, try assigning location based on hospital field.
-        if random_locations:
+        if random_locations and field_workers:
             user = random.choice(field_workers)
             va.location = user.location_restrictions.first()
         else:
@@ -672,8 +776,11 @@ def load_records_from_dataframe(record_df, random_locations=False, debug=False):
         created_vas.append(va)
 
     print("populating DB...")
-    new_vas = bulk_create_with_history(created_vas, VerbalAutopsy)
-    if enriched_vas:
+    if dry_run:
+        new_vas = created_vas
+    else:
+        new_vas = bulk_create_with_history(created_vas, VerbalAutopsy)
+    if enriched_vas and not dry_run:
         bulk_update_with_history(
             enriched_vas,
             VerbalAutopsy,
@@ -681,12 +788,13 @@ def load_records_from_dataframe(record_df, random_locations=False, debug=False):
             batch_size=500,
         )
 
-    print("Validating VAs...")
-    # Add any errors to the db
-    validate_vas_for_dashboard(new_vas)
+    if not dry_run:
+        print("Validating VAs...")
+        # Add any errors to the db
+        validate_vas_for_dashboard(new_vas)
 
     # Mark duplicate VAs if the application is configured to do so
-    if VerbalAutopsy.auto_detect_duplicates():
+    if not dry_run and VerbalAutopsy.auto_detect_duplicates():
         print("Marking VAs as duplicate...")
         VerbalAutopsy.mark_duplicates()
 
@@ -695,6 +803,7 @@ def load_records_from_dataframe(record_df, random_locations=False, debug=False):
         "outdated": outdated_vas,
         "created": created_vas,
         "enriched": enriched_vas,
+        "gps_upsert": gps_upsert_stats,
         "corrected": corrected_vas,
         "removed": invalid_vas,
     }

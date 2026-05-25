@@ -177,6 +177,60 @@
   margin-bottom: 0;
 }
 
+.ou-date-filter-group {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  white-space: nowrap;
+}
+
+.ou-date-filter-group .form-label {
+  margin-bottom: 0;
+  font-size: 0.82rem;
+  line-height: 1;
+}
+
+.ou-va-filter-row .ou-date-filter-group .form-date {
+  width: 8rem;
+  min-width: 7.5rem;
+  max-width: 8rem;
+}
+
+@media (min-width: 768px) {
+  .ou-va-filter-row {
+    flex-wrap: nowrap;
+  }
+
+  .ou-va-filter-row > .form-group:not(.ou-date-filter-group) {
+    flex: 1 1 0;
+  }
+
+  .ou-va-filter-row > .ou-date-filter-group {
+    flex: 0 0 auto;
+  }
+
+  .ou-va-filter-row .form-group :is(input, select, .form-control, .custom-select) {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .ou-va-filter-row .ou-date-filter-group .form-date {
+    width: 7.75rem;
+    max-width: 7.75rem;
+  }
+
+  .ou-va-filter-actions {
+    flex: 0 0 auto;
+    align-self: flex-end;
+  }
+
+  .ou-form-actions {
+    flex-wrap: nowrap;
+    white-space: nowrap;
+  }
+}
+
 .ou-filter-actions {
   display: flex;
   flex-wrap: wrap;
@@ -414,6 +468,17 @@
     max-width: 100%;
   }
 
+  .ou-date-filter-group {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 0.25rem;
+    white-space: normal;
+  }
+
+  .ou-date-filter-group .form-label {
+    line-height: 1.2;
+  }
+
   .ou-filter-actions {
     margin-left: 0;
     width: 100%;
@@ -469,5 +534,138 @@
   .ou-page-subtitle,
   .ou-empty-state {
     font-size: 0.78rem;
+  }
+}
+
+.ou-va-list-filter-panel .ou-filter-note {
+  margin-bottom: 0.2rem;
+}
+
+.ou-va-list-filter-row {
+  flex-wrap: nowrap;
+  gap: 0.6rem;
+  overflow-x: auto;
+  padding-bottom: 0.05rem;
+}
+
+.ou-va-list-filter-row > .form-group:not(.ou-date-filter-group) {
+  flex: 1 1 8.5rem;
+  width: auto;
+}
+
+.ou-va-list-filter-row > .ou-date-filter-group,
+.ou-va-list-filter-row > .ou-va-filter-actions {
+  flex: 0 0 auto;
+  width: auto;
+}
+
+.ou-va-list-filter-row .form-group :is(input, select, .form-control, .custom-select) {
+  width: 100% !important;
+  min-width: 0;
+  max-width: none;
+}
+
+.ou-va-list-filter-row .ou-date-filter-group {
+  align-items: center;
+  flex-direction: row;
+  white-space: nowrap;
+}
+
+.ou-va-list-filter-row .ou-date-filter-group .form-date {
+  width: 7.75rem !important;
+  min-width: 7.75rem;
+  max-width: 7.75rem;
+}
+
+.ou-va-list-filter-row .ou-form-actions {
+  width: auto;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
+.ou-va-list-filter-row .ou-form-actions .btn {
+  width: auto;
+}
+
+.va-export-config-panels {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 1.25rem;
+  align-items: start;
+  margin-top: 0.75rem;
+  position: relative;
+}
+
+.va-export-config-panels::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 10px;
+  left: 50%;
+  width: 1px;
+  background: var(--ou-text);
+  transform: translateX(-0.5px);
+}
+
+.va-export-config-panel {
+  min-width: 0;
+}
+
+.va-export-config-panel--right {
+  padding-left: 1.25rem;
+}
+
+.va-export-config-panel .form-group:last-child {
+  margin-bottom: 0;
+}
+
+.va-export-config-disabled {
+  color: var(--ou-muted);
+  opacity: 0.65;
+}
+
+/* "Group box" wrapper for the VA Record Type options. */
+.va-export-group-box {
+  border: 1px solid var(--ou-border, #ced4da);
+  border-radius: 0.375rem;
+  padding: 0.5rem 1rem 0.75rem;
+  margin-bottom: 1rem;
+  min-width: 0;
+}
+
+.va-export-group-box__legend {
+  width: auto;
+  padding: 0 0.5rem;
+  margin-bottom: 0.25rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--ou-text);
+}
+
+/* Native fieldset disable + dim class both grey out the whole group box. */
+.va-export-group-box:disabled,
+.va-export-group-box.va-export-config-disabled {
+  color: var(--ou-muted);
+  opacity: 0.65;
+}
+
+.va-export-group-box .form-group:last-child {
+  margin-bottom: 0;
+}
+
+@media (max-width: 767.98px) {
+  .va-export-config-panels {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  .va-export-config-panels::before {
+    display: none;
+  }
+
+  .va-export-config-panel--right {
+    border-top: 1px solid var(--ou-text);
+    padding-left: 0;
+    padding-top: 1rem;
   }
 }

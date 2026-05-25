@@ -11,6 +11,7 @@ from va_explorer.va_data_management.models import (
     CauseOfDeath,
     Death,
     DhisStatus,
+    Household,
     Location,
     Pregnancy,
     PregnancyOutcome,
@@ -177,6 +178,17 @@ class CauseCodingIssueFactory(DjangoModelFactory):
 class DeathFactory(DjangoModelFactory):
     class Meta:
         model = Death
+
+    key = factory.LazyFunction(lambda: str(uuid.uuid4()))
+    province = Faker("state")
+    district = Faker("city")
+    ward = Faker("city")
+    enumerator = Faker("name")
+
+
+class HouseholdFactory(DjangoModelFactory):
+    class Meta:
+        model = Household
 
     key = factory.LazyFunction(lambda: str(uuid.uuid4()))
     province = Faker("state")

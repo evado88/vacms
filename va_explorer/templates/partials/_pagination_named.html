@@ -1,0 +1,28 @@
+{% load va_explorer_tags %}
+{# Reusable paginator for pages that host several independent lists.
+   Expects: page_obj (a Page) and page_param (the query-string key, e.g. "err_page"). #}
+<nav aria-label="Page navigation container" class="ou-pagination-nav">
+  {% if page_obj.has_other_pages %}
+  <ul class="pagination pagination-lg justify-content-center">
+    {% if page_obj.number|add:'-5' > 0 %}
+      <li class="page-item"><a class="page-link" href="?{% replace_query_param page_param 1 %}">&laquo;</a></li>
+    {% endif %}
+    {% for i in page_obj.paginator.page_range %}
+        {% if page_obj.number == i %}
+            <li class="page-item active" aria-current="page">
+              <span class="page-link">{{ i }}</span>
+            </li>
+        {% elif i > page_obj.number|add:'-5' and i < page_obj.number|add:'5' %}
+          <li class="page-item"><a class="page-link" href="?{% replace_query_param page_param i %}">{{ i }}</a></li>
+        {% endif %}
+    {% endfor %}
+    {% if page_obj.number|add:'5' <= page_obj.paginator.num_pages %}
+      <li class="page-item"><a class="page-link" href="?{% replace_query_param page_param page_obj.paginator.num_pages %}">&raquo;</a></li>
+    {% endif %}
+  </ul>
+  {% endif %}
+
+  <ul class="pagination justify-content-center align-items-center">
+    <li class="px-3 text-muted">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</li>
+  </ul>
+</nav>

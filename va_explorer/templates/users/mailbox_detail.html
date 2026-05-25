@@ -3,6 +3,14 @@
 
 {% block title %}{% trans "Message" %}{% endblock %}
 {% block heading %}{% trans "Message" %}{% endblock %}
+{% block breadcrumbs %}
+  <nav aria-label="{% trans 'Breadcrumb' %}">
+    <ol class="breadcrumb bg-transparent p-0 mb-0">
+      <li class="breadcrumb-item"><a href="{% url 'users:mailbox' %}">{% trans "Mailbox" %}</a></li>
+      <li class="breadcrumb-item active" aria-current="page">{% trans "Message" %}</li>
+    </ol>
+  </nav>
+{% endblock %}
 
 {% block content %}
 <div class="card shadow-sm">

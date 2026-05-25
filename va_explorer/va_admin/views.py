@@ -7,11 +7,14 @@ import traceback
 from datetime import timedelta
 
 from django.conf import settings
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.management import call_command
+from django.db.models import Q
 from django.http import HttpResponseForbidden, JsonResponse, StreamingHttpResponse
 from django.middleware.csrf import get_token
-from django.shortcuts import render
+from django.shortcuts import redirect, render
+from django.urls import reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_date as django_parse_date
 from django.views.decorators.http import require_POST
@@ -22,9 +25,14 @@ from va_explorer.va_admin.command_registry import (
     data_dir,
     grouped_command_specs,
     is_safe_filename,
+    requires_password_confirmation,
     resolve_data_file,
 )
 from va_explorer.va_admin.models import AdminPanelAlert
+from va_explorer.va_data_management.utils.baseline_census import (
+    get_baseline_census_province_config,
+    save_baseline_census_province_config,
+)
 from va_explorer.vacms.models import AdminCommandRun
 
 PRODUCTION_SETTINGS_MODULE = "config.settings.production"
@@ -128,7 +136,11 @@ def _record_alert(
 
 
 def user_can_run_admin_commands(user):
-    return bool(getattr(user, "is_authenticated", False) and user.is_superuser)
+    if not getattr(user, "is_authenticated", False):
+        return False
+    # Superusers always pass; otherwise honour the dedicated permission so that
+    # (non-superuser) members of the Admins group can run admin commands too.
+    return bool(user.is_superuser or user.has_perm("vacms.can_run_admin_commands"))
 
 
 @login_required
@@ -169,6 +181,7 @@ def admin_panel_view(request):
                 "timeout_hint": spec.timeout_hint,
                 "favorite": spec.favorite,
                 "dangerous": spec.dangerous,
+                "requires_password": requires_password_confirmation(spec),
                 "inputs": [
                     {
                         "type": field.type,
@@ -193,8 +206,42 @@ def admin_panel_view(request):
         "command_groups_json": command_groups_json,
         "filename_placeholders": STANDARD_FILENAME_PLACEHOLDERS,
         "alerts_feed": [_serialize_alert(alert) for alert in _fetch_alert_feed()],
+        "baseline_census_provinces": get_baseline_census_province_config(),
     }
+    # Initial server-rendered fragment for the System Audit Trail tab; subsequent
+    # filtering/paging is handled by list_table.js against the component endpoint.
+    context.update(_audit_context(request))
     return render(request, "va_admin/admin_panel.html", context)
+
+
+@require_POST
+@login_required
+def baseline_census_config_view(request):
+    """Persist which provinces are part of the current baseline census.
+
+    Driven by the admin panel's "Baseline Census Config" section. The dashboard
+    always filters to active provinces; the "Current Census" checkbox narrows
+    further to the provinces marked current.
+    """
+    if not user_can_run_admin_commands(request.user):
+        _record_alert(
+            request=request,
+            category=AdminPanelAlert.SECURITY,
+            severity=AdminPanelAlert.HIGH,
+            title="Unauthorized baseline census config attempt",
+            summary="User attempted to change baseline census config without "
+            "required privileges.",
+        )
+        return HttpResponseForbidden("You are not allowed to access this page.")
+
+    save_baseline_census_province_config(
+        request.POST.getlist("current_provinces"),
+        request.POST.getlist("active_provinces"),
+    )
+    messages.success(
+        request, "Baseline census province configuration saved successfully."
+    )
+    return redirect("va_admin:index")
 
 
 def _sanitize_input_value(field, raw_value):
@@ -223,7 +270,8 @@ def _sanitize_input_value(field, raw_value):
                         else standardized
                     )
                     raise ValueError(
-                        f"Standardized file not found in static/data: {expected}"
+                        "Standardized file not found in the upload directory: "
+                        f"{expected}"
                     )
 
         if not value:
@@ -231,7 +279,7 @@ def _sanitize_input_value(field, raw_value):
 
         resolved_file = resolve_data_file(value)
         if not resolved_file.exists():
-            raise ValueError(f"File not found in static/data: {value}")
+            raise ValueError(f"File not found in the upload directory: {value}")
         if field.allowed_pattern and not re.match(field.allowed_pattern, value):
             raise ValueError(
                 f"Filename does not match allowed pattern for {field.name}"
@@ -361,6 +409,32 @@ def admin_panel_run_view(request):
             {"ok": False, "output": "inputs must be an object."}, status=400
         )
 
+    spec = ALLOWLIST[command_id]
+
+    # Higher-risk (database-altering, non-favorite) commands require the logged-in
+    # admin to confirm their password. The password is verified against the active
+    # user and is never stored, logged, or echoed back.
+    if requires_password_confirmation(spec):
+        password = str(payload.get("password") or "")
+        if not password or not request.user.check_password(password):
+            _record_alert(
+                request=request,
+                category=AdminPanelAlert.SECURITY,
+                severity=AdminPanelAlert.HIGH,
+                title="Command password confirmation failed",
+                summary=f"Password confirmation failed for command '{command_id}'.",
+                context={"command_id": command_id},
+            )
+            return JsonResponse(
+                {
+                    "ok": False,
+                    "output": "Password confirmation failed. Re-enter your "
+                    "password to run this command.",
+                    "password_required": True,
+                },
+                status=403,
+            )
+
     try:
         cmd_args, safe_inputs, filenames = _build_call_command_args(command_id, inputs)
     except ValueError as exc:
@@ -375,7 +449,10 @@ def admin_panel_run_view(request):
         )
         return JsonResponse({"ok": False, "output": str(exc)}, status=400)
 
-    spec = ALLOWLIST[command_id]
+    # Redact any password/secret/token-style inputs before they are persisted to
+    # the audit trail (e.g. seed_admin_user's --password).
+    safe_inputs = _mask_sensitive(safe_inputs)
+
     stdout_buffer = io.StringIO()
     stderr_buffer = io.StringIO()
     started_at = timezone.now()
@@ -651,20 +728,49 @@ def admin_panel_alert_log_view(request):
     return JsonResponse({"ok": True})
 
 
-# ── User Activity Log ──────────────────────────────────────────────────────────
+# ── System Audit Trail ──────────────────────────────────────────────────────────
 
 _ACTIVITY_LOG_PAGE_SIZE = 100
+
+# Columns written to the audit CSV export (order is significant).
 _ACTIVITY_CSV_FIELDS = [
     "timestamp",
-    "user_email",
     "action",
+    "action_category",
+    "status",
+    "user_email",
+    "module",
+    "target_type",
+    "target_id",
+    "target_display",
+    "details",
+    "error_message",
+    "ip_address",
     "path",
     "method",
-    "ip_address",
     "user_agent",
     "session_key",
     "extra",
 ]
+
+# Keys whose values must never appear in audit output (CSV or UI).
+_SENSITIVE_KEY_RE = re.compile(
+    r"(password|passwd|token|secret|api[_-]?key|authorization|auth|session|cookie|csrf)",
+    re.IGNORECASE,
+)
+_MASK = "***"
+
+
+def _mask_sensitive(value):
+    """Recursively redact sensitive values in a JSON-ish structure."""
+    if isinstance(value, dict):
+        return {
+            k: (_MASK if _SENSITIVE_KEY_RE.search(str(k)) else _mask_sensitive(v))
+            for k, v in value.items()
+        }
+    if isinstance(value, list):
+        return [_mask_sensitive(item) for item in value]
+    return value
 
 
 def _build_activity_queryset(params):
@@ -680,6 +786,31 @@ def _build_activity_queryset(params):
     if action:
         qs = qs.filter(action=action)
 
+    category = (params.get("action_category") or "").strip()
+    if category:
+        qs = qs.filter(action_category=category)
+
+    module = (params.get("module") or "").strip()
+    if module:
+        qs = qs.filter(module__icontains=module)
+
+    status = (params.get("status") or "").strip()
+    if status:
+        qs = qs.filter(status=status)
+
+    ip_address = (params.get("ip_address") or "").strip()
+    if ip_address:
+        qs = qs.filter(ip_address__icontains=ip_address)
+
+    keyword = (params.get("q") or "").strip()
+    if keyword:
+        qs = qs.filter(
+            Q(user_email__icontains=keyword)
+            | Q(path__icontains=keyword)
+            | Q(details__icontains=keyword)
+            | Q(target_display__icontains=keyword)
+        )
+
     start = django_parse_date((params.get("start_date") or "").strip())
     if start:
         qs = qs.filter(timestamp__date__gte=start)
@@ -691,11 +822,8 @@ def _build_activity_queryset(params):
     return qs
 
 
-@login_required
-def user_activity_log_view(request):
-    if not user_can_run_admin_commands(request.user):
-        return HttpResponseForbidden("You are not allowed to view the activity log.")
-
+def _audit_context(request):
+    """Build the context shared by the audit-trail tab and its AJAX fragment."""
     from va_explorer.users.models import UserActivity
 
     qs = _build_activity_queryset(request.GET)
@@ -705,16 +833,32 @@ def user_activity_log_view(request):
     except (ValueError, TypeError):
         page = 1
 
-    offset = (page - 1) * _ACTIVITY_LOG_PAGE_SIZE
-    activities = qs[offset : offset + _ACTIVITY_LOG_PAGE_SIZE]
     total = qs.count()
     total_pages = max(
         1, (total + _ACTIVITY_LOG_PAGE_SIZE - 1) // _ACTIVITY_LOG_PAGE_SIZE
     )
+    page = min(page, total_pages)
+    offset = (page - 1) * _ACTIVITY_LOG_PAGE_SIZE
+    activities = qs[offset : offset + _ACTIVITY_LOG_PAGE_SIZE]
 
-    context = {
+    # Group actions by category so the "Type" dropdown can render <optgroup>s
+    # with readable "Category > Action" semantics.
+    category_labels = dict(UserActivity.CATEGORY_CHOICES)
+    grouped = {}
+    for value, label in UserActivity.ACTION_CHOICES:
+        category = UserActivity.CATEGORY_FOR_ACTION.get(value, "")
+        grouped.setdefault(category, []).append((value, label))
+    grouped_actions = [
+        (category_labels.get(category, category or "Other"), options)
+        for category, options in grouped.items()
+    ]
+
+    return {
         "activities": activities,
         "action_choices": UserActivity.ACTION_CHOICES,
+        "grouped_actions": grouped_actions,
+        "category_choices": UserActivity.CATEGORY_CHOICES,
+        "status_choices": UserActivity.STATUS_CHOICES,
         "filters": request.GET,
         "page": page,
         "total": total,
@@ -722,17 +866,36 @@ def user_activity_log_view(request):
         "has_prev": page > 1,
         "has_next": page < total_pages,
     }
-    return render(request, "va_admin/user_activity_log.html", context)
+
+
+@login_required
+def user_activity_log_view(request):
+    if not user_can_run_admin_commands(request.user):
+        return HttpResponseForbidden("You are not allowed to view the audit trail.")
+
+    # AJAX slot refresh (list_table.js) -> return only the table + pagination.
+    if request.GET.get("component"):
+        return render(
+            request, "va_admin/_audit_trail_table.html", _audit_context(request)
+        )
+
+    # Direct navigation lands on the Admin Panel with the audit tab active.
+    return redirect(f"{reverse('va_admin:index')}#adminTabAudit")
 
 
 @login_required
 def user_activity_log_download_view(request):
     if not user_can_run_admin_commands(request.user):
-        return HttpResponseForbidden(
-            "You are not allowed to download the activity log."
-        )
+        return HttpResponseForbidden("You are not allowed to download the audit trail.")
 
     qs = _build_activity_queryset(request.GET).values(*_ACTIVITY_CSV_FIELDS)
+
+    def _format(field, value):
+        if value is None:
+            return ""
+        if field == "extra":
+            return json.dumps(_mask_sensitive(value), default=str)
+        return value
 
     def _rows():
         buf = io.StringIO()
@@ -743,12 +906,10 @@ def user_activity_log_download_view(request):
         for row in qs.iterator():
             buf = io.StringIO()
             writer = csv.DictWriter(buf, fieldnames=_ACTIVITY_CSV_FIELDS)
-            writer.writerow(
-                {k: ("" if row[k] is None else row[k]) for k in _ACTIVITY_CSV_FIELDS}
-            )
+            writer.writerow({k: _format(k, row[k]) for k in _ACTIVITY_CSV_FIELDS})
             yield buf.getvalue()
 
-    filename = f"user_activity_{timezone.now().strftime('%Y%m%dT%H%M%SZ')}.csv"
+    filename = f"vacms_audit_logs_{timezone.now().strftime('%Y%m%d')}.csv"
     response = StreamingHttpResponse(_rows(), content_type="text/csv")
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
     return response

@@ -113,6 +113,13 @@ ODK_PULL_FORMS = [
         "enabled": env.bool("ODK_CSA_TRACKER_FORM_ENABLED", default=True),
         "schedule_key": "operational",
     },
+    {
+        "form_id": env("ODK_SOCIAL_MOBILIZATION_FORM_ID", default=""),
+        "form_name": "social_mobilization",
+        "project_id": ODK_DEFAULT_PROJECT_ID,
+        "enabled": env.bool("ODK_SOCIAL_MOBILIZATION_FORM_ENABLED", default=True),
+        "schedule_key": "operational",
+    },
 ]
 
 DEFAULT_AUTO_FIELD = "django.db.models.AutoField"
@@ -241,10 +248,15 @@ if env.bool("DJANGO_DEBUG", False):
 
 
 def _show_debug_toolbar(request):
-    """Only show the toolbar for full HTML page loads, not AJAX/JSON fan-out."""
+    """Only show the toolbar for full HTML page loads, not writes or AJAX/JSON fan-out."""
     from django.conf import settings
 
     if not settings.DEBUG:
+        return False
+    # Keep the toolbar off mutating requests. The SQL panel can choke on very
+    # large write queries during response rendering, and POST/PUT/PATCH/DELETE
+    # responses are not the full-page inspection path we care about here.
+    if request.method not in {"GET", "HEAD"}:
         return False
     # Skip for AJAX requests (dashboard component loads, filter-data, trends, map-data)
     if request.headers.get("X-Requested-With") == "XMLHttpRequest":
@@ -284,6 +296,13 @@ STATICFILES_FINDERS = [
 
 MEDIA_ROOT = str(APPS_DIR / "media")
 MEDIA_URL = "/media/"
+
+# Directory where admin-panel CSV uploads are stored and command-input files are
+# resolved from. Kept on the release-independent shared volume so uploads survive
+# release swaps. Created on demand by va_admin.command_registry.data_dir().
+ADMIN_PANEL_UPLOAD_DIR = os.environ.get(
+    "ADMIN_PANEL_UPLOAD_DIR", "/srv/vacms/shared/media/uploads/manual"
+)
 
 # Templates
 

@@ -1,7 +1,9 @@
+import csv
 import hashlib
 import json
 import logging
 from datetime import datetime, time, timedelta
+from datetime import timezone as dt_timezone
 from statistics import median
 
 import pandas as pd
@@ -19,18 +21,28 @@ from django.db.models import (
     When,
 )
 from django.db.models.functions import Cast, Lower, Substr, Trim
+from django.http import HttpResponse, JsonResponse
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_date as django_parse_date
 from django.utils.dateparse import parse_datetime as django_parse_datetime
-from django.views.generic import ListView, RedirectView, TemplateView
+from django.views.generic import ListView, RedirectView, TemplateView, View
 from numpy import round
 from pandas import to_datetime as to_dt
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from va_explorer.home.services.common import (
+    coverage_band,
+    parse_filter_range,
+    parse_location_filter,
+)
+from va_explorer.home.views import (
+    HomeOverviewMapData,
+    NationalOperationalFilterData,
+)
 from va_explorer.users.models import User
-from va_explorer.utils.mixins import CustomAuthMixin
+from va_explorer.utils.mixins import CsvDownloadPermissionMixin, CustomAuthMixin
 from va_explorer.utils.profiling import timed_block
 from va_explorer.va_analytics.filters import SupervisionFilter
 from va_explorer.va_data_management.models import Death, Pregnancy, PregnancyOutcome
@@ -1344,6 +1356,1959 @@ class DashboardMapView(CustomAuthMixin, PermissionRequiredMixin, RedirectView):
 
 
 dashboard_map_view = DashboardMapView.as_view()
+
+
+class BaselineCensusDashboardView(
+    CustomAuthMixin, PermissionRequiredMixin, TemplateView
+):
+    template_name = "va_analytics/baseline_census_dashboard.html"
+    permission_required = "va_analytics.view_dashboard"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        raw_tab = (self.request.GET.get("tab") or "overview").strip().lower()
+        context["baseline_active_tab"] = (
+            raw_tab
+            if raw_tab in {"overview", "table", "chart", "social_mob"}
+            else "overview"
+        )
+        return context
+
+
+baseline_census_dashboard_view = BaselineCensusDashboardView.as_view()
+
+
+class BaselineCensusOverviewFilterDataView(NationalOperationalFilterData):
+    """Baseline-census overview filter data.
+
+    When the "Current Census" filter is on, the overview KPI cards are gated by
+    the current-census province configuration on top of the always-on activated
+    province filter, so the overview agrees with the Census Table and Census
+    Chart tabs.
+    """
+
+    def get(self, request, *args, **kwargs):
+        from va_explorer.home.services.nov import (
+            get_national_operational_view_data,
+        )
+        from va_explorer.va_data_management.utils.baseline_census import (
+            get_baseline_census_target_totals,
+            get_dashboard_excluded_census_provinces,
+        )
+
+        kpis_only = str(request.GET.get("kpis_only", "")).strip() in {
+            "1",
+            "true",
+            "True",
+        }
+        bc_current = str(request.GET.get("bc_current", "")).strip() in (
+            "1",
+            "true",
+            "True",
+        )
+        if not kpis_only:
+            return super().get(request, *args, **kwargs)
+
+        preset, start_dt, end_dt, _has_custom = parse_filter_range(request)
+        location_level, location_value = parse_location_filter(request)
+        excluded = get_dashboard_excluded_census_provinces(include_current=bc_current)
+        data = get_national_operational_view_data(
+            start_dt=start_dt,
+            end_dt=end_dt,
+            request=request,
+            location_level=location_level,
+            location_value=location_value,
+            include_chart_series=False,
+            census_province_exclude=excluded,
+        )
+        kpis = data.get("kpis", {})
+        # Real population/household estimates for the Enumeration Coverage
+        # Summary chart, scoped the same way as the Census Table.
+        kpis["targets"] = get_baseline_census_target_totals(
+            excluded_provinces=excluded,
+            location_level=location_level,
+            location_value=location_value,
+        )
+        return JsonResponse({"kpis": kpis})
+
+
+baseline_census_overview_filter_data_view = (
+    BaselineCensusOverviewFilterDataView.as_view()
+)
+
+
+class BaselineCensusOverviewMapDataView(HomeOverviewMapData):
+    """Baseline-census namespaced overview map data endpoint."""
+
+
+baseline_census_overview_map_data_view = BaselineCensusOverviewMapDataView.as_view()
+
+
+class BaselineCensusOverviewKpisComponent(CustomAuthMixin, TemplateView):
+    template_name = "va_analytics/components/_baseline_overview_kpis_component.html"
+
+
+baseline_census_overview_kpis_component_view = (
+    BaselineCensusOverviewKpisComponent.as_view()
+)
+
+
+def normalize_ea_to_geoid(raw):
+    """Resolve any model's EA reference to the canonical 11-digit geoid.
+
+    Census models store the enumeration area inconsistently: ``Household.ea`` and
+    ``SRSClusterLocation.name`` are bare digit strings (sometimes missing the
+    leading zero), while ``Pregnancy``/``Death``/``PregnancyOutcome`` use an
+    ``EA_`` prefix. ``SRSEAPopulationTarget.geoid`` is the canonical 11-digit,
+    zero-padded form. Normalize everything to that so counts can be joined.
+    """
+    if not raw:
+        return ""
+    text = str(raw).strip().upper()
+    if text.startswith("EA_"):
+        text = text[3:]
+    return text.zfill(11) if text.isdigit() else text
+
+
+_BASELINE_CENSUS_VITAL_FORMS = ("pregnancy", "pregnancy_outcome", "death")
+_BASELINE_CENSUS_GEO_FIELDS = ("province", "district", "constituency", "ward", "ea")
+_BASELINE_CENSUS_TARGET_FIELDS = (
+    "geoid",
+    "province_name",
+    "district_name",
+    "constituency_name",
+    "ward_name",
+)
+
+
+def _baseline_geo_key(value):
+    if value is None:
+        return ""
+    from va_explorer.va_data_management.utils.loading import normalize_string
+
+    return normalize_string(str(value)).strip().lower()
+
+
+def _baseline_odk_location_choice_lookup():
+    cache_key = "baseline_census:odk_location_choice_lookup:v1"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    from va_explorer.va_data_management.models import ODKFormChoice
+    from va_explorer.va_data_management.utils.loading import (
+        normalize_string,
+        normalize_value,
+    )
+
+    normalized_forms = {normalize_string(form) for form in _BASELINE_CENSUS_VITAL_FORMS}
+    normalized_fields = {
+        normalize_string(field) for field in _BASELINE_CENSUS_GEO_FIELDS
+    }
+    lookup = {}
+    choices = ODKFormChoice.objects.filter(form_name__in=normalized_forms).values(
+        "form_name", "field_name", "value", "label"
+    )
+    for choice in choices:
+        form_name = normalize_string(choice["form_name"])
+        field_name = normalize_string(choice["field_name"])
+        if field_name not in normalized_fields:
+            continue
+        label = (choice["label"] or "").strip()
+        if not label:
+            continue
+        mapping = lookup.setdefault((form_name, field_name), {})
+        mapping[normalize_value(choice["value"])] = label
+        mapping[_baseline_geo_key(label)] = label
+
+    if lookup:
+        cache.set(cache_key, lookup, 300)
+    return lookup
+
+
+def _resolve_baseline_odk_location_value(choice_lookup, form_name, field_name, value):
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if not text:
+        return ""
+
+    from va_explorer.va_data_management.utils.loading import (
+        normalize_string,
+        normalize_value,
+    )
+
+    mapping = choice_lookup.get(
+        (normalize_string(form_name), normalize_string(field_name)), {}
+    )
+    return (
+        mapping.get(normalize_value(text))
+        or mapping.get(_baseline_geo_key(text))
+        or text
+    )
+
+
+def _baseline_target_by_geoid(target_rows):
+    return {
+        normalize_ea_to_geoid(row.get("geoid")): row
+        for row in target_rows
+        if normalize_ea_to_geoid(row.get("geoid"))
+    }
+
+
+def _resolve_vital_event_geoid(row, form_name, target_by_geoid, choice_lookup):
+    resolved = {
+        field: _resolve_baseline_odk_location_value(
+            choice_lookup, form_name, field, row.get(field)
+        )
+        for field in _BASELINE_CENSUS_GEO_FIELDS
+    }
+    geoid = normalize_ea_to_geoid(resolved.get("ea") or row.get("ea"))
+    target = target_by_geoid.get(geoid)
+    if not target:
+        return ""
+
+    checks = (
+        ("province", "province_name"),
+        ("district", "district_name"),
+        ("constituency", "constituency_name"),
+        ("ward", "ward_name"),
+    )
+    for source_field, target_field in checks:
+        source_value = resolved.get(source_field)
+        if source_value and _baseline_geo_key(source_value) != _baseline_geo_key(
+            target.get(target_field)
+        ):
+            return ""
+    return geoid
+
+
+def _vital_event_counts_by_geoid(
+    model,
+    form_name,
+    start_iso,
+    end_iso,
+    date_filter,
+    target_rows,
+    include_cluster=False,
+):
+    target_by_geoid = _baseline_target_by_geoid(target_rows)
+    if not target_by_geoid:
+        return {}
+
+    choice_lookup = _baseline_odk_location_choice_lookup()
+    fields = list(_BASELINE_CENSUS_GEO_FIELDS)
+    if include_cluster:
+        fields.append("cluster__name")
+
+    counts = {}
+    rows = (
+        date_filter(model.objects.all(), "submissiondate", start_iso, end_iso)
+        .values(*fields)
+        .annotate(cnt=Count("pk"))
+    )
+    for row in rows:
+        geoid = ""
+        if include_cluster:
+            geoid = normalize_ea_to_geoid(row.get("cluster__name"))
+        if geoid not in target_by_geoid:
+            geoid = _resolve_vital_event_geoid(
+                row, form_name, target_by_geoid, choice_lookup
+            )
+        if geoid:
+            counts[geoid] = counts.get(geoid, 0) + row["cnt"]
+    return counts
+
+
+def _resolve_household_geoid(row, *, cluster_key, ea_key, target_by_geoid):
+    """Resolve household-derived records to a known target geoid.
+
+    Imported household data can have a missing cluster while still carrying the
+    raw EA value. Prefer the linked cluster when it joins to a filtered target
+    row, then fall back to ``Household.ea``.
+    """
+    cluster_geoid = normalize_ea_to_geoid(row.get(cluster_key))
+    if cluster_geoid in target_by_geoid:
+        return cluster_geoid
+
+    ea_geoid = normalize_ea_to_geoid(row.get(ea_key))
+    if ea_geoid in target_by_geoid:
+        return ea_geoid
+    return ""
+
+
+def _household_counts_by_geoid(start_iso, end_iso, date_filter, target_rows):
+    target_by_geoid = _baseline_target_by_geoid(target_rows)
+    if not target_by_geoid:
+        return {}
+
+    from va_explorer.va_data_management.models import Household
+
+    counts = {}
+    rows = (
+        date_filter(Household.objects.all(), "submissiondate", start_iso, end_iso)
+        .values("cluster__name", "ea")
+        .annotate(
+            hh_enumerated=Count("pk"),
+            refusals=Count(
+                "pk",
+                filter=Q(consent__iexact="No") | Q(result_list__iexact="Refused"),
+            ),
+            non_contact=Count("pk", filter=Q(result_list__iexact="Non-contact")),
+        )
+    )
+    for row in rows:
+        geoid = _resolve_household_geoid(
+            row,
+            cluster_key="cluster__name",
+            ea_key="ea",
+            target_by_geoid=target_by_geoid,
+        )
+        if not geoid:
+            continue
+        acc = counts.setdefault(
+            geoid, {"hh_enumerated": 0, "refusals": 0, "non_contact": 0}
+        )
+        acc["hh_enumerated"] += row["hh_enumerated"]
+        acc["refusals"] += row["refusals"]
+        acc["non_contact"] += row["non_contact"]
+    return counts
+
+
+def _household_member_counts_by_geoid(start_iso, end_iso, date_filter, target_rows):
+    target_by_geoid = _baseline_target_by_geoid(target_rows)
+    if not target_by_geoid:
+        return {}
+
+    from va_explorer.va_data_management.models import HouseholdMember
+
+    counts = {}
+    rows = (
+        date_filter(
+            HouseholdMember.objects.exclude(household__isnull=True),
+            "household__submissiondate",
+            start_iso,
+            end_iso,
+        )
+        .values("household__cluster__name", "household__ea")
+        .annotate(cnt=Count("pk"))
+    )
+    for row in rows:
+        geoid = _resolve_household_geoid(
+            row,
+            cluster_key="household__cluster__name",
+            ea_key="household__ea",
+            target_by_geoid=target_by_geoid,
+        )
+        if geoid:
+            counts[geoid] = counts.get(geoid, 0) + row["cnt"]
+    return counts
+
+
+def _unmatched_household_member_counts(start_iso, end_iso, date_filter, target_rows):
+    """Household members whose EA is absent from the target table.
+
+    Mirrors :func:`_household_member_counts_by_geoid` but keeps the rows it
+    *cannot* resolve, tagged with the household's denormalised administrative
+    text so the chart can still attribute them to a province/district/etc.
+    """
+    target_by_geoid = _baseline_target_by_geoid(target_rows)
+    if not target_by_geoid:
+        return []
+
+    from va_explorer.va_data_management.models import HouseholdMember
+
+    rows = (
+        date_filter(
+            HouseholdMember.objects.exclude(household__isnull=True),
+            "household__submissiondate",
+            start_iso,
+            end_iso,
+        )
+        .values(
+            "household__cluster__name",
+            "household__ea",
+            "household__province",
+            "household__district",
+            "household__constituency",
+            "household__ward",
+        )
+        .annotate(cnt=Count("pk"))
+    )
+    unmatched = []
+    for row in rows:
+        geoid = _resolve_household_geoid(
+            row,
+            cluster_key="household__cluster__name",
+            ea_key="household__ea",
+            target_by_geoid=target_by_geoid,
+        )
+        if geoid:
+            continue
+        unmatched.append(
+            {
+                "province": row["household__province"],
+                "district": row["household__district"],
+                "constituency": row["household__constituency"],
+                "ward": row["household__ward"],
+                "cnt": row["cnt"],
+            }
+        )
+    return unmatched
+
+
+def _unmatched_household_counts(start_iso, end_iso, date_filter, target_rows):
+    """Households whose EA is absent from the target table.
+
+    Companion to :func:`_unmatched_household_member_counts` for the Households
+    indicator. Counts are tagged with the household's administrative text.
+    """
+    target_by_geoid = _baseline_target_by_geoid(target_rows)
+    if not target_by_geoid:
+        return []
+
+    from va_explorer.va_data_management.models import Household
+
+    rows = (
+        date_filter(Household.objects.all(), "submissiondate", start_iso, end_iso)
+        .values("cluster__name", "ea", "province", "district", "constituency", "ward")
+        .annotate(cnt=Count("pk"))
+    )
+    unmatched = []
+    for row in rows:
+        geoid = _resolve_household_geoid(
+            row,
+            cluster_key="cluster__name",
+            ea_key="ea",
+            target_by_geoid=target_by_geoid,
+        )
+        if geoid:
+            continue
+        unmatched.append(
+            {
+                "province": row["province"],
+                "district": row["district"],
+                "constituency": row["constituency"],
+                "ward": row["ward"],
+                "cnt": row["cnt"],
+            }
+        )
+    return unmatched
+
+
+class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
+    template_name = "va_analytics/components/_baseline_census_province_table.html"
+
+    _VALID_SORT_FIELDS = {
+        "province",
+        "district",
+        "ward",
+        "ea",
+        "hh_estimate",
+        "hh_enumerated",
+        "hh_coverage",
+        "pop_estimate",
+        "pop_enumerated",
+        "pop_coverage",
+        "refusals",
+        "non_contact",
+        "total_deaths",
+        "total_pregnancies",
+        "total_preg_outcomes",
+    }
+    _LOCATION_FIELD_MAP = {
+        "province": "province_name",
+        "district": "district_name",
+        "constituency": "constituency_name",
+        "ward": "ward_name",
+        "ea": "geoid",
+    }
+    # EA-row columns that aggregate by summing across rows. Coverage columns
+    # are excluded — they are recomputed from the summed numerator/denominator.
+    _SUM_FIELDS = (
+        "hh_estimate",
+        "hh_enumerated",
+        "pop_estimate",
+        "pop_enumerated",
+        "refusals",
+        "non_contact",
+        "total_deaths",
+        "total_pregnancies",
+        "total_preg_outcomes",
+    )
+
+    def _build_census_rows(
+        self,
+        *,
+        bc_current=False,
+        location_level="",
+        location_value="",
+        bc_province="",
+        bc_district="",
+        bc_ward="",
+        bc_ea="",
+        start_iso=None,
+        end_iso=None,
+    ):
+        from va_explorer.va_data_management.models import (
+            Death,
+            Pregnancy,
+            PregnancyOutcome,
+            SRSEAPopulationTarget,
+        )
+        from va_explorer.va_data_management.utils.baseline_census import (
+            get_dashboard_excluded_census_provinces,
+        )
+
+        # --- Enrichment counts, keyed by canonical geoid (one query per model) ---
+        all_target_rows_for_geo = list(
+            SRSEAPopulationTarget.objects.all().values(*_BASELINE_CENSUS_TARGET_FIELDS)
+        )
+        hh_by_geoid = _household_counts_by_geoid(
+            start_iso,
+            end_iso,
+            self._date_filter,
+            all_target_rows_for_geo,
+        )
+        pop_by_geoid = _household_member_counts_by_geoid(
+            start_iso,
+            end_iso,
+            self._date_filter,
+            all_target_rows_for_geo,
+        )
+        po_by_geoid = _vital_event_counts_by_geoid(
+            PregnancyOutcome,
+            "pregnancy_outcome",
+            start_iso,
+            end_iso,
+            self._date_filter,
+            all_target_rows_for_geo,
+            include_cluster=True,
+        )
+        preg_by_geoid = _vital_event_counts_by_geoid(
+            Pregnancy,
+            "pregnancy",
+            start_iso,
+            end_iso,
+            self._date_filter,
+            all_target_rows_for_geo,
+        )
+        death_by_geoid = _vital_event_counts_by_geoid(
+            Death,
+            "death",
+            start_iso,
+            end_iso,
+            self._date_filter,
+            all_target_rows_for_geo,
+        )
+
+        # --- Base rows: every EA in the target table (all 10 provinces) ---
+        targets = SRSEAPopulationTarget.objects.all()
+        excluded_provinces = get_dashboard_excluded_census_provinces(
+            include_current=bc_current
+        )
+        if excluded_provinces:
+            targets = targets.exclude(province_name__in=excluded_provinces)
+        lookup = self._LOCATION_FIELD_MAP.get((location_level or "").lower())
+        if location_value and lookup:
+            targets = targets.filter(**{f"{lookup}__icontains": location_value})
+        if bc_province:
+            targets = targets.filter(province_name__icontains=bc_province)
+        if bc_district:
+            targets = targets.filter(district_name__icontains=bc_district)
+        if bc_ward:
+            targets = targets.filter(ward_name__icontains=bc_ward)
+        if bc_ea:
+            targets = targets.filter(geoid__icontains=bc_ea)
+        targets = targets.values(
+            "geoid",
+            "province_name",
+            "district_name",
+            "ward_name",
+            "household_target",
+            "population_target",
+        )
+
+        rows = []
+        for target in targets:
+            geoid = target["geoid"]
+            hh = hh_by_geoid.get(geoid, {})
+            hh_enumerated = hh.get("hh_enumerated", 0)
+            pop_enumerated = pop_by_geoid.get(geoid, 0)
+            hh_estimate = target["household_target"]
+            pop_estimate = target["population_target"]
+            hh_coverage = self._coverage_pct(hh_enumerated, hh_estimate)
+            pop_coverage = self._coverage_pct(pop_enumerated, pop_estimate)
+            rows.append(
+                {
+                    "province": target["province_name"] or "—",
+                    "district": target["district_name"] or "—",
+                    "ward": target["ward_name"] or "—",
+                    "ea": geoid,
+                    "hh_estimate": hh_estimate,
+                    "hh_enumerated": hh_enumerated,
+                    "hh_coverage": hh_coverage,
+                    "hh_coverage_band": coverage_band(hh_coverage),
+                    "pop_estimate": pop_estimate,
+                    "pop_enumerated": pop_enumerated,
+                    "pop_coverage": pop_coverage,
+                    "pop_coverage_band": coverage_band(pop_coverage),
+                    "refusals": hh.get("refusals", 0),
+                    "non_contact": hh.get("non_contact", 0),
+                    "total_deaths": death_by_geoid.get(geoid, 0),
+                    "total_pregnancies": preg_by_geoid.get(geoid, 0),
+                    "total_preg_outcomes": po_by_geoid.get(geoid, 0),
+                }
+            )
+        return rows
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        req = self.request
+
+        bc_sort = self._pick(
+            req.GET.get("bc_sort", "province"), self._VALID_SORT_FIELDS, "province"
+        )
+        bc_dir = self._pick(req.GET.get("bc_dir", "asc"), {"asc", "desc"}, "asc")
+        bc_province = req.GET.get("bc_province_search", "").strip()
+        bc_district = req.GET.get("bc_district_search", "").strip()
+        bc_ward = req.GET.get("bc_ward_search", "").strip()
+        bc_ea = req.GET.get("bc_ea_search", "").strip()
+        try:
+            bc_page = max(1, int(req.GET.get("bc_page", 1) or 1))
+        except (TypeError, ValueError):
+            bc_page = 1
+
+        location_level = req.GET.get("location_level", "").strip().lower()
+        location_value = req.GET.get("location_value", "").strip()
+
+        # The dashboard always filters to activated provinces. The "Current
+        # Census" checkbox narrows further to the provinces marked current in
+        # the admin panel config.
+        bc_current = str(req.GET.get("bc_current", "")).strip() in (
+            "1",
+            "true",
+            "True",
+        )
+
+        # Resolve the date window. Only an explicit preset or custom range adds
+        # a time bound; the checkbox no longer applies a rolling window.
+        preset, start_dt, end_dt, has_custom = parse_filter_range(req)
+        explicit_time = has_custom or preset in {"30", "7", "24"}
+        if not explicit_time:
+            start_dt = None
+            end_dt = None
+        start_iso, end_iso = self._iso_bounds(start_dt, end_dt)
+
+        rows = self._build_census_rows(
+            bc_current=bc_current,
+            location_level=location_level,
+            location_value=location_value,
+            bc_province=bc_province,
+            bc_district=bc_district,
+            bc_ward=bc_ward,
+            bc_ea=bc_ea,
+            start_iso=start_iso,
+            end_iso=end_iso,
+        )
+
+        # Grand total spans every filtered EA; ward total spans the EAs of the
+        # single ward shown on the active page.
+        bc_grand_total = self._summarize_census_rows(rows)
+        pagination = self._paginate_census_by_ward(rows, bc_page, bc_sort, bc_dir)
+        bc_ward_total = self._summarize_census_rows(pagination["rows"])
+
+        context.update(
+            {
+                "bc_stats": pagination["rows"],
+                "bc_sort": bc_sort,
+                "bc_dir": bc_dir,
+                "bc_province_search": bc_province,
+                "bc_district_search": bc_district,
+                "bc_ward_search": bc_ward,
+                "bc_ea_search": bc_ea,
+                "bc_current": bc_current,
+                "bc_ward_total": bc_ward_total,
+                "bc_grand_total": bc_grand_total,
+                "bc_page": pagination["page"],
+                "bc_total_pages": pagination["total_pages"],
+                "bc_has_prev": pagination["has_prev"],
+                "bc_has_next": pagination["has_next"],
+                "bc_prev_page": pagination["prev_page"],
+                "bc_next_page": pagination["next_page"],
+                "bc_visible_count": pagination["visible_count"],
+                "bc_total_count": pagination["total_count"],
+            }
+        )
+        return context
+
+    @staticmethod
+    def _iso_bounds(start_dt, end_dt):
+        """UTC ISO-8601 text bounds for lexical comparison against the ISO
+        ``submissiondate`` text fields. Returns ``None`` where unbounded."""
+        start_iso = end_iso = None
+        if start_dt is not None:
+            start_iso = start_dt.astimezone(dt_timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%S"
+            )
+        if end_dt is not None:
+            end_iso = end_dt.astimezone(dt_timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+        return start_iso, end_iso
+
+    @staticmethod
+    def _date_filter(queryset, field, start_iso, end_iso):
+        if start_iso:
+            queryset = queryset.filter(**{f"{field}__gte": start_iso})
+        if end_iso:
+            queryset = queryset.filter(**{f"{field}__lte": end_iso})
+        return queryset
+
+    @staticmethod
+    def _coverage_pct(numerator, denominator):
+        """Coverage percentage, or ``None`` when the target estimate is missing
+        or zero (avoids division by zero)."""
+        if not denominator:
+            return None
+        return float(f"{numerator / denominator * 100:.1f}")
+
+    @staticmethod
+    def _pick(value, valid_values, default):
+        return value if value in valid_values else default
+
+    @staticmethod
+    def _sort_rows(rows, sort_key, sort_dir):
+        reverse = sort_dir == "desc"
+        text_keys = {"province", "district", "ward", "ea"}
+        if sort_key in text_keys:
+            return sorted(
+                rows, key=lambda r: str(r.get(sort_key, "")).lower(), reverse=reverse
+            )
+
+        def numeric_key(row):
+            val = row.get(sort_key)
+            if val is None:
+                return -1 if reverse else float("inf")
+            try:
+                return float(val)
+            except (TypeError, ValueError):
+                return 0
+
+        return sorted(rows, key=numeric_key, reverse=reverse)
+
+    @classmethod
+    def _summarize_census_rows(cls, rows):
+        """Totals/averages for a list of EA row dicts, or ``None`` when empty.
+
+        Count columns are summed; coverage columns are recomputed from the
+        summed numerator/denominator rather than averaging percentages."""
+        if not rows:
+            return None
+        totals = dict.fromkeys(cls._SUM_FIELDS, 0)
+        for row in rows:
+            for field in cls._SUM_FIELDS:
+                value = row.get(field)
+                if value in (None, ""):
+                    continue
+                try:
+                    totals[field] += int(value)
+                except (TypeError, ValueError):
+                    continue
+        hh_coverage = cls._coverage_pct(totals["hh_enumerated"], totals["hh_estimate"])
+        pop_coverage = cls._coverage_pct(
+            totals["pop_enumerated"], totals["pop_estimate"]
+        )
+        totals["hh_coverage"] = hh_coverage
+        totals["hh_coverage_band"] = coverage_band(hh_coverage)
+        totals["pop_coverage"] = pop_coverage
+        totals["pop_coverage_band"] = coverage_band(pop_coverage)
+        return totals
+
+    @staticmethod
+    def _group_rows_by_ward(rows):
+        """Group EA rows into ``(province, district, ward)`` buckets,
+        preserving first-seen order. Returns a list of ``(key, [rows])``."""
+        groups = {}
+        order = []
+        for row in rows:
+            key = (row.get("province"), row.get("district"), row.get("ward"))
+            if key not in groups:
+                groups[key] = []
+                order.append(key)
+            groups[key].append(row)
+        return [(key, groups[key]) for key in order]
+
+    @classmethod
+    def _paginate_census_by_ward(cls, rows, page, bc_sort, bc_dir):
+        """Paginate EA rows one ward per page.
+
+        EA rows within a ward are sorted by ``bc_sort``/``bc_dir``. The ward
+        pages themselves are ordered by location when the sort column is a
+        location field, otherwise by each ward's aggregate of the sort column
+        (wards with no value sort last)."""
+        groups = [
+            (key, cls._sort_rows(ward_rows, bc_sort, bc_dir))
+            for key, ward_rows in cls._group_rows_by_ward(rows)
+        ]
+        reverse = bc_dir == "desc"
+        if bc_sort in {"province", "district", "ward", "ea"}:
+            groups.sort(
+                key=lambda item: tuple(str(part or "").lower() for part in item[0]),
+                reverse=reverse,
+            )
+        else:
+
+            def ward_metric(item):
+                summary = cls._summarize_census_rows(item[1]) or {}
+                value = summary.get(bc_sort)
+                if value is None:
+                    return float("-inf") if reverse else float("inf")
+                try:
+                    return float(value)
+                except (TypeError, ValueError):
+                    return 0.0
+
+            groups.sort(key=ward_metric, reverse=reverse)
+
+        total_pages = max(1, len(groups))
+        current_page = min(max(1, page), total_pages)
+        ward_rows = groups[current_page - 1][1] if groups else []
+        return {
+            "rows": ward_rows,
+            "page": current_page,
+            "total_pages": total_pages,
+            "has_prev": current_page > 1,
+            "has_next": current_page < total_pages,
+            "prev_page": current_page - 1 if current_page > 1 else 1,
+            "next_page": (
+                current_page + 1 if current_page < total_pages else total_pages
+            ),
+            "visible_count": len(ward_rows),
+            "total_count": len(rows),
+        }
+
+
+baseline_census_province_table_component_view = (
+    BaselineCensusProvinceTableComponent.as_view()
+)
+
+
+class BaselineCensusTableCsvExport(
+    CsvDownloadPermissionMixin,
+    PermissionRequiredMixin,
+    BaselineCensusProvinceTableComponent,
+):
+    permission_required = "va_analytics.view_dashboard"
+
+    _CSV_COLUMNS = (
+        ("province", "Province"),
+        ("district", "District"),
+        ("ward", "Ward"),
+        ("ea", "EA"),
+        ("hh_estimate", "HH Estimate"),
+        ("hh_enumerated", "HH Enumerated"),
+        ("hh_coverage", "HH Coverage %"),
+        ("pop_estimate", "Pop. Estimate"),
+        ("pop_enumerated", "Pop. Enumerated"),
+        ("pop_coverage", "Pop. Coverage %"),
+        ("refusals", "Refusals"),
+        ("non_contact", "Non-Contact"),
+        ("total_deaths", "Total Deaths"),
+        ("total_pregnancies", "Total Pregnancies"),
+        ("total_preg_outcomes", "Total Preg. Outcomes"),
+    )
+
+    def get(self, request, *args, **kwargs):
+        try:
+            current_census = str(
+                request.GET.get("current_census", request.GET.get("bc_current", ""))
+            ).strip().lower() in {"1", "true", "yes", "on"}
+            rows = self._sort_rows(
+                self._build_census_rows(bc_current=current_census),
+                "province",
+                "asc",
+            )
+            total = self._summarize_census_rows(rows)
+            return self._csv_response(rows, total)
+        except Exception:
+            logger.exception("Baseline Census CSV export failed")
+            return JsonResponse(
+                {"error": "Unable to export baseline census data."}, status=500
+            )
+
+    def _csv_response(self, rows, total):
+        filename = timezone.now().strftime("baseline_census_data_%Y%m%d_%H%M%S.csv")
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        writer = csv.writer(response)
+        writer.writerow([label for _, label in self._CSV_COLUMNS])
+        for row in rows:
+            writer.writerow(
+                [self._csv_value(row.get(key)) for key, _ in self._CSV_COLUMNS]
+            )
+        if total:
+            writer.writerow(
+                [
+                    "Grand Total / Average",
+                    "",
+                    "",
+                    "",
+                    self._csv_value(total.get("hh_estimate")),
+                    self._csv_value(total.get("hh_enumerated")),
+                    self._csv_value(total.get("hh_coverage")),
+                    self._csv_value(total.get("pop_estimate")),
+                    self._csv_value(total.get("pop_enumerated")),
+                    self._csv_value(total.get("pop_coverage")),
+                    self._csv_value(total.get("refusals")),
+                    self._csv_value(total.get("non_contact")),
+                    self._csv_value(total.get("total_deaths")),
+                    self._csv_value(total.get("total_pregnancies")),
+                    self._csv_value(total.get("total_preg_outcomes")),
+                ]
+            )
+        return response
+
+    @staticmethod
+    def _csv_value(value):
+        return "" if value is None else value
+
+
+baseline_census_table_csv_export_view = BaselineCensusTableCsvExport.as_view()
+
+
+# Administrative hierarchy used by the Census Chart drill-down, ordered from
+# the broadest level to the narrowest. ``geoid`` is the canonical EA key.
+_CENSUS_LEVEL_ORDER = ("province", "district", "constituency", "ward", "ea")
+_CENSUS_LEVEL_FIELD = {
+    "province": "province_name",
+    "district": "district_name",
+    "constituency": "constituency_name",
+    "ward": "ward_name",
+    "ea": "geoid",
+}
+# Bucket for enumerated records whose EA is missing from the target table.
+_UNMATCHED_GROUP_KEY = "Unmatched"
+
+
+def _new_census_group():
+    return {
+        "population_estimate": 0,
+        "household_estimate": 0,
+        "population_enumerated": 0,
+        "household_enumerated": 0,
+        "death_enumerated": 0,
+        "pregnancy_enumerated": 0,
+        "pregnancy_outcome_enumerated": 0,
+    }
+
+
+def _attribute_unmatched_counts(
+    groups,
+    order,
+    level,
+    parent_filters,
+    location_level,
+    location_value,
+    excluded_provinces,
+    *,
+    unmatched_members,
+    unmatched_households,
+):
+    """Fold EA-unresolved household counts into the level's groups.
+
+    Rows whose EA is missing from the target table are attributed by the
+    household's denormalised province/district/constituency/ward text. They
+    land in the matching group when one exists, otherwise in an explicit
+    "Unmatched" group, so chart totals never silently lose enumerated records.
+    """
+    if not unmatched_members and not unmatched_households:
+        return
+
+    group_by_norm = {_baseline_geo_key(key): key for key in order}
+    excluded_norm = {_baseline_geo_key(name) for name in (excluded_provinces or [])}
+    parent_levels = ("province", "district", "constituency", "ward")
+
+    def resolve_group(row):
+        # Province exclusion mirrors the target-row filtering.
+        if excluded_norm and _baseline_geo_key(row.get("province")) in excluded_norm:
+            return None
+        # Drill-down parent filters.
+        for parent in parent_levels:
+            wanted = (parent_filters or {}).get(parent)
+            if wanted and _baseline_geo_key(row.get(parent)) != _baseline_geo_key(
+                wanted
+            ):
+                return None
+        # Location search filter, applied to the matching admin field.
+        if location_value and location_level in parent_levels:
+            text = str(row.get(location_level) or "")
+            if location_value.lower() not in text.lower():
+                return None
+        # An unmatched row has no target EA, so at EA granularity it can only
+        # land in the explicit "Unmatched" group.
+        if level == "ea":
+            return _UNMATCHED_GROUP_KEY
+        return group_by_norm.get(
+            _baseline_geo_key(row.get(level)), _UNMATCHED_GROUP_KEY
+        )
+
+    def bucket(group_key):
+        acc = groups.get(group_key)
+        if acc is None:
+            acc = _new_census_group()
+            groups[group_key] = acc
+            order.append(group_key)
+        return acc
+
+    for row in unmatched_members:
+        group_key = resolve_group(row)
+        if group_key is not None:
+            bucket(group_key)["population_enumerated"] += row["cnt"]
+
+    for row in unmatched_households:
+        group_key = resolve_group(row)
+        if group_key is not None:
+            bucket(group_key)["household_enumerated"] += row["cnt"]
+
+
+def aggregate_census_by_level(
+    level,
+    parent_filters,
+    location_level,
+    location_value,
+    start_iso,
+    end_iso,
+    excluded_provinces=None,
+):
+    """Aggregate baseline-census estimates and enumerated counts to ``level``.
+
+    ``SRSEAPopulationTarget`` holds one row per EA carrying the full
+    administrative naming, so it doubles as the ``geoid -> administrative name``
+    map. Enumerated counts (households, household members, deaths) are gathered
+    once each, keyed by canonical geoid, then rolled up to the requested level
+    in a single in-memory pass — no per-group queries.
+
+    ``excluded_provinces`` drops provinces that are not part of the current
+    baseline census (used when the "Current Baseline Census" filter is on).
+
+    Returns ``(results, child_level)`` where ``results`` is a list of metric
+    dicts and ``child_level`` is the next drill-down level (``None`` at EA).
+    """
+    from va_explorer.va_data_management.models import (
+        Death,
+        Pregnancy,
+        PregnancyOutcome,
+        SRSEAPopulationTarget,
+    )
+
+    group_field = _CENSUS_LEVEL_FIELD.get(level, "province_name")
+    coverage = BaselineCensusProvinceTableComponent._coverage_pct
+    date_filter = BaselineCensusProvinceTableComponent._date_filter
+
+    # --- Target rows: geoid -> administrative names + estimates ---
+    targets = SRSEAPopulationTarget.objects.all()
+    if excluded_provinces:
+        targets = targets.exclude(province_name__in=excluded_provinces)
+    # User-facing location scoping, mirroring the Census Table tab. The target
+    # table has no Location FK, so it is filtered on its denormalised names
+    # rather than via restrict_queryset_to_user_locations().
+    location_lookup = _CENSUS_LEVEL_FIELD.get((location_level or "").lower())
+    if location_value and location_lookup:
+        targets = targets.filter(**{f"{location_lookup}__icontains": location_value})
+    # Drill-down parent filters use exact match — values come from chart clicks,
+    # not free-text search.
+    for parent_level in ("province", "district", "constituency", "ward"):
+        value = (parent_filters or {}).get(parent_level)
+        if value:
+            targets = targets.filter(**{_CENSUS_LEVEL_FIELD[parent_level]: value})
+
+    target_rows = list(
+        targets.values(
+            "geoid",
+            "province_name",
+            "district_name",
+            "constituency_name",
+            "ward_name",
+            "household_target",
+            "population_target",
+        )
+    )
+
+    geoid_to_group = {}
+    groups = {}
+    order = []
+    for row in target_rows:
+        group_key = (row.get(group_field) or "").strip()
+        geoid_to_group[row["geoid"]] = group_key
+        acc = groups.get(group_key)
+        if acc is None:
+            acc = _new_census_group()
+            groups[group_key] = acc
+            order.append(group_key)
+        acc["population_estimate"] += row["population_target"] or 0
+        acc["household_estimate"] += row["household_target"] or 0
+
+    # --- Enumerated counts, one query per model, keyed by canonical geoid ---
+    hh_by_geoid = _household_counts_by_geoid(
+        start_iso,
+        end_iso,
+        date_filter,
+        target_rows,
+    )
+    pop_by_geoid = _household_member_counts_by_geoid(
+        start_iso,
+        end_iso,
+        date_filter,
+        target_rows,
+    )
+    death_by_geoid = _vital_event_counts_by_geoid(
+        Death,
+        "death",
+        start_iso,
+        end_iso,
+        date_filter,
+        target_rows,
+    )
+    pregnancy_by_geoid = _vital_event_counts_by_geoid(
+        Pregnancy,
+        "pregnancy",
+        start_iso,
+        end_iso,
+        date_filter,
+        target_rows,
+    )
+    pregnancy_outcome_by_geoid = _vital_event_counts_by_geoid(
+        PregnancyOutcome,
+        "pregnancy_outcome",
+        start_iso,
+        end_iso,
+        date_filter,
+        target_rows,
+        include_cluster=True,
+    )
+
+    # --- Roll EA-level counts up to the requested level ---
+    for geoid, group_key in geoid_to_group.items():
+        acc = groups[group_key]
+        acc["household_enumerated"] += hh_by_geoid.get(geoid, {}).get(
+            "hh_enumerated", 0
+        )
+        acc["population_enumerated"] += pop_by_geoid.get(geoid, 0)
+        acc["death_enumerated"] += death_by_geoid.get(geoid, 0)
+        acc["pregnancy_enumerated"] += pregnancy_by_geoid.get(geoid, 0)
+        acc["pregnancy_outcome_enumerated"] += pregnancy_outcome_by_geoid.get(geoid, 0)
+
+    # --- Surface enumerated household data whose EA is absent from the target
+    # table. _resolve_household_geoid drops these rows, so they never reach the
+    # geoid roll-up above; attributing them by the household's own
+    # administrative text keeps the chart total in step with the Enumeration
+    # Coverage summary instead of silently losing people. ---
+    _attribute_unmatched_counts(
+        groups,
+        order,
+        level,
+        parent_filters,
+        location_level,
+        location_value,
+        excluded_provinces,
+        unmatched_members=_unmatched_household_member_counts(
+            start_iso, end_iso, date_filter, target_rows
+        ),
+        unmatched_households=_unmatched_household_counts(
+            start_iso, end_iso, date_filter, target_rows
+        ),
+    )
+
+    child_index = _CENSUS_LEVEL_ORDER.index(level) + 1
+    child_level = (
+        _CENSUS_LEVEL_ORDER[child_index]
+        if child_index < len(_CENSUS_LEVEL_ORDER)
+        else None
+    )
+
+    results = []
+    for group_key in order:
+        acc = groups[group_key]
+        results.append(
+            {
+                "label": group_key or "—",
+                "level": level,
+                "value": group_key,
+                "population_estimate": acc["population_estimate"],
+                "population_enumerated": acc["population_enumerated"],
+                "population_coverage": coverage(
+                    acc["population_enumerated"], acc["population_estimate"]
+                ),
+                "household_estimate": acc["household_estimate"],
+                "household_enumerated": acc["household_enumerated"],
+                "household_coverage": coverage(
+                    acc["household_enumerated"], acc["household_estimate"]
+                ),
+                # Deaths, pregnancies and pregnancy outcomes have no target in
+                # SRSEAPopulationTarget, so their estimate is None. None keeps
+                # coverage division-safe — _coverage_pct treats a falsy
+                # denominator as "no coverage".
+                "death_estimate": None,
+                "death_enumerated": acc["death_enumerated"],
+                "death_coverage": coverage(acc["death_enumerated"], None),
+                "pregnancy_estimate": None,
+                "pregnancy_enumerated": acc["pregnancy_enumerated"],
+                "pregnancy_coverage": coverage(acc["pregnancy_enumerated"], None),
+                "pregnancy_outcome_estimate": None,
+                "pregnancy_outcome_enumerated": acc["pregnancy_outcome_enumerated"],
+                "pregnancy_outcome_coverage": coverage(
+                    acc["pregnancy_outcome_enumerated"], None
+                ),
+                "has_children": (
+                    child_level is not None and group_key != _UNMATCHED_GROUP_KEY
+                ),
+            }
+        )
+
+    # Stable, user-friendly ordering by the geography label, with the
+    # "Unmatched" bucket pinned last so it never displaces real geographies.
+    results.sort(
+        key=lambda row: (
+            row["value"] == _UNMATCHED_GROUP_KEY,
+            str(row["value"]).lower(),
+        )
+    )
+    return results, child_level
+
+
+class BaselineCensusChartDataView(CustomAuthMixin, PermissionRequiredMixin, View):
+    """JSON endpoint backing the Census Chart tab of the Baseline Census
+    Dashboard. Returns estimate/enumerated/coverage metrics for Population,
+    Households, Deaths, Pregnancies and Pregnancy Outcomes aggregated to the
+    requested administrative level, plus drill-down breadcrumbs.
+
+    The response always carries every indicator; the optional ``indicator``
+    query param only validates the caller's request (unsupported values are
+    rejected) — the Census Chart sub-tabs render client-side from one payload.
+    """
+
+    permission_required = "va_analytics.view_dashboard"
+    _PARENT_LEVELS = ("province", "district", "constituency", "ward")
+    _CHILD_OF = {
+        "province": "district",
+        "district": "constituency",
+        "constituency": "ward",
+        "ward": "ea",
+    }
+    _SUPPORTED_INDICATORS = (
+        "population",
+        "households",
+        "deaths",
+        "pregnancies",
+        "pregnancy_outcomes",
+    )
+
+    def get(self, request, *args, **kwargs):
+        try:
+            return self._build_response(request)
+        except Exception:
+            logger.exception("Census chart data endpoint failed")
+            return JsonResponse(
+                {"error": "Unable to load census chart data."}, status=500
+            )
+
+    def _build_response(self, request):
+        from va_explorer.va_data_management.utils.baseline_census import (
+            get_dashboard_excluded_census_provinces,
+        )
+
+        # Optional indicator filter — validate but do not narrow the payload,
+        # which always carries every indicator for instant sub-tab switching.
+        indicator = (request.GET.get("indicator", "") or "").strip().lower()
+        if indicator and indicator not in self._SUPPORTED_INDICATORS:
+            return JsonResponse(
+                {"error": f"Unsupported indicator '{indicator}'."}, status=400
+            )
+
+        level = BaselineCensusProvinceTableComponent._pick(
+            (request.GET.get("level", "province") or "province").strip().lower(),
+            set(_CENSUS_LEVEL_ORDER),
+            "province",
+        )
+        parent_filters = {
+            parent: request.GET.get(parent, "").strip()
+            for parent in self._PARENT_LEVELS
+        }
+        location_level = request.GET.get("location_level", "").strip().lower()
+        location_value = request.GET.get("location_value", "").strip()
+
+        # Date/province resolution mirrors the Census Table tab so the two tabs
+        # always agree. Only an explicit preset/custom range adds a time bound.
+        # The dashboard always filters to activated provinces, and the "Current
+        # Census" checkbox narrows further to provinces marked current.
+        bc_current = str(request.GET.get("bc_current", "")).strip() in (
+            "1",
+            "true",
+            "True",
+        )
+        preset, start_dt, end_dt, has_custom = parse_filter_range(request)
+        explicit_time = has_custom or preset in {"30", "7", "24"}
+        if not explicit_time:
+            start_dt = None
+            end_dt = None
+        start_iso, end_iso = BaselineCensusProvinceTableComponent._iso_bounds(
+            start_dt, end_dt
+        )
+
+        excluded_provinces = get_dashboard_excluded_census_provinces(
+            include_current=bc_current
+        )
+        results, child_level = aggregate_census_by_level(
+            level,
+            parent_filters,
+            location_level,
+            location_value,
+            start_iso,
+            end_iso,
+            excluded_provinces=excluded_provinces,
+        )
+
+        return JsonResponse(
+            {
+                "level": level,
+                "child_level": child_level,
+                "indicator": indicator or None,
+                "breadcrumbs": self._build_breadcrumbs(parent_filters),
+                "results": results,
+            }
+        )
+
+    def _build_breadcrumbs(self, parent_filters):
+        """Drill path as clickable steps. Each crumb carries the level to load
+        and the cumulative parent filters needed to reload at that step."""
+        crumbs = [{"label": "All Provinces", "level": "province", "parents": {}}]
+        cumulative = {}
+        for parent in self._PARENT_LEVELS:
+            value = parent_filters.get(parent)
+            if not value:
+                break
+            cumulative = {**cumulative, parent: value}
+            crumbs.append(
+                {
+                    "label": value,
+                    "level": self._CHILD_OF[parent],
+                    "parents": dict(cumulative),
+                }
+            )
+        return crumbs
+
+
+baseline_census_chart_data_view = BaselineCensusChartDataView.as_view()
+
+
+# ---------------------------------------------------------------------------
+# Social Mobilization tab (Baseline Census Dashboard)
+# ---------------------------------------------------------------------------
+# The Social Mobilization ODK tally is a flat table of TextField counts. Like
+# the census tabs it is scoped by user location (province/district), filtered on
+# the ISO ``submissiondate``, and rolled up in Python (text fields cannot be
+# summed in SQL). Two endpoints back the tab: an HTML component (KPIs + an
+# aggregated table + a rumour log) and a JSON chart-data endpoint (drill-down
+# bars + a time trend), mirroring the Census Table and Census Chart tabs.
+
+_SOCMOB_LEVEL_ORDER = (
+    "province",
+    "district",
+    "health_facility",
+    "village_neighbourhood",
+)
+_SOCMOB_LEVEL_FIELD = {level: level for level in _SOCMOB_LEVEL_ORDER}
+_SOCMOB_CHILD_OF = {
+    "province": "district",
+    "district": "health_facility",
+    "health_facility": "village_neighbourhood",
+}
+# Numeric tally fields summed during roll-up.
+_SOCMOB_SUM_FIELDS = (
+    "households_visited",
+    "people_over_15",
+    "children_5_14",
+    "children_12_59months",
+    "schools_reached",
+    "religious_leaders_reached",
+    "refusal_identified",
+    "refusal_managed",
+    "children_affected",
+    "refusals_from_rumor",
+)
+# Location columns shown on the aggregated table (one row per village).
+_SOCMOB_TABLE_GROUP_FIELDS = (
+    "province",
+    "district",
+    "health_facility",
+    "village_neighbourhood",
+)
+# Sort keys allowed on the aggregated table.
+_SOCMOB_SORT_FIELDS = frozenset(
+    _SOCMOB_TABLE_GROUP_FIELDS
+    + _SOCMOB_SUM_FIELDS
+    + ("people_reached", "refusal_managed_rate", "rumours_reported")
+)
+
+
+def _socmob_to_int(value):
+    """Parse an ODK text count to int; blanks / junk become 0."""
+    if value in (None, ""):
+        return 0
+    try:
+        return int(float(str(value).strip()))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _socmob_rate(numerator, denominator):
+    """Refusals managed as a % of refusals identified, or ``None`` when none
+    were identified (avoids division by zero)."""
+    if not denominator:
+        return None
+    return float(f"{numerator / denominator * 100:.1f}")
+
+
+def _socmob_normalize_location_label(value):
+    return " ".join(str(value or "").replace("_", " ").split())
+
+
+def _socmob_normalize_health_facility(value, district):
+    facility = _socmob_normalize_location_label(value)
+    parent = _socmob_normalize_location_label(district)
+    if not facility or not parent:
+        return facility
+
+    if facility.casefold().startswith(parent.casefold()):
+        remainder = facility[len(parent) :].strip(" -_/")
+        if remainder:
+            return remainder
+    return facility
+
+
+def _socmob_base_queryset(
+    request,
+    location_level,
+    location_value,
+    start_iso,
+    end_iso,
+    parent_filters=None,
+):
+    """Location-scoped, date-filtered ``SocialMobilization`` queryset shared by
+    every Social Mobilization aggregation."""
+    from va_explorer.va_data_management.models import SocialMobilization
+
+    qs = SocialMobilization.objects.all()
+    qs = restrict_queryset_to_user_locations(
+        qs,
+        getattr(request, "user", None),
+        field_mapping={"province": "province", "district": "district"},
+    )
+    qs = BaselineCensusProvinceTableComponent._date_filter(
+        qs, "submissiondate", start_iso, end_iso
+    )
+    # Free-form location scope from the shared filter (icontains, mirrors census).
+    level_field = _SOCMOB_LEVEL_FIELD.get((location_level or "").lower())
+    if location_value and level_field:
+        qs = qs.filter(**{f"{level_field}__icontains": location_value})
+    # Drill-down parents are exact matches (values come from chart clicks).
+    for parent_level, parent_value in (parent_filters or {}).items():
+        field = _SOCMOB_LEVEL_FIELD.get(parent_level)
+        if parent_value and field:
+            qs = qs.filter(**{field: parent_value})
+    return qs
+
+
+def _socmob_new_group():
+    acc = dict.fromkeys(_SOCMOB_SUM_FIELDS, 0)
+    acc["rumours_reported"] = 0
+    return acc
+
+
+def _socmob_accumulate(acc, row):
+    for field in _SOCMOB_SUM_FIELDS:
+        acc[field] += _socmob_to_int(row.get(field))
+    if (row.get("rumor_description") or "").strip():
+        acc["rumours_reported"] += 1
+
+
+def _socmob_metrics_from_group(acc):
+    """Derive the shared metric dict (sums + derived fields) from an accumulator."""
+    people_reached = (
+        acc["people_over_15"] + acc["children_5_14"] + acc["children_12_59months"]
+    )
+    return {
+        "households_visited": acc["households_visited"],
+        "people_over_15": acc["people_over_15"],
+        "children_5_14": acc["children_5_14"],
+        "children_12_59months": acc["children_12_59months"],
+        "people_reached": people_reached,
+        "schools_reached": acc["schools_reached"],
+        "religious_leaders_reached": acc["religious_leaders_reached"],
+        "refusal_identified": acc["refusal_identified"],
+        "refusal_managed": acc["refusal_managed"],
+        "refusal_managed_rate": _socmob_rate(
+            acc["refusal_managed"], acc["refusal_identified"]
+        ),
+        "rumours_reported": acc["rumours_reported"],
+        "children_affected": acc["children_affected"],
+        "refusals_from_rumor": acc["refusals_from_rumor"],
+    }
+
+
+def aggregate_social_mobilization_by_level(
+    request, level, parent_filters, location_level, location_value, start_iso, end_iso
+):
+    """Roll Social Mobilization counts up to ``level`` for the chart drill-down.
+
+    Returns ``(results, child_level)`` where ``child_level`` is the next
+    drill-down level (``None`` at village)."""
+    group_field = _SOCMOB_LEVEL_FIELD.get(level, "province")
+    qs = _socmob_base_queryset(
+        request, location_level, location_value, start_iso, end_iso, parent_filters
+    )
+    rows = qs.values(group_field, *_SOCMOB_SUM_FIELDS, "rumor_description")
+
+    groups = {}
+    order = []
+    for row in rows:
+        key = (row.get(group_field) or "").strip()
+        acc = groups.get(key)
+        if acc is None:
+            acc = _socmob_new_group()
+            groups[key] = acc
+            order.append(key)
+        _socmob_accumulate(acc, row)
+
+    child_index = _SOCMOB_LEVEL_ORDER.index(level) + 1
+    child_level = (
+        _SOCMOB_LEVEL_ORDER[child_index]
+        if child_index < len(_SOCMOB_LEVEL_ORDER)
+        else None
+    )
+    results = []
+    for key in order:
+        results.append(
+            {
+                "label": key or "—",
+                "level": level,
+                "value": key,
+                "has_children": child_level is not None,
+                **_socmob_metrics_from_group(groups[key]),
+            }
+        )
+    results.sort(key=lambda row: str(row["value"]).lower())
+    return results, child_level
+
+
+def aggregate_social_mobilization_trend(
+    request, parent_filters, location_level, location_value, start_iso, end_iso
+):
+    """Daily totals over the current scope, bucketed by the ``submissiondate``
+    date part (YYYY-MM-DD)."""
+    qs = _socmob_base_queryset(
+        request, location_level, location_value, start_iso, end_iso, parent_filters
+    )
+    rows = qs.values(
+        "submissiondate",
+        "people_over_15",
+        "children_5_14",
+        "children_12_59months",
+        "households_visited",
+        "refusal_identified",
+        "refusal_managed",
+    )
+    buckets = {}
+    for row in rows:
+        raw = (row.get("submissiondate") or "").strip()
+        if not raw:
+            continue
+        day = raw[:10]
+        acc = buckets.setdefault(
+            day,
+            {
+                "households_visited": 0,
+                "people_reached": 0,
+                "refusals_identified": 0,
+                "refusals_managed": 0,
+            },
+        )
+        acc["households_visited"] += _socmob_to_int(row.get("households_visited"))
+        acc["people_reached"] += (
+            _socmob_to_int(row.get("people_over_15"))
+            + _socmob_to_int(row.get("children_5_14"))
+            + _socmob_to_int(row.get("children_12_59months"))
+        )
+        acc["refusals_identified"] += _socmob_to_int(row.get("refusal_identified"))
+        acc["refusals_managed"] += _socmob_to_int(row.get("refusal_managed"))
+    return [{"date": day, **buckets[day]} for day in sorted(buckets)]
+
+
+def aggregate_social_mobilization_table(
+    request, location_level, location_value, start_iso, end_iso
+):
+    """One row per ``(province, district, health_facility, village)`` plus
+    scope-wide KPI totals. Returns ``(rows, totals)``."""
+    qs = _socmob_base_queryset(
+        request, location_level, location_value, start_iso, end_iso
+    )
+    raw_rows = qs.values(
+        *_SOCMOB_TABLE_GROUP_FIELDS, *_SOCMOB_SUM_FIELDS, "rumor_description"
+    )
+
+    groups = {}
+    order = []
+    totals_acc = _socmob_new_group()
+    for row in raw_rows:
+        key = tuple(
+            (row.get(field) or "").strip() for field in _SOCMOB_TABLE_GROUP_FIELDS
+        )
+        acc = groups.get(key)
+        if acc is None:
+            acc = _socmob_new_group()
+            groups[key] = acc
+            order.append(key)
+        _socmob_accumulate(acc, row)
+        _socmob_accumulate(totals_acc, row)
+
+    rows = []
+    for key in order:
+        location = dict(zip(_SOCMOB_TABLE_GROUP_FIELDS, key))
+        location["health_facility"] = _socmob_normalize_health_facility(
+            location["health_facility"], location["district"]
+        )
+        rows.append({**location, **_socmob_metrics_from_group(groups[key])})
+    return rows, _socmob_metrics_from_group(totals_acc)
+
+
+def _socmob_sort_rows(rows, sort_key, sort_dir):
+    reverse = sort_dir == "desc"
+    if sort_key in _SOCMOB_TABLE_GROUP_FIELDS:
+        return sorted(
+            rows, key=lambda r: str(r.get(sort_key, "")).lower(), reverse=reverse
+        )
+
+    def numeric_key(row):
+        val = row.get(sort_key)
+        if val is None:
+            return -1 if reverse else float("inf")
+        try:
+            return float(val)
+        except (TypeError, ValueError):
+            return 0
+
+    return sorted(rows, key=numeric_key, reverse=reverse)
+
+
+def _socmob_totals_from_rows(rows):
+    totals = {
+        "households_visited": 0,
+        "people_reached": 0,
+        "schools_reached": 0,
+        "religious_leaders_reached": 0,
+        "refusal_identified": 0,
+        "refusal_managed": 0,
+        "rumours_reported": 0,
+    }
+    for row in rows:
+        for field in totals:
+            totals[field] += _socmob_to_int(row.get(field))
+    totals["refusal_managed_rate"] = _socmob_rate(
+        totals["refusal_managed"], totals["refusal_identified"]
+    )
+    return totals
+
+
+def _socmob_rows_by_district(rows):
+    district_pages = []
+    district_index = {}
+    for row in rows:
+        key = (
+            str(row.get("province") or "").casefold(),
+            str(row.get("district") or "").casefold(),
+        )
+        if key not in district_index:
+            district_index[key] = len(district_pages)
+            district_pages.append(
+                {
+                    "province": row.get("province") or "",
+                    "district": row.get("district") or "",
+                    "rows": [],
+                }
+            )
+        district_pages[district_index[key]]["rows"].append(row)
+    return district_pages
+
+
+class SocialMobilizationComponentView(
+    CustomAuthMixin, PermissionRequiredMixin, TemplateView
+):
+    """HTML component for the Social Mobilization tab: KPI cards, an aggregated
+    table (sortable / searchable / paginated), and a rumour log."""
+
+    template_name = (
+        "va_analytics/components/_baseline_social_mobilization_component.html"
+    )
+    permission_required = "va_analytics.view_dashboard"
+    _PAGE_SIZE = 25
+    _RUMOUR_LIMIT = 200
+    # (sort_key, header label) pairs — order matches the template's <tbody> cells.
+    _LOCATION_COLUMNS = (
+        ("province", "Province"),
+        ("district", "District"),
+        ("health_facility", "Health Facility"),
+        ("village_neighbourhood", "Village"),
+    )
+    _METRIC_COLUMNS = (
+        ("households_visited", "Households Visited"),
+        ("people_reached", "People Reached"),
+        ("schools_reached", "Schools"),
+        ("religious_leaders_reached", "Religious Leaders"),
+        ("refusal_identified", "Refusals Identified"),
+        ("refusal_managed", "Refusals Managed"),
+        ("refusal_managed_rate", "Managed Rate"),
+        ("rumours_reported", "Rumours"),
+    )
+    _WRAPPING_METRIC_COLUMNS = (
+        "households_visited",
+        "people_reached",
+        "religious_leaders_reached",
+        "refusal_identified",
+        "refusal_managed",
+        "refusal_managed_rate",
+    )
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        req = self.request
+        location_level, location_value = parse_location_filter(req)
+        start_iso, end_iso = self._scoped_date_bounds(req)
+
+        rows, _totals = aggregate_social_mobilization_table(
+            req, location_level, location_value, start_iso, end_iso
+        )
+
+        sm_q = (req.GET.get("sm_q") or "").strip()
+        if sm_q:
+            needle = sm_q.lower()
+            rows = [
+                row
+                for row in rows
+                if needle
+                in " ".join(
+                    str(row.get(field, "")) for field in _SOCMOB_TABLE_GROUP_FIELDS
+                ).lower()
+            ]
+
+        sm_sort = BaselineCensusProvinceTableComponent._pick(
+            (req.GET.get("sm_sort") or "province").strip(),
+            _SOCMOB_SORT_FIELDS,
+            "province",
+        )
+        sm_dir = BaselineCensusProvinceTableComponent._pick(
+            (req.GET.get("sm_dir") or "asc").strip(), {"asc", "desc"}, "asc"
+        )
+        rows = _socmob_sort_rows(rows, sm_sort, sm_dir)
+
+        total_count = len(rows)
+        grand_totals = _socmob_totals_from_rows(rows)
+        district_pages = _socmob_rows_by_district(rows)
+        page_rows = []
+        page_district = None
+        page_totals = _socmob_totals_from_rows(page_rows)
+        total_pages = max(1, len(district_pages))
+        try:
+            page = int(req.GET.get("sm_page") or 1)
+        except (TypeError, ValueError):
+            page = 1
+        page = min(max(1, page), total_pages)
+        if district_pages:
+            district_page = district_pages[page - 1]
+            page_rows = district_page["rows"]
+            page_district = district_page["district"]
+            page_totals = _socmob_totals_from_rows(page_rows)
+
+        context.update(
+            {
+                "sm_stats": page_rows,
+                "sm_totals": grand_totals,
+                "sm_grand_totals": grand_totals,
+                "sm_page_totals": page_totals,
+                "sm_page_district": page_district,
+                "sm_location_columns": self._LOCATION_COLUMNS,
+                "sm_metric_columns": self._METRIC_COLUMNS,
+                "sm_wrapping_metric_columns": self._WRAPPING_METRIC_COLUMNS,
+                "sm_rumours": self._rumour_log(
+                    req, location_level, location_value, start_iso, end_iso
+                ),
+                "sm_sort": sm_sort,
+                "sm_dir": sm_dir,
+                "sm_q": sm_q,
+                "sm_page": page,
+                "sm_total_pages": total_pages,
+                "sm_total_count": total_count,
+                "sm_visible_count": len(page_rows),
+                "sm_has_prev": page > 1,
+                "sm_has_next": page < total_pages,
+                "sm_prev_page": page - 1 if page > 1 else 1,
+                "sm_next_page": page + 1 if page < total_pages else total_pages,
+            }
+        )
+        return context
+
+    @staticmethod
+    def _scoped_date_bounds(request):
+        """ISO bounds that only apply when an explicit preset / custom range is
+        set, mirroring the Census tabs (default view is all-time)."""
+        preset, start_dt, end_dt, has_custom = parse_filter_range(request)
+        if not (has_custom or preset in {"30", "7", "24"}):
+            start_dt = end_dt = None
+        return BaselineCensusProvinceTableComponent._iso_bounds(start_dt, end_dt)
+
+    def _rumour_log(self, request, location_level, location_value, start_iso, end_iso):
+        qs = _socmob_base_queryset(
+            request, location_level, location_value, start_iso, end_iso
+        )
+        qs = qs.exclude(rumor_description__isnull=True).exclude(rumor_description="")
+        records = qs.values(
+            "submissiondate",
+            "today",
+            "province",
+            "district",
+            "health_facility",
+            "village_neighbourhood",
+            "rumor_source",
+            "rumor_source_other",
+            "rumor_description",
+            "children_affected",
+            "refusals_from_rumor",
+        ).order_by("-submissiondate")[: self._RUMOUR_LIMIT]
+        log = []
+        for record in records:
+            log.append(
+                {
+                    "date": (record.get("submissiondate") or "")[:10]
+                    or (record.get("today") or ""),
+                    "province": record.get("province"),
+                    "district": record.get("district"),
+                    "health_facility": record.get("health_facility"),
+                    "village_neighbourhood": record.get("village_neighbourhood"),
+                    "source": record.get("rumor_source_other")
+                    or record.get("rumor_source"),
+                    "description": record.get("rumor_description"),
+                    "children_affected": _socmob_to_int(
+                        record.get("children_affected")
+                    ),
+                    "refusals_from_rumor": _socmob_to_int(
+                        record.get("refusals_from_rumor")
+                    ),
+                }
+            )
+        return log
+
+
+social_mobilization_component_view = SocialMobilizationComponentView.as_view()
+
+
+class SocialMobilizationKpisComponentView(
+    CustomAuthMixin, PermissionRequiredMixin, TemplateView
+):
+    """KPI cards for the Social Mobilization tab. Rendered separately from the
+    tables so the cards stay visible above the Charts/Tables sub-tabs."""
+
+    template_name = (
+        "va_analytics/components/_baseline_social_mobilization_kpis_component.html"
+    )
+    permission_required = "va_analytics.view_dashboard"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        req = self.request
+        location_level, location_value = parse_location_filter(req)
+        start_iso, end_iso = SocialMobilizationComponentView._scoped_date_bounds(req)
+        _, totals = aggregate_social_mobilization_table(
+            req, location_level, location_value, start_iso, end_iso
+        )
+        context["sm_totals"] = totals
+        return context
+
+
+social_mobilization_kpis_component_view = SocialMobilizationKpisComponentView.as_view()
+
+
+class SocialMobilizationChartDataView(CustomAuthMixin, PermissionRequiredMixin, View):
+    """JSON endpoint backing the Social Mobilization charts: per-location metrics
+    with province → district → health facility → village drill-down, plus a
+    daily time trend. Mirrors ``BaselineCensusChartDataView``."""
+
+    permission_required = "va_analytics.view_dashboard"
+    _PARENT_LEVELS = ("province", "district", "health_facility")
+
+    def get(self, request, *args, **kwargs):
+        try:
+            return self._build_response(request)
+        except Exception:
+            logger.exception("Social mobilization chart data endpoint failed")
+            return JsonResponse(
+                {"error": "Unable to load social mobilization chart data."}, status=500
+            )
+
+    def _build_response(self, request):
+        level = BaselineCensusProvinceTableComponent._pick(
+            (request.GET.get("level", "province") or "province").strip().lower(),
+            set(_SOCMOB_LEVEL_ORDER),
+            "province",
+        )
+        parent_filters = {
+            parent: request.GET.get(parent, "").strip()
+            for parent in self._PARENT_LEVELS
+        }
+        location_level = request.GET.get("location_level", "").strip().lower()
+        location_value = request.GET.get("location_value", "").strip()
+        start_iso, end_iso = SocialMobilizationComponentView._scoped_date_bounds(
+            request
+        )
+
+        results, child_level = aggregate_social_mobilization_by_level(
+            request,
+            level,
+            parent_filters,
+            location_level,
+            location_value,
+            start_iso,
+            end_iso,
+        )
+        trend = aggregate_social_mobilization_trend(
+            request, parent_filters, location_level, location_value, start_iso, end_iso
+        )
+        return JsonResponse(
+            {
+                "level": level,
+                "child_level": child_level,
+                "breadcrumbs": self._build_breadcrumbs(parent_filters),
+                "results": results,
+                "trend": trend,
+            }
+        )
+
+    def _build_breadcrumbs(self, parent_filters):
+        crumbs = [{"label": "All Provinces", "level": "province", "parents": {}}]
+        cumulative = {}
+        for parent in self._PARENT_LEVELS:
+            value = parent_filters.get(parent)
+            if not value:
+                break
+            cumulative = {**cumulative, parent: value}
+            crumbs.append(
+                {
+                    "label": value,
+                    "level": _SOCMOB_CHILD_OF[parent],
+                    "parents": dict(cumulative),
+                }
+            )
+        return crumbs
+
+
+social_mobilization_chart_data_view = SocialMobilizationChartDataView.as_view()
 
 
 class OutcomesDashboardView(CustomAuthMixin, PermissionRequiredMixin, TemplateView):

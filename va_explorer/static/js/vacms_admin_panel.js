@@ -48,6 +48,8 @@
   const modalSpinner = document.getElementById("vacmsModalSpinner");
   const dangerWrap = document.getElementById("vacmsDangerConfirmWrap");
   const dangerInput = document.getElementById("vacmsDangerConfirmInput");
+  const passwordWrap = document.getElementById("vacmsPasswordConfirmWrap");
+  const passwordInput = document.getElementById("vacmsPasswordConfirmInput");
 
   if (!root || !runUrl || !consoleEl) return;
 
@@ -367,7 +369,10 @@
               return;
             }
             control.value = payload.filename || targetFilename;
-            uploadResult.textContent = "Uploaded";
+            uploadResult.textContent = payload.saved_to
+              ? `Saved to: ${payload.saved_to}`
+              : "Uploaded";
+            uploadResult.title = payload.saved_to || "";
             uploadResult.classList.remove("text-danger");
             uploadResult.classList.add("text-success");
           } catch (_error) {
@@ -452,6 +457,12 @@
       dangerInput.value = "";
     }
 
+    // Database-altering, non-favorite commands require password confirmation.
+    if (passwordWrap && passwordInput) {
+      passwordInput.value = "";
+      passwordWrap.classList.toggle("d-none", !command.requires_password);
+    }
+
     if (window.jQuery && window.jQuery.fn && window.jQuery(runModal).modal) {
       window.jQuery(runModal).modal("show");
     }
@@ -496,11 +507,22 @@
       return;
     }
 
+    const password = passwordInput ? String(passwordInput.value || "") : "";
+    if (activeCommand.requires_password && !password) {
+      runModalError.textContent = "Confirm your password to run this command.";
+      runModalError.classList.remove("d-none");
+      return;
+    }
+
     try {
       const inputs = collectModalInputs();
       runModalError.classList.add("d-none");
       runModalError.textContent = "";
       setRunState(true);
+
+      // Password (when required) is sent only on this request and never cached.
+      const body = { command_id: activeCommand.key, inputs };
+      if (activeCommand.requires_password) body.password = password;
 
       appendOutput(`\n>>> Running: ${activeCommand.key}\n`);
       const headers = await buildCsrfHeaders({ "Content-Type": "application/json" });
@@ -508,8 +530,9 @@
         method: "POST",
         headers,
         credentials: "same-origin",
-        body: JSON.stringify({ command_id: activeCommand.key, inputs }),
+        body: JSON.stringify(body),
       });
+      if (passwordInput) passwordInput.value = "";
 
       const payload = await response.json().catch(() => ({}));
       setStatus(activeCommand.key, payload);

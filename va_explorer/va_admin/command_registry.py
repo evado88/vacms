@@ -66,7 +66,12 @@ STANDARD_FILENAME_PLACEHOLDERS: dict[str, str] = {
 
 
 def data_dir() -> Path:
-    return Path(settings.BASE_DIR) / "va_explorer" / "static" / "data"
+    """Directory where admin-panel uploads are stored and command-input files are
+    resolved from. Lives on the release-independent shared volume (see
+    ``ADMIN_PANEL_UPLOAD_DIR``) and is created on demand."""
+    path = Path(settings.ADMIN_PANEL_UPLOAD_DIR)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def is_safe_filename(filename: str) -> bool:
@@ -85,7 +90,9 @@ def resolve_data_file(filename: str) -> Path:
     base = data_dir().resolve()
     resolved = (base / filename).resolve()
     if base not in resolved.parents and resolved != base:
-        raise ValueError("Filename must resolve inside va_explorer/static/data/")
+        raise ValueError(
+            "Filename must resolve inside the admin-panel upload directory."
+        )
     return resolved
 
 
@@ -106,7 +113,7 @@ def _command_specs() -> list[CommandRegistryItem]:
         type="file",
         name="csv_file",
         required=True,
-        help="CSV filename located in va_explorer/static/data/",
+        help="CSV filename located in the admin-panel upload directory.",
         filename_pattern="DATA_FILE.csv",
         allowed_pattern=r"^[A-Za-z0-9._-]+\.csv$",
         standardized_name="DATA_FILE.csv",
@@ -311,6 +318,7 @@ def _command_specs() -> list[CommandRegistryItem]:
             ),
             safety="mutating",
             timeout_hint=900,
+            favorite=True,
         ),
         CommandRegistryItem(
             "load_locations",
@@ -384,6 +392,25 @@ def _command_specs() -> list[CommandRegistryItem]:
                 ),
             ),
             safety="mutating",
+            favorite=True,
+        ),
+        CommandRegistryItem(
+            "load_social_mobilization",
+            "load_social_mobilization",
+            "Data Loading",
+            _description_for("load_social_mobilization"),
+            inputs=(
+                CommandInputSpec(
+                    **{
+                        **csv_input.__dict__,
+                        "filename_pattern": "SOCIAL_MOBILIZATION or SOCIAL_MOBILIZATION.csv",
+                        "standardized_name": "SOCIAL_MOBILIZATION",
+                        "allowed_pattern": r"^(SOCIAL_MOBILIZATION|SOCIAL_MOBILIZATION\.csv)$",
+                        "help": "Social Mobilization daily tally feed.",
+                    }
+                ),
+            ),
+            safety="mutating",
         ),
         CommandRegistryItem(
             key="load_form_csv",
@@ -452,6 +479,7 @@ def _command_specs() -> list[CommandRegistryItem]:
                 ),
             ),
             safety="mutating",
+            favorite=True,
         ),
         CommandRegistryItem(
             "assign_death_ids",
@@ -623,6 +651,169 @@ def _command_specs() -> list[CommandRegistryItem]:
             ),
             safety="mutating",
         ),
+        CommandRegistryItem(
+            key="load_srs_ea_population_targets",
+            management_command="load_srs_ea_population_targets",
+            category="Data Loading",
+            description=_description_for("load_srs_ea_population_targets"),
+            inputs=(
+                CommandInputSpec(
+                    type="file",
+                    name="csv_file",
+                    required=True,
+                    help="SRS EA population & household targets CSV.",
+                    filename_pattern="SRS_EA_POPULATION_TARGETS.csv",
+                    standardized_name="SRS_EA_POPULATION_TARGETS.csv",
+                    allowed_pattern=r"^[A-Za-z0-9._-]+\.csv$",
+                ),
+                CommandInputSpec(
+                    type="bool",
+                    name="dry_run",
+                    required=False,
+                    help="Preview the upsert plan without writing.",
+                    flag="--dry-run",
+                ),
+            ),
+            safety="mutating",
+            timeout_hint=120,
+        ),
+        # ---- Data quality (run on demand; persist DataQualityIssue records) ----
+        CommandRegistryItem(
+            key="dq_all",
+            management_command="dq_all",
+            category="Data Quality",
+            description=_description_for("dq_all"),
+            safety="read_only",
+            favorite=True,
+        ),
+        CommandRegistryItem(
+            key="dq_pregnancy",
+            management_command="dq_pregnancy",
+            category="Data Quality",
+            description=_description_for("dq_pregnancy"),
+            safety="read_only",
+        ),
+        CommandRegistryItem(
+            key="dq_pregnancy_outcome",
+            management_command="dq_pregnancy_outcome",
+            category="Data Quality",
+            description=_description_for("dq_pregnancy_outcome"),
+            safety="read_only",
+        ),
+        CommandRegistryItem(
+            key="dq_death",
+            management_command="dq_death",
+            category="Data Quality",
+            description=_description_for("dq_death"),
+            safety="read_only",
+        ),
+        # ---- Cause-of-death exports / imports ----
+        CommandRegistryItem(
+            key="download_causeofdeath_csv",
+            management_command="download_causeofdeath_csv",
+            category="Backups/Exports",
+            description=_description_for("download_causeofdeath_csv"),
+            safety="read_only",
+        ),
+        CommandRegistryItem(
+            key="download_va_with_cod_csv",
+            management_command="download_va_with_cod_csv",
+            category="Backups/Exports",
+            description=_description_for("download_va_with_cod_csv"),
+            inputs=(
+                CommandInputSpec(
+                    type="text",
+                    name="filename",
+                    required=False,
+                    help="Override the output filename (optional).",
+                    flag="--filename",
+                ),
+            ),
+            safety="read_only",
+        ),
+        CommandRegistryItem(
+            key="upload_causeofdeath_csv",
+            management_command="upload_causeofdeath_csv",
+            category="Data Loading",
+            description=_description_for("upload_causeofdeath_csv"),
+            inputs=(
+                CommandInputSpec(
+                    type="file",
+                    name="csv_path",
+                    required=True,
+                    help="Cause-of-death CSV located in the admin-panel upload directory.",
+                    filename_pattern="CAUSE_OF_DEATH.csv",
+                    standardized_name="CAUSE_OF_DEATH.csv",
+                    allowed_pattern=r"^[A-Za-z0-9._-]+\.csv$",
+                ),
+                CommandInputSpec(
+                    type="bool",
+                    name="clear_existing",
+                    required=False,
+                    help="Delete all existing CauseOfDeath rows before upload.",
+                    flag="--clear-existing",
+                ),
+                CommandInputSpec(
+                    type="bool",
+                    name="dry_run",
+                    required=False,
+                    help="Validate and report without inserting rows.",
+                    flag="--dry-run",
+                ),
+            ),
+            safety="mutating",
+        ),
+        # ---- Other data loading / maintenance ----
+        CommandRegistryItem(
+            key="load_csa_target_supervisor_map",
+            management_command="load_csa_target_supervisor_map",
+            category="Data Loading",
+            description=_description_for("load_csa_target_supervisor_map"),
+            inputs=(
+                CommandInputSpec(
+                    type="file",
+                    name="csv_file",
+                    required=True,
+                    help="CSA supervisor/target mapping CSV.",
+                    filename_pattern="CSA_TARGET_SUPERVISOR_MAP.csv",
+                    standardized_name="CSA_TARGET_SUPERVISOR_MAP.csv",
+                    allowed_pattern=r"^[A-Za-z0-9._-]+\.csv$",
+                ),
+                CommandInputSpec(
+                    type="bool",
+                    name="prune",
+                    required=False,
+                    help="Remove mappings no longer present in the CSV.",
+                    flag="--prune",
+                ),
+            ),
+            safety="mutating",
+        ),
+        CommandRegistryItem(
+            key="load_po_baby_details",
+            management_command="load_po_baby_details",
+            category="Data Loading",
+            description=_description_for("load_po_baby_details"),
+            inputs=(
+                CommandInputSpec(
+                    type="file",
+                    name="csv_file",
+                    required=True,
+                    help="Pregnancy-outcome baby details CSV.",
+                    filename_pattern="PO_BABY_DETAILS.csv",
+                    standardized_name="PO_BABY_DETAILS.csv",
+                    allowed_pattern=r"^[A-Za-z0-9._-]+\.csv$",
+                ),
+            ),
+            safety="mutating",
+        ),
+        CommandRegistryItem(
+            key="refresh_csa_first_dates",
+            management_command="refresh_csa_first_dates",
+            category="Maintenance",
+            description=_description_for("refresh_csa_first_dates"),
+            safety="mutating",
+        ),
     ]
 
 
@@ -630,9 +821,20 @@ REGISTRY_ITEMS: tuple[CommandRegistryItem, ...] = tuple(_command_specs())
 ALLOWLIST: dict[str, CommandRegistryItem] = {item.key: item for item in REGISTRY_ITEMS}
 
 
+def requires_password_confirmation(item: CommandRegistryItem) -> bool:
+    """Higher-risk commands require the admin to re-enter their password before
+    execution: database-altering (``mutating``) commands that are not Favorites.
+    Favorites are exempt by design."""
+    return item.safety == "mutating" and not item.favorite
+
+
 def grouped_command_specs() -> dict[str, list[CommandRegistryItem]]:
+    # Favorites are surfaced under their own category only; exclude them from
+    # their home category so no command appears in more than one place.
     groups: dict[str, list[CommandRegistryItem]] = {}
     for item in REGISTRY_ITEMS:
+        if item.favorite:
+            continue
         groups.setdefault(item.category, []).append(item)
 
     ordered: dict[str, list[CommandRegistryItem]] = {}

@@ -5,9 +5,12 @@ from pathlib import Path
 from django.core.management.base import BaseCommand, CommandError
 
 from va_explorer.va_data_management.models import CauseOfDeath, VerbalAutopsy
+from va_explorer.va_data_management.utils.geopoint import parse_geopoint
 
 DEFAULT_DOWNLOAD_DIR = Path("/srv/vacms/shared/media/downloads")
 COD_VALUE_FIELDS = ("id", "cause", "algorithm", "settings", "created", "updated")
+GEOPOINT_COMPONENTS = ("latitude", "longitude", "altitude", "accuracy")
+GEOPOINT_EXPORT_FIELDS = tuple(f"geopoint_{name}" for name in GEOPOINT_COMPONENTS)
 
 
 class Command(BaseCommand):
@@ -63,9 +66,14 @@ class Command(BaseCommand):
             .values(*COD_VALUE_FIELDS, *va_value_fields)
         )
 
-        fieldnames = list(va_field_names) + [f"cod_{n}" for n in COD_VALUE_FIELDS]
+        fieldnames = _with_geopoint_component_fields(va_field_names) + [
+            f"cod_{n}" for n in COD_VALUE_FIELDS
+        ]
 
         exported = 0
+        parsed_geopoints = 0
+        missing_geopoints = 0
+        invalid_geopoints = 0
         try:
             with csv_path.open("w", newline="", encoding="utf-8") as csv_file:
                 writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
@@ -75,6 +83,14 @@ class Command(BaseCommand):
                         name: _serialize(row[f"verbalautopsy__{name}"])
                         for name in va_field_names
                     }
+                    geopoint_status = _add_geopoint_components(out_row)
+                    if geopoint_status == "parsed":
+                        parsed_geopoints += 1
+                    elif geopoint_status == "missing":
+                        missing_geopoints += 1
+                    else:
+                        invalid_geopoints += 1
+
                     for name in COD_VALUE_FIELDS:
                         out_row[f"cod_{name}"] = _serialize(row[name])
                     writer.writerow(out_row)
@@ -87,6 +103,37 @@ class Command(BaseCommand):
                 f"Exported {exported} VA-with-cause-of-death rows to {csv_path}"
             )
         )
+        self.stdout.write(
+            "Geopoints: "
+            f"{parsed_geopoints} parsed, "
+            f"{missing_geopoints} missing, "
+            f"{invalid_geopoints} invalid."
+        )
+
+
+def _with_geopoint_component_fields(va_field_names):
+    fieldnames = []
+    added_components = False
+    for name in va_field_names:
+        fieldnames.append(name)
+        if name == "geopoint":
+            fieldnames.extend(GEOPOINT_EXPORT_FIELDS)
+            added_components = True
+    if not added_components:
+        fieldnames.extend(GEOPOINT_EXPORT_FIELDS)
+    return fieldnames
+
+
+def _add_geopoint_components(row):
+    value = row.get("geopoint")
+    parsed = parse_geopoint(value)
+    for component in GEOPOINT_COMPONENTS:
+        row[f"geopoint_{component}"] = _serialize(parsed[component]) if parsed else ""
+    if parsed:
+        return "parsed"
+    if not str(value or "").strip():
+        return "missing"
+    return "invalid"
 
 
 def _serialize(value):

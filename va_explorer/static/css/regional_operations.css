@@ -315,6 +315,22 @@
   color: #ffffff;
 }
 
+/* Totals row rendered below the pagination controls. Coverage cell keeps its
+   colour coding; other cells get the highlighted summary background. */
+.csa-grand-total {
+  margin-top: 6px;
+}
+
+.csa-table .csa-total-row td {
+  font-weight: 700;
+  color: #1c2738;
+  border-top: 3px solid rgba(0, 0, 0, 0.32);
+}
+
+.csa-table .csa-total-row td:not(.coverage-cell) {
+  background: #dfe7f3;
+}
+
 .csa-section-header {
   display: flex;
   align-items: center;
@@ -328,6 +344,21 @@
   flex: 0 0 auto;
   margin: 0;
   white-space: nowrap;
+}
+
+.csa-download-button {
+  background: #ffffff;
+  border-color: #009140;
+  color: #009140;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.csa-download-button:hover,
+.csa-download-button:focus {
+  background: #009140;
+  border-color: #009140;
+  color: #ffffff;
 }
 
 .csa-search-group {

@@ -1,0 +1,1966 @@
+#homeTabs .nav-link {
+  font-weight: 700;
+}
+
+#homeTabs .nav-link.active {
+  font-weight: 700;
+  color: #009140 !important;
+}
+
+#homeTabsContent {
+  width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
+  margin-top: 0;
+}
+
+.dashboard-shell[data-shell="baseline-census"] .baseline-shared-filters-row {
+  display: grid;
+  grid-template-columns: auto minmax(130px, 0.6fr) minmax(130px, 0.8fr) minmax(0, 2fr) minmax(0, 0.75fr) minmax(0, 0.75fr);
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 10px 12px;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05);
+}
+
+.dashboard-shell[data-shell="baseline-census"] .baseline-shared-current-census {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  white-space: nowrap;
+}
+
+.dashboard-shell[data-shell="baseline-census"] .baseline-shared-current-census .form-check-label {
+  font-size: 0.86rem;
+  margin: 0;
+}
+
+.dashboard-shell[data-shell="baseline-census"] .baseline-shared-filter-select-wrap {
+  min-width: 0;
+}
+
+.dashboard-shell[data-shell="baseline-census"] .baseline-shared-filter-select {
+  width: 100%;
+  min-width: 0;
+  font-size: 0.86rem;
+  min-height: calc(1.5em + 0.5rem + 2px);
+  line-height: 1.5;
+  border-radius: 0.2rem;
+}
+
+.dashboard-shell[data-shell="baseline-census"] .baseline-shared-time-filters {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.dashboard-shell[data-shell="baseline-census"] .baseline-shared-time-filters .form-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 0;
+  min-width: 0;
+}
+
+.dashboard-shell[data-shell="baseline-census"] .baseline-shared-time-filters .form-check-label {
+  white-space: nowrap;
+  font-size: 0.86rem;
+}
+
+.dashboard-shell[data-shell="baseline-census"] .baseline-shared-date-filter {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+
+.dashboard-shell[data-shell="baseline-census"] .baseline-shared-date-filter label {
+  font-size: 0.86rem;
+  white-space: nowrap;
+}
+
+.dashboard-shell[data-shell="baseline-census"] .baseline-shared-filter-input {
+  width: 100%;
+  min-width: 0;
+}
+
+#national-operational-view .national-operational-view-shell {
+  background: #f3f4f6;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-rows: auto;
+  height: auto;
+  max-height: none;
+  min-height: 0;
+  overflow: visible;
+  padding: 20px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+}
+
+#national-operational-view .national-operational-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 18px;
+  align-items: stretch;
+  min-height: min-content;
+  min-width: 0;
+  overflow: visible;
+}
+
+#national-operational-view .events-chart-container,
+#national-operational-view .kpi-cards-container {
+  min-width: 0;
+}
+
+#national-operational-view #novKpisComponentSlot {
+  display: flex;
+  min-height: min-content;
+  overflow: visible;
+}
+
+#national-operational-view #novKpisComponentSlot {
+  width: 100%;
+}
+
+#national-operational-view .nov-overview-refresh-btn {
+  align-self: flex-end;
+}
+
+#national-operational-view #novKpiCardsContainer {
+  display: flex;
+  flex-direction: column;
+  min-height: min-content;
+  width: 100%;
+  height: auto;
+}
+
+#national-operational-view #novKpiCardsContainer .nov-kpi-columns {
+  --nov-kpi-gap: clamp(10px, 1.8vh, 18px);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 25%);
+  gap: var(--nov-kpi-gap);
+  align-items: stretch;
+  flex: 1 1 auto;
+  height: auto;
+  min-width: 0;
+  min-height: min-content;
+  overflow: visible;
+}
+
+#national-operational-view #novKpiCardsContainer .nov-kpi-left-column {
+  display: grid;
+  grid-template-rows: auto minmax(min-content, 1fr);
+  gap: var(--nov-kpi-gap);
+  min-width: 0;
+  min-height: min-content;
+  overflow: visible;
+}
+
+#national-operational-view #novKpiCardsContainer .nov-kpi-cards {
+  flex: 1 1 auto;
+  min-height: min-content;
+  grid-auto-rows: auto;
+  grid-template-rows: none;
+  gap: var(--nov-kpi-gap);
+  overflow: visible;
+}
+
+#national-operational-view #novKpiCardsContainer .nov-kpi-cards-census {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+#national-operational-view #novKpiCardsContainer .nov-kpi-cards-events {
+  align-content: start;
+  grid-template-columns: 1fr;
+  grid-template-rows: repeat(3, auto);
+  height: auto;
+  min-height: min-content;
+}
+
+#national-operational-view #novKpiCardsContainer .nov-kpi-card {
+  align-self: start;
+  height: auto;
+  min-height: 118px;
+  overflow: visible;
+  padding: clamp(8px, 1.2vh, 10px) 12px;
+}
+
+#national-operational-view #novKpiCardsContainer .nov-coverage-charts-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--nov-kpi-gap);
+  min-height: min-content;
+  min-width: 0;
+}
+
+#national-operational-view #novKpiCardsContainer .nov-coverage-chart-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: auto;
+  min-width: 0;
+  min-height: 340px;
+  padding: 12px 14px;
+  overflow: visible;
+}
+
+#national-operational-view #novKpiCardsContainer .nov-coverage-chart-card h5 {
+  color: #1f2937;
+  font-size: 0.98rem;
+  font-weight: 600;
+  line-height: 1.25;
+  margin: 0 0 10px 0;
+}
+
+#national-operational-view #novKpiCardsContainer .nov-coverage-chart-wrap {
+  height: clamp(280px, 40vh, 520px);
+  min-height: 280px;
+  min-width: 0;
+  position: relative;
+}
+
+#national-operational-view #novKpiCardsContainer .nov-coverage-chart-wrap canvas {
+  display: block;
+  position: absolute;
+  inset: 0;
+  height: 100% !important;
+  width: 100% !important;
+}
+
+#national-operational-view #novKpiCardsContainer .nov-kpi-card h6 {
+  margin-bottom: clamp(4px, 0.8vh, 8px);
+  font-size: clamp(0.82rem, 1.5vh, 0.94rem);
+}
+
+.baseline-census-section-title {
+  flex: 0 0 auto;
+  margin: 0;
+  white-space: nowrap;
+}
+
+#national-operational-view #novKpiCardsContainer .nov-kpi-metrics {
+  gap: clamp(2px, 0.7vh, 5px);
+}
+
+#national-operational-view #novKpiCardsContainer .nov-kpi-metrics span {
+  font-size: clamp(0.7rem, 1.3vh, 0.8rem);
+}
+
+#national-operational-view #novKpiCardsContainer .nov-kpi-metrics strong {
+  font-size: clamp(0.8rem, 1.5vh, 0.95rem);
+}
+
+#national-operational-view #novKpiCardsContainer .nov-kpi-cards-inline {
+  grid-template-rows: auto;
+}
+
+#national-operational-view .nov-filters-row {
+  display: grid;
+  grid-template-columns: auto minmax(130px, 0.6fr) minmax(130px, 0.8fr) minmax(0, 2fr) minmax(0, 0.75fr) minmax(0, 0.75fr);
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+
+#national-operational-view .nov-filter-current-census {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  white-space: nowrap;
+}
+
+#national-operational-view .nov-filter-current-census .form-check-label {
+  font-size: 0.86rem;
+  margin: 0;
+}
+
+#baseline-table-view .national-operational-view-shell {
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 10px;
+}
+
+#national-operational-view .nov-filter-select-wrap {
+  min-width: 0;
+}
+
+#national-operational-view .nov-filter-select {
+  width: 100%;
+  min-width: 0;
+  font-size: 0.86rem;
+  min-height: calc(1.5em + 0.5rem + 2px);
+  line-height: 1.5;
+  border-radius: 0.2rem;
+}
+
+#national-operational-view .nov-filter-radios {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+#national-operational-view .nov-filter-radios .form-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 0;
+  min-width: 0;
+}
+
+#national-operational-view .nov-filter-radios .form-check-label {
+  white-space: nowrap;
+  font-size: 0.86rem;
+}
+
+#national-operational-view .nov-filter-datetime {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+
+#national-operational-view .nov-filter-datetime label {
+  font-size: 0.86rem;
+  white-space: nowrap;
+}
+
+#national-operational-view .nov-filter-input {
+  width: 100%;
+  min-width: 0;
+}
+
+/* Table tab filter bar — single-row flex layout matching the CSA supervision
+   filters (.filters-bar) in the operations dashboard. */
+#baseline-table-view .baseline-table-filters-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  width: 100%;
+  min-width: 0;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+
+#baseline-table-view .baseline-table-filter-select-wrap {
+  flex: 0 1 160px;
+  min-width: 96px;
+}
+
+#baseline-table-view .baseline-table-current-census {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  margin: 0;
+  padding-left: 0;
+  font-size: 0.86rem;
+}
+
+#baseline-table-view .baseline-table-current-census .form-check-input {
+  margin-top: 0;
+  margin-left: 0;
+  position: static;
+}
+
+#baseline-table-view .baseline-table-current-census .form-check-label {
+  margin-bottom: 0;
+}
+
+#baseline-table-view .baseline-table-filter-select {
+  width: 100%;
+  min-width: 0;
+  font-size: 0.86rem;
+  min-height: calc(1.5em + 0.5rem + 2px);
+  line-height: 1.5;
+  border-radius: 0.2rem;
+}
+
+#baseline-table-view .baseline-table-time-filters,
+#baseline-chart-view .baseline-table-time-filters {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: #f4f6f9;
+  border-radius: 10px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+#baseline-table-view .baseline-table-time-filters .form-check,
+#baseline-chart-view .baseline-table-time-filters .form-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 0;
+  min-width: 0;
+}
+
+#baseline-table-view .baseline-table-time-filters .form-check-label,
+#baseline-chart-view .baseline-table-time-filters .form-check-label {
+  white-space: nowrap;
+  font-size: 0.8rem;
+  color: #3a4a5e;
+}
+
+#baseline-table-view .baseline-table-date-filter,
+#baseline-chart-view .baseline-table-date-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 150px;
+  min-width: 0;
+}
+
+#baseline-table-view .baseline-table-date-filter label,
+#baseline-chart-view .baseline-table-date-filter label {
+  font-size: 0.86rem;
+  white-space: nowrap;
+}
+
+#baseline-table-view .baseline-table-filter-input,
+#baseline-chart-view .baseline-table-filter-input {
+  width: 100%;
+  min-width: 0;
+  flex: 1 1 0;
+}
+
+#baseline-table-view .baseline-census-table-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+#baseline-table-view .baseline-census-search-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+#baseline-table-view .baseline-census-download-button {
+  background: #ffffff;
+  border-color: #009140;
+  color: #009140;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+#baseline-table-view .baseline-census-download-button:hover,
+#baseline-table-view .baseline-census-download-button:focus {
+  background: #009140;
+  border-color: #009140;
+  color: #ffffff;
+}
+
+#baseline-table-view .baseline-census-search {
+  flex: 1 1 0;
+  min-width: 0;
+  position: relative;
+}
+
+#baseline-table-view .baseline-census-search input {
+  width: 100%;
+  min-width: 0;
+  padding: 6px 10px 6px 28px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 8px;
+  font-size: 0.82rem;
+  background: #ffffff;
+}
+
+#baseline-table-view .baseline-census-search::before {
+  content: "";
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  border: 2px solid #6a7789;
+  border-radius: 50%;
+  transform: translateY(-55%);
+}
+
+#baseline-table-view .baseline-census-search::after {
+  content: "";
+  position: absolute;
+  left: 17px;
+  top: 55%;
+  width: 7px;
+  height: 2px;
+  background: #6a7789;
+  border-radius: 999px;
+  transform: rotate(45deg);
+  transform-origin: left center;
+}
+
+#baseline-table-view .baseline-census-table-container {
+  height: 100%;
+  overflow: auto;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 10px;
+}
+
+#baseline-table-view .baseline-census-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 0.85rem;
+}
+
+#baseline-table-view .baseline-census-table thead th {
+  position: sticky;
+  top: 0;
+  background: #f7f9fc;
+  z-index: 1;
+  padding: 10px 8px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  font-weight: 600;
+  color: #223044;
+  text-align: center;
+  vertical-align: bottom;
+}
+
+#baseline-table-view .baseline-census-table thead th a {
+  color: inherit;
+  text-decoration: none;
+}
+
+#baseline-table-view .baseline-census-table thead th a:hover {
+  text-decoration: underline;
+}
+
+#baseline-table-view .baseline-census-table tbody td {
+  padding: 10px 8px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  color: #2c3b4f;
+}
+
+#baseline-table-view .baseline-census-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+#baseline-table-view .baseline-census-table thead th:not(:last-child),
+#baseline-table-view .baseline-census-table tbody td:not(:last-child) {
+  border-right: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+#baseline-table-view .baseline-census-table .numeric {
+  text-align: right;
+}
+
+/* Coverage % color coding — shares the CSA supervision table thresholds. */
+#baseline-table-view .baseline-census-table .coverage-cell {
+  font-weight: 700;
+}
+
+#baseline-table-view .baseline-census-table .coverage-cell--forest {
+  background: #1f5d33;
+  color: #f4fbf6;
+}
+
+#baseline-table-view .baseline-census-table .coverage-cell--light-green {
+  background: #cfeecf;
+  color: #173a1f;
+}
+
+#baseline-table-view .baseline-census-table .coverage-cell--yellow {
+  background: #f6e58d;
+  color: #3f3400;
+}
+
+#baseline-table-view .baseline-census-table .coverage-cell--amber {
+  background: #f6b26b;
+  color: #4f2400;
+}
+
+#baseline-table-view .baseline-census-table .coverage-cell--red {
+  background: #d94b4b;
+  color: #fff7f7;
+}
+
+#baseline-table-view .baseline-census-table .coverage-cell--empty {
+  background: #f7f9fc;
+  color: #6a7789;
+}
+
+/* Summary rows — ward total (table footer) and grand total (below pagination).
+   Coverage cells keep their colour coding; only non-coverage cells get the
+   highlighted background. */
+#baseline-table-view .baseline-census-table tfoot td {
+  padding: 10px 8px;
+}
+
+#baseline-table-view .baseline-census-table tfoot .bc-ward-total-row td,
+#baseline-table-view .baseline-census-grand-total .bc-grand-total-row td {
+  font-weight: 700;
+  color: #223044;
+  border-top: 2px solid rgba(0, 0, 0, 0.18);
+}
+
+#baseline-table-view .baseline-census-table tfoot td:not(:last-child),
+#baseline-table-view .baseline-census-grand-total tbody td:not(:last-child) {
+  border-right: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+#baseline-table-view .baseline-census-table tfoot .bc-ward-total-row td:not(.coverage-cell) {
+  background: #eef2f8;
+}
+
+#baseline-table-view .baseline-census-grand-total {
+  margin-top: 6px;
+}
+
+#baseline-table-view .baseline-census-grand-total .bc-grand-total-row td {
+  border-top: 3px solid rgba(0, 0, 0, 0.32);
+}
+
+#baseline-table-view .baseline-census-grand-total .bc-grand-total-row td:not(.coverage-cell) {
+  background: #dfe7f3;
+}
+
+#baseline-table-view .sort-icon {
+  font-size: 0.75rem;
+  color: #7a8799;
+  margin-left: 6px;
+}
+
+#baseline-table-view .baseline-census-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 0 4px 0;
+  color: #6a7789;
+  font-size: 0.82rem;
+}
+
+#baseline-table-view .baseline-census-page-link.disabled {
+  pointer-events: none;
+  opacity: 0.45;
+  text-decoration: none;
+}
+
+/* ------------------------------------------------------------------------- */
+/* Census Chart tab — drill-down combined bar + line chart                   */
+/* Vertical layout: filters row + breadcrumb row sized to content, chart card */
+/* flex-grows to fill the rest of the viewport-bounded shell.                 */
+/* ------------------------------------------------------------------------- */
+#baseline-chart-view .national-operational-view-shell {
+  background: #f3f4f6;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 4px;
+  height: calc(100vh - 180px);
+  height: var(--bcd-shell-height, calc(100dvh - 180px));
+  max-height: calc(100vh - 180px);
+  max-height: var(--bcd-shell-height, calc(100dvh - 180px));
+  min-height: 360px;
+  overflow: auto;
+  padding: 20px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+}
+
+#baseline-chart-view .baseline-chart-filters-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  width: 100%;
+  min-width: 0;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+
+#baseline-chart-view .baseline-chart-breadcrumb-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+#baseline-chart-view .baseline-chart-breadcrumb {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  font-size: 0.86rem;
+  color: #6a7789;
+}
+
+#baseline-chart-view .baseline-chart-breadcrumb-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #2563eb;
+  font-size: 0.86rem;
+  cursor: pointer;
+}
+
+#baseline-chart-view .baseline-chart-breadcrumb-link:hover {
+  text-decoration: underline;
+}
+
+#baseline-chart-view .baseline-chart-breadcrumb-current {
+  color: #1f2937;
+  font-weight: 600;
+}
+
+#baseline-chart-view .baseline-chart-breadcrumb-sep {
+  color: #a4adba;
+}
+
+#baseline-chart-view .baseline-chart-hint {
+  margin-left: auto;
+  font-size: 0.82rem;
+  font-style: italic;
+  color: #2563eb;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+#baseline-chart-view .baseline-chart-hint::before {
+  content: "\1F449";
+  font-style: normal;
+}
+
+/* Sub-tab nav inside the Census Chart tab — one focused chart per indicator. */
+#baseline-chart-view .census-chart-subtabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+#baseline-chart-view .census-chart-subtab {
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  color: #6a7789;
+  font-size: 0.84rem;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+#baseline-chart-view .census-chart-subtab:hover {
+  background: #f3f4f6;
+  color: #009140;
+}
+
+#baseline-chart-view .census-chart-subtab:focus {
+  color: #009140;
+  outline: 2px solid rgba(0, 145, 64, 0.25);
+  outline-offset: 2px;
+}
+
+#baseline-chart-view .census-chart-subtab--active {
+  background: #009140;
+  border-color: #009140;
+  color: #ffffff;
+}
+
+#baseline-chart-view .census-chart-subtab--active:hover,
+#baseline-chart-view .census-chart-subtab--active:focus {
+  background: #ffffff;
+  border-color: #009140;
+  color: #009140;
+}
+
+/* The sub-panels container is the chart card surface; only the active panel
+   is in flow, so it fills the single grid row. Overlays cover the card. */
+#baseline-chart-view .census-chart-subpanels {
+  position: relative;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.05);
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+#baseline-chart-view .census-chart-subpanel {
+  display: none;
+  min-height: 0;
+  min-width: 0;
+}
+
+#baseline-chart-view .census-chart-subpanel--active {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  padding: 12px 14px;
+}
+
+#baseline-chart-view .census-chart-note {
+  margin: 0 0 8px 0;
+  font-size: 0.8rem;
+  font-style: italic;
+  color: #6a7789;
+}
+
+#baseline-chart-view .baseline-chart-wrap {
+  position: relative;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+#baseline-chart-view .baseline-chart-canvas-box {
+  position: relative;
+  height: 100%;
+  width: 100%;
+  min-height: 0;
+}
+
+#baseline-chart-view .baseline-chart-canvas-box canvas {
+  display: block;
+  height: 100% !important;
+  width: 100% !important;
+}
+
+#baseline-chart-view .baseline-chart-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #6a7789;
+  font-size: 0.92rem;
+}
+
+#baseline-chart-view .baseline-chart-overlay[hidden] {
+  display: none;
+}
+
+#baseline-chart-view #baselineChartError {
+  color: #b91c1c;
+}
+
+#national-operational-view .events-chart-canvas-wrap {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  height: 360px;
+  min-height: 300px;
+  padding: 12px;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.05);
+}
+
+#national-operational-view .events-chart-canvas-wrap canvas {
+  width: 100% !important;
+  height: 100% !important;
+  display: block;
+}
+
+#homeOverviewMapPanel {
+  padding: 12px;
+}
+
+#homeOverviewMapContainer {
+  height: 420px;
+  min-height: 320px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+#homeOverviewMapContainer .leaflet-container {
+  width: 100%;
+  height: 100%;
+}
+
+.home-map-breadcrumbs {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: nowrap;
+  gap: 6px;
+  margin: 8px 0 10px;
+  font-size: 0.85rem;
+  white-space: nowrap;
+  overflow-x: auto;
+}
+
+.home-map-breadcrumbs .map-breadcrumb-label {
+  color: #475569;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.home-map-breadcrumbs .map-breadcrumb-item {
+  border: none;
+  background: transparent;
+  color: #1d4ed8;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  font: inherit;
+  line-height: 1.2;
+  display: inline-flex;
+  align-items: baseline;
+}
+
+.home-map-breadcrumbs .map-breadcrumb-item.is-active {
+  color: #111827;
+  text-decoration: none;
+  cursor: default;
+}
+
+.home-map-breadcrumbs .map-breadcrumb-sep {
+  color: #64748b;
+}
+
+#homeOverviewMapContainer .legend {
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid #dbe3ef;
+  border-radius: 8px;
+  padding: 8px;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+}
+
+#national-operational-view .nov-kpi-cards {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 1fr;
+  grid-auto-rows: 1fr;
+}
+
+#national-operational-view .nov-kpi-cards-inline {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  align-items: stretch;
+}
+
+#national-operational-view #novEventsChartContainer .nov-kpi-cards-inline .nov-kpi-card {
+  min-height: 0;
+  padding: 10px 12px;
+}
+
+#national-operational-view #novEventsChartContainer .nov-kpi-cards-inline .nov-kpi-card h6 {
+  margin-bottom: 8px;
+  font-size: 0.94rem;
+}
+
+#national-operational-view #novEventsChartContainer .nov-kpi-cards-inline .nov-kpi-metrics {
+  gap: 5px;
+}
+
+#national-operational-view #novEventsChartContainer .nov-kpi-cards-inline .nov-kpi-metrics span {
+  font-size: 0.8rem;
+}
+
+#national-operational-view #novEventsChartContainer .nov-kpi-cards-inline .nov-kpi-metrics strong {
+  font-size: 0.95rem;
+}
+
+#national-operational-view .nov-kpi-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 12px 14px;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 118px;
+}
+
+#national-operational-view .nov-kpi-card h6 {
+  margin: 0 0 10px 0;
+  font-size: 0.98rem;
+  line-height: 1.25;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+#national-operational-view .nov-kpi-metrics {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 7px;
+}
+
+#national-operational-view .nov-kpi-metrics div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+#national-operational-view .nov-kpi-metrics span {
+  color: #475569;
+  font-size: 0.82rem;
+  line-height: 1.2;
+}
+
+#national-operational-view .nov-kpi-metrics strong {
+  color: #0f172a;
+  font-size: 1.02rem;
+  font-weight: 700;
+}
+
+@media (max-width: 991.98px) {
+  #national-operational-view .national-operational-view-shell {
+    height: auto;
+    max-height: none;
+    overflow: visible;
+  }
+
+  #national-operational-view .national-operational-grid {
+    grid-template-columns: 1fr;
+    gap: 14px;
+    overflow: visible;
+  }
+
+  #national-operational-view #novKpisComponentSlot,
+  #national-operational-view #novKpiCardsContainer,
+  #national-operational-view #novKpiCardsContainer .nov-kpi-columns,
+  #national-operational-view #novKpiCardsContainer .nov-kpi-left-column,
+  #national-operational-view #novKpiCardsContainer .nov-kpi-cards {
+    height: auto;
+    overflow: visible;
+  }
+
+  .dashboard-shell[data-shell="baseline-census"] .baseline-shared-filters-row {
+    grid-template-columns: auto minmax(120px, 0.8fr) minmax(120px, 1fr) minmax(0, 1.6fr) minmax(0, 0.9fr) minmax(0, 0.9fr);
+  }
+
+  #national-operational-view .nov-kpi-card {
+    height: auto;
+    min-height: 104px;
+    overflow: visible;
+  }
+
+  #national-operational-view #novKpiCardsContainer .nov-kpi-columns {
+    grid-template-columns: 1fr;
+  }
+
+  #national-operational-view #novKpiCardsContainer .nov-kpi-left-column {
+    grid-template-rows: auto auto;
+  }
+
+  #national-operational-view #novKpiCardsContainer .nov-coverage-charts-row {
+    grid-template-columns: 1fr;
+  }
+
+  #national-operational-view #novKpiCardsContainer .nov-coverage-chart-card {
+    height: auto;
+    min-height: 340px;
+  }
+
+  #national-operational-view #novKpiCardsContainer .nov-coverage-chart-wrap {
+    height: clamp(280px, 42vh, 420px);
+    min-height: 280px;
+  }
+
+  #national-operational-view #novKpiCardsContainer .nov-kpi-cards-events {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 767.98px) {
+  #national-operational-view .nov-kpi-cards-inline {
+    grid-template-columns: 1fr;
+  }
+
+  #national-operational-view #novKpiCardsContainer .nov-kpi-cards-census,
+  #national-operational-view #novKpiCardsContainer .nov-kpi-cards-events {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-shell[data-shell="baseline-census"] .baseline-shared-filters-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .dashboard-shell[data-shell="baseline-census"] .baseline-shared-time-filters {
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dashboard-shell[data-shell="baseline-census"] .baseline-shared-current-census {
+    grid-column: 1 / -1;
+  }
+
+  #baseline-chart-view .national-operational-view-shell {
+    height: auto;
+    max-height: none;
+    overflow: visible;
+  }
+
+  #baseline-chart-view .census-chart-subpanels {
+    min-height: 420px;
+  }
+
+  #baseline-table-view .baseline-census-table-header,
+  #baseline-table-view .baseline-census-search-group {
+    flex-wrap: wrap;
+  }
+
+  #baseline-table-view .baseline-census-search {
+    flex-basis: calc(50% - 4px);
+  }
+}
+
+@media (max-width: 420px) {
+  .dashboard-shell[data-shell="baseline-census"] .baseline-shared-filters-row,
+  .dashboard-shell[data-shell="baseline-census"] .baseline-shared-time-filters {
+    grid-template-columns: 1fr;
+  }
+
+  #baseline-table-view .baseline-census-search {
+    flex-basis: 100%;
+  }
+}
+
+.home-panel {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.05);
+}
+
+.home-va-tab,
+.home-trends-tab {
+  background: #f3f4f6;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  padding: 20px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+}
+
+.home-panel-table {
+  padding: 10px 12px;
+}
+
+#tab-3.home-va-tab h2,
+#tab-4.home-trends-tab h2 {
+  color: #0f172a;
+  font-weight: 700;
+  margin-bottom: 14px;
+}
+
+#tab-3.home-va-tab #homeVAStatisticsComponentSlot .row > .msg-header:first-of-type {
+  margin-left: 10px;
+  text-indent: 10px;
+  overflow: hidden;
+}
+
+#tab-3.home-va-tab .home-page-statistics,
+#tab-4.home-trends-tab .home-page-statistics {
+  border-collapse: separate;
+  border-spacing: 0;
+  margin-bottom: 0;
+}
+
+#tab-3.home-va-tab .home-page-statistics thead th,
+#tab-4.home-trends-tab .home-page-statistics thead th {
+  background: #f8fafc;
+  color: #334155;
+  border-top: 1px solid #e2e8f0;
+  border-bottom: 1px solid #e2e8f0;
+  font-weight: 600;
+  font-size: 0.86rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+#tab-3.home-va-tab .home-page-statistics tbody td,
+#tab-3.home-va-tab .home-page-statistics tbody th,
+#tab-4.home-trends-tab .home-page-statistics tbody td,
+#tab-4.home-trends-tab .home-page-statistics tbody th {
+  border-bottom: 1px solid #eef2f7;
+  color: #0f172a;
+  vertical-align: middle;
+  font-size: 0.92rem;
+  font-weight: 500;
+}
+
+#tab-3.home-va-tab .home-page-statistics tr:last-child td,
+#tab-3.home-va-tab .home-page-statistics tr:last-child th,
+#tab-4.home-trends-tab .home-page-statistics tr:last-child td,
+#tab-4.home-trends-tab .home-page-statistics tr:last-child th {
+  border-bottom: none;
+}
+
+#tab-3.home-va-tab .va-stats-table-modern canvas {
+  height: 110px !important;
+  max-height: 110px;
+}
+
+#tab-3.home-va-tab .va-stats-table-modern tbody td {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+#tab-3.home-va-tab .va-stats-table-modern tbody th {
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+#tab-3.home-va-tab .va-list-table-modern thead th {
+  background: #f8fafc;
+  color: #334155;
+  border-bottom: 1px solid #e2e8f0;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+#tab-3.home-va-tab .va-list-table-modern tbody td {
+  color: #0f172a;
+  border-bottom: 1px solid #eef2f7;
+}
+
+#tab-3.home-va-tab .va-list-table-modern tbody tr:last-child td {
+  border-bottom: none;
+}
+
+#tab-3.home-va-tab .btn.btn-primary {
+  border-radius: 10px;
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.22);
+}
+
+#tab-3.home-va-tab #additional-issues-msg,
+#tab-3.home-va-tab #additional-indeterminate-cods-msg {
+  margin-top: 8px;
+  color: #475569;
+}
+
+#tab-3.home-va-tab #no-coding-issues,
+#tab-3.home-va-tab #no-indeterminate-cod {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 14px 16px;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04);
+}
+
+#tab-4.home-trends-tab .trend-metric-card {
+  padding: 12px 14px;
+  height: 100%;
+}
+
+#tab-4.home-trends-tab .trend-metric-card h5 {
+  margin-bottom: 10px;
+  color: #1f2937;
+  font-weight: 600;
+}
+
+#tab-4.home-trends-tab .trend-metric-table {
+  font-size: 0.9rem;
+}
+
+#tab-4.home-trends-tab .trend-metric-table tbody td {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+#tab-4.home-trends-tab .trend-metric-table tbody td:first-child {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+#tab-4.home-trends-tab .trend-chart-wrap {
+  height: 180px;
+  min-height: 160px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 10px;
+}
+
+#tab-4.home-trends-tab .trend-chart-wrap canvas {
+  width: 100% !important;
+  height: 100% !important;
+  display: block;
+}
+
+@media (max-width: 767.98px) {
+  .home-va-tab,
+  .home-trends-tab {
+    padding: 14px;
+    border-radius: 12px;
+  }
+
+  #tab-4.home-trends-tab .trend-chart-wrap {
+    height: 160px;
+    min-height: 150px;
+  }
+}
+
+/* ------------------------------------------------------------------------ */
+/* Social Mobilization tab                                                   */
+/* The tab stacks KPIs, charts and tables in normal flow (it is not a        */
+/* fixed-height shell like the other tabs), so the chart card gets an        */
+/* explicit height for the canvases to render into.                          */
+/* ------------------------------------------------------------------------ */
+.sm-view {
+  display: flex;
+  flex-direction: column;
+  padding-top: 10px;
+  padding-bottom: 24px;
+}
+
+/* Two columns: a narrow left rail holding the Charts/Tables sub-tabs, and the
+   main column with the KPI cards on top and the active panel below. The
+   Charts sub-tab therefore sits alongside the KPI cards, Tables directly after. */
+#sm-view .sm-layout {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+#sm-view .sm-side {
+  min-width: 0;
+}
+
+#sm-view .sm-main {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+/* Vertical side sub-tabs. */
+#sm-view .sm-subtabs {
+  --sm-subtab-orange-text: #5f3307;
+  --sm-subtab-orange-bg: linear-gradient(180deg, #fff7ed 0%, #fed7aa 100%);
+  --sm-subtab-orange-hover-bg: linear-gradient(180deg, #ffedd5 0%, #fb923c 100%);
+  --sm-subtab-active-bg: #009140;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  align-items: flex-start;
+}
+
+#sm-view .sm-subtab {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+  border: 0;
+  border-radius: 12px 0 0 12px;
+  background: var(--sm-subtab-orange-bg);
+  box-shadow:
+    0 4px 10px rgba(15, 23, 42, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  color: var(--sm-subtab-orange-text);
+  font-size: 0.86rem;
+  font-weight: 800;
+  line-height: 1;
+  min-height: 116px;
+  padding: 12px 8px;
+  width: 56px;
+  text-align: center;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+#sm-view .sm-subtab::after {
+  content: "";
+  position: absolute;
+  top: 10px;
+  right: 5px;
+  bottom: 10px;
+  width: 3px;
+  background: rgba(180, 83, 9, 0.34);
+}
+
+#sm-view .sm-subtab[data-sm-view-tab="charts"],
+#sm-view .sm-subtab[data-sm-view-tab="tables"] {
+  min-height: var(--sm-kpi-rail-height, 154px);
+}
+
+#sm-view .sm-subtab + .sm-subtab {
+  margin-top: 0;
+}
+
+#sm-view .sm-subtab-label {
+  display: inline-block;
+  position: relative;
+  z-index: 1;
+  transform: rotate(-90deg);
+  transform-origin: center;
+}
+
+#sm-view .sm-subtab:not(.sm-subtab--active):hover,
+#sm-view .sm-subtab:not(.sm-subtab--active):focus {
+  background: var(--sm-subtab-orange-hover-bg);
+  box-shadow:
+    0 6px 14px rgba(249, 115, 22, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.58);
+  color: #431407;
+}
+
+#sm-view .sm-subtab:focus-visible {
+  outline: 3px solid rgba(249, 115, 22, 0.35);
+  outline-offset: 2px;
+}
+
+/* Active sub-tab — declared last so it wins over the inactive orange gradient. */
+#sm-view .sm-subtab--active {
+  z-index: 1;
+  background: var(--sm-subtab-active-bg);
+  box-shadow:
+    0 8px 18px rgba(0, 145, 64, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.24);
+  color: #ffffff;
+}
+
+#sm-view .sm-subtab--active::after {
+  background: rgba(255, 255, 255, 0.42);
+}
+
+#sm-view .sm-view-panel {
+  display: none;
+}
+
+#sm-view .sm-view-panel--active {
+  display: block;
+}
+
+#sm-view .sm-table-subtabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+#sm-view .sm-table-subtab {
+  border: 1px solid #009140;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #006b30;
+  cursor: pointer;
+  font-size: 0.84rem;
+  font-weight: 700;
+  line-height: 1.2;
+  padding: 7px 14px;
+}
+
+#sm-view .sm-table-subtab:hover,
+#sm-view .sm-table-subtab:focus {
+  border-color: #006b30;
+  color: #004f24;
+}
+
+#sm-view .sm-table-subtab--active {
+  background: #009140;
+  border-color: #009140;
+  color: #ffffff;
+}
+
+#sm-view .sm-table-panel {
+  display: none;
+}
+
+#sm-view .sm-table-panel--active {
+  display: block;
+}
+
+/* Vertical spacing between the stacked table cards within the Tables panel. */
+#sm-view #baselineSocialMobSlot {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sm-view .sm-kpi-cards {
+  margin: 0;
+}
+
+/* Inline chart heading: "Trends & breakdowns: All Provinces". */
+#sm-view .sm-chart-title {
+  white-space: nowrap;
+}
+
+@media (max-width: 767.98px) {
+  #sm-view .sm-layout {
+    grid-template-columns: 56px minmax(0, 1fr);
+  }
+}
+
+.sm-view .sm-section-title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+#sm-chart-view {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+#sm-chart-view .baseline-chart-breadcrumb-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+#sm-chart-view .baseline-chart-breadcrumb {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  font-size: 0.86rem;
+  color: #6a7789;
+}
+
+#sm-chart-view .baseline-chart-breadcrumb-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #2563eb;
+  font-size: 0.86rem;
+  cursor: pointer;
+}
+
+#sm-chart-view .baseline-chart-breadcrumb-link:hover {
+  text-decoration: underline;
+}
+
+#sm-chart-view .baseline-chart-breadcrumb-current {
+  color: #1f2937;
+  font-weight: 600;
+}
+
+#sm-chart-view .baseline-chart-breadcrumb-sep {
+  color: #a4adba;
+}
+
+#sm-chart-view .baseline-chart-hint {
+  margin-left: auto;
+  font-size: 0.82rem;
+  font-style: italic;
+  color: #2563eb;
+}
+
+#sm-chart-view .census-chart-subtabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+#sm-chart-view .census-chart-subtab {
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  color: #6a7789;
+  font-size: 0.84rem;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+#sm-chart-view .census-chart-subtab:hover {
+  background: #f3f4f6;
+  color: #009140;
+}
+
+#sm-chart-view .census-chart-subtab--active {
+  background: #009140;
+  border-color: #009140;
+  color: #ffffff;
+}
+
+#sm-chart-view .census-chart-subpanels {
+  position: relative;
+  background: #ffffff;
+  border: 1px solid #eef1f5;
+  border-radius: 8px;
+  height: 440px;
+  overflow: hidden;
+}
+
+#sm-view .sm-card > #sm-chart-view {
+  margin-top: 6px;
+}
+
+#sm-chart-view .census-chart-subpanel {
+  display: none;
+  height: 100%;
+}
+
+#sm-chart-view .census-chart-subpanel--active {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  padding: 12px 14px;
+}
+
+#sm-chart-view .census-chart-note {
+  margin: 0 0 8px 0;
+  font-size: 0.8rem;
+  font-style: italic;
+  color: #6a7789;
+}
+
+#sm-chart-view .baseline-chart-wrap {
+  position: relative;
+  height: 100%;
+  min-height: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+#sm-chart-view .baseline-chart-canvas-box {
+  position: relative;
+  height: 100%;
+  width: 100%;
+  min-height: 0;
+}
+
+#sm-chart-view .baseline-chart-canvas-box canvas {
+  display: block;
+  height: 100% !important;
+  width: 100% !important;
+}
+
+#sm-chart-view .baseline-chart-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #6a7789;
+  font-size: 0.92rem;
+}
+
+#sm-chart-view .baseline-chart-overlay[hidden] {
+  display: none;
+}
+
+#sm-chart-view #smChartError {
+  color: #b91c1c;
+}
+
+.sm-rumour-table td:nth-child(7) {
+  white-space: normal;
+  min-width: 220px;
+}
+
+/* KPI cards — mirror the Overview tab's KPI card styling. */
+#sm-view .sm-kpi-cards .nov-kpi-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px;
+  align-items: stretch;
+}
+
+#sm-view .sm-kpi-cards .nov-kpi-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 12px 14px;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 118px;
+}
+
+#sm-view .sm-kpi-cards .nov-kpi-card h6 {
+  margin: 0 0 10px 0;
+  font-size: 0.98rem;
+  line-height: 1.25;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+#sm-view .sm-kpi-cards .nov-kpi-metrics {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 7px;
+}
+
+#sm-view .sm-kpi-cards .nov-kpi-metrics div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+#sm-view .sm-kpi-cards .nov-kpi-metrics span {
+  color: #475569;
+  font-size: 0.82rem;
+  line-height: 1.2;
+}
+
+#sm-view .sm-kpi-cards .nov-kpi-metrics strong {
+  color: #0f172a;
+  font-size: 1.02rem;
+  font-weight: 700;
+}
+
+/* Tables — mirror the Census Table tab styling (search, header, rows, totals,
+   pagination). The tab is in normal flow, so the container caps its height and
+   scrolls instead of filling a fixed shell. */
+#sm-view .baseline-census-table-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+#sm-view .baseline-census-search-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
+  min-width: 0;
+  justify-content: flex-end;
+}
+
+#sm-view .baseline-census-search {
+  flex: 0 1 280px;
+  min-width: 0;
+  position: relative;
+}
+
+#sm-view .baseline-census-search input {
+  width: 100%;
+  min-width: 0;
+  padding: 6px 10px 6px 28px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 8px;
+  font-size: 0.82rem;
+  background: #ffffff;
+}
+
+#sm-view .baseline-census-search::before {
+  content: "";
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  border: 2px solid #6a7789;
+  border-radius: 50%;
+  transform: translateY(-55%);
+}
+
+#sm-view .baseline-census-search::after {
+  content: "";
+  position: absolute;
+  left: 17px;
+  top: 55%;
+  width: 7px;
+  height: 2px;
+  background: #6a7789;
+  border-radius: 999px;
+  transform: rotate(45deg);
+  transform-origin: left center;
+}
+
+#sm-view .baseline-census-table-container {
+  max-height: 460px;
+  overflow: auto;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 10px;
+}
+
+#sm-view .baseline-census-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: auto;
+  font-size: 0.85rem;
+}
+
+#sm-view .baseline-census-table thead th {
+  position: sticky;
+  top: 0;
+  background: #f7f9fc;
+  z-index: 1;
+  padding: 10px 8px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  font-weight: 600;
+  color: #223044;
+  text-align: center;
+  vertical-align: bottom;
+  white-space: nowrap;
+}
+
+#sm-view .baseline-census-table thead th a {
+  color: inherit;
+  text-decoration: none;
+}
+
+#sm-view .baseline-census-table thead th.numeric {
+  text-align: center;
+}
+
+#sm-view .baseline-census-table thead th.sm-wrap-header {
+  white-space: normal;
+  line-height: 1.15;
+}
+
+#sm-view .baseline-census-table thead th.sm-wrap-header a {
+  white-space: normal;
+}
+
+#sm-view .baseline-census-table thead th a:hover {
+  text-decoration: underline;
+}
+
+#sm-view .baseline-census-table tbody td {
+  padding: 10px 8px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  color: #2c3b4f;
+}
+
+#sm-view .baseline-census-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+#sm-view .baseline-census-table thead th:not(:last-child),
+#sm-view .baseline-census-table tbody td:not(:last-child) {
+  border-right: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+#sm-view .baseline-census-table .numeric {
+  text-align: right;
+}
+
+#sm-view .baseline-census-table tfoot td {
+  padding: 10px 8px;
+}
+
+#sm-view .baseline-census-table tfoot .bc-district-total-row td,
+#sm-view .baseline-census-table tfoot .bc-grand-total-row td {
+  font-weight: 700;
+  color: #223044;
+  border-top: 2px solid rgba(0, 0, 0, 0.18);
+  background: #eef2f8;
+  position: sticky;
+  bottom: 0;
+}
+
+#sm-view .baseline-census-table tfoot td:not(:last-child) {
+  border-right: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+#sm-view .sm-grand-total-table {
+  margin-top: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+#sm-view .sm-grand-total-table .bc-grand-total-row td {
+  padding: 10px 8px;
+  font-weight: 700;
+  color: #223044;
+  background: #eef2f8;
+  border-top: 0;
+}
+
+#sm-view .sm-grand-total-table .bc-grand-total-row td:not(:last-child) {
+  border-right: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+#sm-view .sort-icon {
+  font-size: 0.75rem;
+  color: #7a8799;
+  margin-left: 6px;
+}
+
+#sm-view .baseline-census-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 0 4px 0;
+  color: #6a7789;
+  font-size: 0.82rem;
+}
+
+#sm-view .baseline-census-page-link {
+  color: #2563eb;
+  text-decoration: none;
+}
+
+#sm-view .baseline-census-page-link.disabled {
+  pointer-events: none;
+  opacity: 0.45;
+  text-decoration: none;
+  color: #6a7789;
+}
+
+/* Each table block sits in its own white card, matching the chart card. */
+#sm-view .sm-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.05);
+  padding: 14px;
+}
+
+#sm-view .sm-card .section-body {
+  padding: 0;
+}
+
+#sm-view .sm-card .sm-section-title {
+  flex: 0 0 auto;
+}

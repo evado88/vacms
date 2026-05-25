@@ -6,9 +6,9 @@
 
 {% block content %}
 <div class="card shadow-sm mb-3">
-  <div class="card-body">
-    <form method="get" class="form-row">
-      <div class="form-group col-md-4">
+  <div class="card-body" style="padding: 10px;">
+    <form method="get" class="d-flex flex-nowrap align-items-end">
+      <div class="form-group mb-0 mr-2" style="min-width: 220px;">
         <label class="form-label">{% trans "Status" %}</label>
         <select name="status" class="form-select">
           <option value="">{% trans "All" %}</option>
@@ -17,7 +17,7 @@
           {% endfor %}
         </select>
       </div>
-      <div class="form-group col-md-4">
+      <div class="form-group mb-0 mr-2" style="min-width: 220px;">
         <label class="form-label">{% trans "Severity" %}</label>
         <select name="severity" class="form-select">
           <option value="">{% trans "All" %}</option>
@@ -26,7 +26,7 @@
           {% endfor %}
         </select>
       </div>
-      <div class="form-group col-md-4 d-flex align-items-end">
+      <div class="form-group mb-0 d-flex align-items-end">
         <button type="submit" class="btn btn-primary mr-2">{% trans "Apply" %}</button>
         <a href="{% url 'users:feedback_mailbox' %}" class="btn btn-outline-secondary ml-2">{% trans "Reset" %}</a>
       </div>

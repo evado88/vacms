@@ -1,3 +1,4 @@
+import csv
 import json
 import subprocess
 import sys
@@ -9,6 +10,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db.models import Count, Q
 from django.http import (
+    HttpResponse,
     HttpResponseForbidden,
     JsonResponse,
     StreamingHttpResponse,
@@ -26,6 +28,7 @@ from django.views.generic import (
     UpdateView,
 )  # new
 
+from va_explorer.utils.mixins import AjaxListTableMixin, CsvDownloadPermissionMixin
 from va_explorer.va_data_management.models import Death
 from va_explorer.vacms.admin_panel import (
     ADMINS_GROUP_NAME,
@@ -57,9 +60,11 @@ def user_can_access_admin_panel(user):
 
 # event
 @method_decorator(login_required, name="dispatch")
-class EventListView(ListView):
+class EventListView(AjaxListTableMixin, ListView):
     model = Event
     template_name = "va_cms/event_list.html"
+    list_table_template = "va_cms/partials/_event_list_table.html"
+    component_template = "va_cms/partials/_event_list_component.html"
     paginate_by = 25
 
     _SORT_FIELDS = {
@@ -96,56 +101,41 @@ class EventListView(ListView):
             return HttpResponseForbidden("You are not allowed to view VA schedules.")
         return super().dispatch(request, *args, **kwargs)
 
+    #: status tabs shown on the event list, in display order
+    STATUS_TABS = (
+        (Event.VAInterviewStatus.SCHEDULED, "Scheduled"),
+        (Event.VAInterviewStatus.COMPLETED, "Completed"),
+        (Event.VAInterviewStatus.NOT_DONE, "Not Done"),
+        (Event.VAInterviewStatus.POSTPONED, "Postponed"),
+    )
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context["filters"] = self._filters_context
         context["user_can_manage_schedule"] = user_can_manage_va_schedule(
             self.request.user
         )
-        base_queryset = self.object_list
-        context["scheduled_events"] = base_queryset.filter(
-            va_interview_status__in=(
-                Event.VAInterviewStatus.SCHEDULED,
-                Event.VAInterviewStatus.POSTPONED,
-            )
-        )
-        context["completed_events"] = base_queryset.filter(
-            va_interview_status=Event.VAInterviewStatus.COMPLETED
-        )
-        context["not_done_events"] = base_queryset.filter(
-            va_interview_status=Event.VAInterviewStatus.NOT_DONE
-        )
-
-        # Aggregate scheduled VA events by VA interviewer so supervisors can
-        # see workload distribution at a glance.  Uses the full unfiltered
-        # base queryset (respects province/district/interviewer/status filters
-        # already applied by _apply_filters).
-        context["scheduled_by_interviewer"] = (
-            Event.objects.filter(
-                id__in=base_queryset.filter(
-                    va_interview_status=Event.VAInterviewStatus.SCHEDULED,
-                    va_interview_staff__isnull=False,
-                ).values_list("id", flat=True)
-            )
-            .values(
-                "va_interview_staff__id",
-                "va_interview_staff__name",
-                "va_interview_staff__email",
-            )
-            .annotate(scheduled_count=Count("id"))
-            .order_by("-scheduled_count", "va_interview_staff__name")
-        )
+        # Per-tab counts respect the geo/interviewer filters but not the status
+        # itself, so each tab shows its own total under the active filters.
+        base = self._apply_geo_interviewer(Event.objects.all(), self._filters_context)
+        counts = {
+            row["va_interview_status"]: row["c"]
+            for row in base.values("va_interview_status").annotate(c=Count("id"))
+        }
+        active_status = self._filters_context["interview_status"]
+        context["status_tabs"] = [
+            {
+                "value": value,
+                "label": label,
+                "count": counts.get(value, 0),
+                "active": value == active_status,
+            }
+            for value, label in self.STATUS_TABS
+        ]
+        context["active_status"] = active_status
         return context
 
-    def _apply_filters(self, queryset):
-        params = self.request.GET
-        filters = {
-            "province": params.get("province", "").strip(),
-            "district": params.get("district", "").strip(),
-            "interview_status": params.get("interview_status", "").strip(),
-            "interviewer": params.get("interviewer", "").strip(),
-        }
-
+    def _apply_geo_interviewer(self, queryset, filters):
         if filters["province"]:
             queryset = queryset.filter(
                 Q(death__province__icontains=filters["province"])
@@ -160,16 +150,113 @@ class EventListView(ListView):
                 | Q(pregnancy_outcome__district__icontains=filters["district"])
                 | Q(household__district__icontains=filters["district"])
             )
-        if filters["interview_status"]:
-            queryset = queryset.filter(va_interview_status=filters["interview_status"])
         if filters["interviewer"]:
             queryset = queryset.filter(
                 Q(va_interview_staff__name__icontains=filters["interviewer"])
                 | Q(va_interview_staff__email__icontains=filters["interviewer"])
             )
+        return queryset
+
+    def _apply_filters(self, queryset):
+        params = self.request.GET
+        # Default to the Scheduled tab so completed/not-done/postponed events
+        # drop off the default list once their status changes.
+        filters = {
+            "province": params.get("province", "").strip(),
+            "district": params.get("district", "").strip(),
+            "interview_status": params.get("interview_status", "").strip()
+            or Event.VAInterviewStatus.SCHEDULED,
+            "interviewer": params.get("interviewer", "").strip(),
+        }
+
+        queryset = self._apply_geo_interviewer(queryset, filters)
+
+        if filters["interview_status"] == "unscheduled":
+            queryset = queryset.filter(
+                Q(event_status__lt=Event.EventStatus.VA_INTERVIEW_SCHEDULED)
+                | Q(event_status__isnull=True)
+            )
+        else:
+            queryset = queryset.filter(va_interview_status=filters["interview_status"])
 
         self._filters_context = filters
         return queryset
+
+
+class EventListCsvExport(CsvDownloadPermissionMixin, EventListView):
+    """Download the (filtered) event list as a CSV.
+
+    Subclasses EventListView so it reuses the same permission check
+    (dispatch), filtering (_apply_filters), and sort handling — keeping the
+    export exactly in sync with what the list page shows.
+    """
+
+    _CSV_COLUMNS = (
+        ("id", "ID"),
+        ("deceased_name", "Deceased Name"),
+        ("death_id", "Death ID"),
+        ("key", "Key"),
+        ("interviewer", "Interviewer"),
+        ("province", "Province"),
+        ("district", "District"),
+        ("event_type", "Event Type"),
+        ("event_status", "Event Status"),
+        ("va_interview_status", "VA Interview Status"),
+        ("interview_scheduled_date", "VA Interview Scheduled Date"),
+        ("interview_complete_date", "VA Interview Complete Date"),
+        ("supervisor", "Supervisor"),
+        ("respondent_name", "Respondent Name"),
+        ("respondent_phone", "Respondent Phone"),
+        ("va_not_done_reason", "Not Done Reason"),
+    )
+
+    def get(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        filename = timezone.now().strftime("scheduled_vas_%Y%m%d_%H%M%S.csv")
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        writer = csv.writer(response)
+        writer.writerow([label for _, label in self._CSV_COLUMNS])
+        for event in queryset.iterator():
+            writer.writerow(self._row_for(event))
+        return response
+
+    @staticmethod
+    def _row_for(event):
+        staff = event.va_interview_staff
+        interviewer = (
+            (staff.name or staff.get_full_name() or staff.email)
+            if staff
+            else "Unassigned"
+        )
+        death = event.death
+        supervisor = event.supervisor or (death.supervisor if death else "") or ""
+        respondent_name = event.respondent_name or (death.DE_19 if death else "") or ""
+        respondent_phone = (
+            event.respondent_phone or (death.DE_26 if death else "") or ""
+        )
+        return [
+            event.id,
+            death.DE_03 if death else "",
+            event.death_id or "",
+            death.key if death else "",
+            interviewer,
+            event.record_province or "",
+            event.record_district or "",
+            event.get_event_type_display() if event.event_type is not None else "",
+            event.get_event_status_display() if event.event_status is not None else "",
+            event.get_va_interview_status_display() or "",
+            event.interview_scheduled_date or "",
+            event.interview_complete_date or "",
+            supervisor,
+            respondent_name,
+            respondent_phone,
+            (
+                event.get_va_not_done_reason_display()
+                if event.va_not_done_reason
+                else ""
+            ),
+        ]
 
 
 class EventListScheduledView(ListView):
@@ -214,7 +301,6 @@ def EventCreateDeathView(request, death):
         return HttpResponseForbidden("You are not allowed to manage VA schedules.")
 
     if request.method == "POST":
-
         form = ScheduleDeathForm(request.POST)
 
         if form.is_valid():
@@ -258,7 +344,6 @@ def EventCreateDeathView(request, death):
             # Form is invalid, re-render with errors
             return render(request, "va_cms/event_death_create.html", {"form": form})
     else:
-
         initials = {"id": death}
 
         try:

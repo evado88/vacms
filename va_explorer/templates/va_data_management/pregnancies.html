@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load static %}
 
 {% block title %}Pregnancies{% endblock %}
 {% block heading %}Pregnancies{% endblock %}
@@ -6,46 +7,37 @@
 {% block content %}
   {% include 'partials/_pregnancy_update_stats.html' %}
 
-  {% if download_url %}
-    <form id="pregnanciesDownloadForm" action="{{ download_url }}" method="post" class="d-none">
-      {% csrf_token %}
-    </form>
-  {% endif %}
-
-  <section class="ou-card ou-mb-3">
-    <div class="ou-card-header">
-      <h2 class="ou-card-title">Filters</h2>
-    </div>
-    <div class="ou-card-body">
-      <small class="ou-filter-note">Filter pregnancies by ID, province, district, ward, enumerator, or record date range.</small>
-      <form method="get" class="ou-filter-row ou-va-filter-row">
-        {% for field in filter.form %}
-          <div class="form-group mb-0">
-            {{ field.label_tag }}
-            {{ field }}
+  <div data-list-table>
+    <section class="ou-card ou-mb-3">
+      <div class="ou-card-body">
+        <small class="ou-filter-note">Filter pregnancies by ID, enumerator, district, ward, or record date range.</small>
+        <form method="get" class="ou-filter-row ou-va-filter-row" data-list-filter>
+          {% for field in filter.form %}
+            <div class="form-group mb-0{% if field.name == 'start_date' or field.name == 'end_date' %} ou-date-filter-group{% endif %}">
+              {% if field.label %}<label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{% endif %}
+              {{ field }}
+            </div>
+          {% endfor %}
+          <div class="form-group mb-0 ou-va-filter-actions">
+            <div class="ou-form-actions">
+              {% if filter.is_valid %}
+                <a class="btn btn-secondary" href="{% url 'va_data_management:pregnancies' %}">Reset</a>
+              {% endif %}
+            </div>
           </div>
-        {% endfor %}
-        <div class="form-group mb-0 ou-va-filter-actions">
-          <label class="invisible d-block">&nbsp;</label>
-          <div class="ou-form-actions">
-            <button class="btn btn-primary" type="submit">Apply Filters</button>
-            {% if filter.is_valid %}
-              <a class="btn btn-secondary" href="{% url 'va_data_management:pregnancies' %}">Reset</a>
-            {% endif %}
-            {% if download_url == "" %}
-              <button class="btn btn-primary" disabled><i class="fas fa-download"></i> Data</button>
-            {% else %}
-              <button class="btn btn-primary" type="submit" form="pregnanciesDownloadForm"><i class="fas fa-download"></i> Data</button>
-            {% endif %}
-          </div>
-        </div>
-      </form>
-    </div>
-  </section>
+        </form>
+      </div>
+    </section>
 
-  {% include "partials/card.html" with title="Pregnancies" body_template="va_data_management/partials/_pregnancies_table_card_body.html" class_name="ou-mb-3" body_class="p-0" %}
+    <section class="ou-card ou-mb-3">
+      <div class="ou-card-body p-0" data-list-slot data-endpoint="{% url 'va_data_management:pregnancies' %}?component=1">
+        {% include "partials/_list_table_component.html" %}
+      </div>
+    </section>
+  </div>
+{% endblock %}
 
-  {% if page_obj.has_other_pages %}
-    {% include "partials/_pagination.html" %}
-  {% endif %}
+{% block page_scripts %}
+  {{ block.super }}
+  <script src="{% static 'js/list_table.js' %}"></script>
 {% endblock %}

@@ -1,11 +1,21 @@
+from django.contrib.contenttypes.fields import GenericRelation
 from django.db import models
 from simple_history.models import HistoricalRecords
+
+from va_explorer.va_data_management.models.data_quality import DataQualityIssueMember
 
 
 class Pregnancy(models.Model):
 
     # Persist the CSV key so we can dedupe reliably
     key = models.TextField(unique=True, db_index=True, null=True, blank=True)
+
+    dq_members = GenericRelation(
+        DataQualityIssueMember,
+        content_type_field="content_type",
+        object_id_field="object_id",
+        related_query_name="pregnancy",
+    )
 
     submissiondate = models.TextField(blank=True, null=True)
     deviceid = models.TextField(blank=True)

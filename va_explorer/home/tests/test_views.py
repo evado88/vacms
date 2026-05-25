@@ -1,4 +1,6 @@
+import csv
 import datetime as dt
+import io
 import json
 from datetime import date, datetime
 
@@ -600,26 +602,35 @@ def test_regional_operations_page_loads(user: User):
     assert b'id="regionalMsoComponent"' in response.content
 
 
-def test_operational_dashboard_includes_rumor_details_tab(user: User):
+def test_operational_dashboard_includes_rumor_surveillance_tab(user: User):
     client = Client()
     client.force_login(user=user)
 
     response = client.get("/", {"tab": "rumor_details"}, follow=True)
 
     assert response.status_code == 200
-    assert b"Rumor Details" in response.content
-    assert b"Rumor Overview" in response.content
-    assert b'data-tab="rumor_details"' in response.content
-    assert b'data-tab="rumor_overview"' in response.content
+    assert b"Rumor Surveillance" in response.content
+    assert b'data-tab="rumor_surveillance"' in response.content
+    assert b'data-tab="rumor_details"' not in response.content
+    assert b'data-tab="rumor_overview"' not in response.content
+    assert b'data-rumor-surveillance-tab="overview"' in response.content
+    assert b'data-rumor-surveillance-tab="details"' in response.content
+    assert b'id="rumor-surveillance-overview-panel"' in response.content
+    assert b'id="rumor-surveillance-details-panel"' in response.content
     assert b'id="rumorDetailsDashboardApp"' in response.content
     assert b'id="rumorOverviewDashboardApp"' in response.content
-    # Tab-6 (Details): has enumerator section, description table
+    # Shared Rumor Surveillance header: KPI cards and filter controls.
+    assert b'id="rumorOverviewSummaryCards"' in response.content
+    assert b'id="rumorOverviewFiltersForm"' in response.content
+    assert b'id="rumorDetailsFilterGeoLevel"' in response.content
+    assert b'id="rumorDetailsFiltersForm"' not in response.content
+    # Details sub-tab: has enumerator section, description table
     assert b'id="rumorSummaryCards"' not in response.content
     assert b'id="rumorTrendChart"' not in response.content
     assert b'id="rumorGpsCoverageChart"' not in response.content
     assert b'id="rumorDetailsEnumeratorTable"' in response.content
     assert b'id="rumorDetailsDescTable"' in response.content
-    # Tab-7 (Overview): has map, no word cloud
+    # Overview sub-tab: has map, no legacy overview word cloud.
     assert b'id="rumorOverviewMapContainer"' in response.content
     assert b'id="rumorOverviewWordCloud"' not in response.content
     # Both tabs reference their own JS
@@ -631,6 +642,24 @@ def test_operational_dashboard_includes_rumor_details_tab(user: User):
     assert b"rumor-details/enumerator-stats/" in response.content
     assert b"rumor-details/description-table/" in response.content
     assert b"pregnancyDashboardApp" not in response.content
+
+    default_response = client.get("/", {"tab": "rumor_surveillance"}, follow=True)
+
+    assert default_response.status_code == 200
+    assert (
+        b'id="rumor-surveillance-overview-tab" '
+        b'class="rumor-surveillance-subtab rumor-surveillance-subtab--active"'
+        in default_response.content
+    )
+    assert (
+        b'id="rumor-surveillance-details-tab" '
+        b'class="rumor-surveillance-subtab "' in default_response.content
+    )
+    assert (
+        b'id="rumor-surveillance-overview-panel" '
+        b'class="rumor-surveillance-panel rumor-surveillance-panel--active"'
+        in default_response.content
+    )
 
 
 def test_rumor_details_api_endpoints_return_dashboard_payloads(user: User):
@@ -1287,12 +1316,14 @@ def test_regional_operations_mso_populated_when_events_unlinked(user: User):
         Id10012="2024-02-01",
         Id10011="09:00:00",
         Id10481="2024-02-01 10:00:00",
+        province="Lusaka",
     )
     VerbalAutopsyFactory.create(
         Id10010="MSO Alpha",
         Id10012="2024-02-02",
         Id10011="09:00:00",
         Id10481="2024-02-02 09:20:00",
+        province="Lusaka",
     )
 
     # Unlinked events: no VA and no Death link.
@@ -1324,6 +1355,49 @@ def test_regional_operations_mso_populated_when_events_unlinked(user: User):
     mso_stats = response.context["mso_stats"]
     assert len(mso_stats) > 0
     assert any(row.get("va_total", 0) > 0 for row in mso_stats)
+
+
+def test_mso_dedups_casing_sums_metrics_and_drops_junk(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    # Same person recorded in two casings -> collapses to one canonical row
+    # (mixed-case wins) whose VA total is the sum of every casing variant.
+    VerbalAutopsyFactory.create(
+        Id10010="Lweendo Namitondo", Id10012="2024-02-01", province="Lusaka"
+    )
+    VerbalAutopsyFactory.create(
+        Id10010="LWEENDO NAMITONDO", Id10012="2024-02-02", province="Lusaka"
+    )
+    VerbalAutopsyFactory.create(
+        Id10010="LWEENDO NAMITONDO", Id10012="2024-02-03", province="Lusaka"
+    )
+
+    # Junk/placeholder names that must never appear in the table.
+    for junk in ("Unassigned MSO", "Facility", "Facility Z", "Facility 1", "Unknown"):
+        VerbalAutopsyFactory.create(
+            Id10010=junk, Id10012="2024-02-04", province="Lusaka"
+        )
+
+    response = client.get(
+        "/regional-operations/components/mso/",
+        {"time_preset": "timeAll"},
+        follow=True,
+    )
+    assert response.status_code == 200
+
+    rows = response.context["mso_stats"]
+    names = [row["name"] for row in rows]
+
+    # Exactly one canonical, mixed-case row with merged totals.
+    assert names.count("Lweendo Namitondo") == 1
+    assert "LWEENDO NAMITONDO" not in names
+    lweendo = next(row for row in rows if row["name"] == "Lweendo Namitondo")
+    assert lweendo["va_total"] == 3
+
+    # No junk rows survive.
+    for junk in ("Unassigned MSO", "Facility", "Facility Z", "Facility 1", "Unknown"):
+        assert junk not in names
 
 
 def test_mso_uses_only_va_base_names_and_fuzzy_maps_event_aggregates(user: User):
@@ -1414,14 +1488,23 @@ def test_mso_component_filters_by_province_search(user: User):
     assert [row["province"] for row in response.context["mso_stats"]] == ["Lusaka"]
 
 
-def test_regional_operations_filters_default_to_all_time(user: User):
+def test_regional_operations_filter_defaults_per_tab(user: User):
     client = Client()
     client.force_login(user=user)
 
-    response = client.get("/regional-operations/components/filters/", follow=True)
+    # CSA filter (no scope) defaults to the last 7 days.
+    csa_response = client.get("/regional-operations/components/filters/", follow=True)
+    assert csa_response.status_code == 200
+    assert csa_response.context["selected_time_preset"] == "time7"
 
-    assert response.status_code == 200
-    assert response.context["selected_time_preset"] == "timeAll"
+    # MSO filter keeps the all-time default.
+    mso_response = client.get(
+        "/regional-operations/components/filters/",
+        {"filter_scope": "mso"},
+        follow=True,
+    )
+    assert mso_response.status_code == 200
+    assert mso_response.context["selected_time_preset"] == "timeAll"
 
 
 # Get the about page and make sure it returns successfully
@@ -1577,7 +1660,11 @@ def test_csa_component_handles_unmatched_mapping_safely(user: User):
         num_outcome="1",
     )
 
-    response = client.get("/regional-operations/components/csa/", follow=True)
+    response = client.get(
+        "/regional-operations/components/csa/",
+        {"time_preset": "timeAll"},
+        follow=True,
+    )
     assert response.status_code == 200
 
     rows = response.context["csa_stats"]
@@ -1588,11 +1675,113 @@ def test_csa_component_handles_unmatched_mapping_safely(user: User):
     assert row["coverage_pct"] is None
 
 
-@time_machine.travel(dt.datetime(2026, 4, 26, 12, 0, tzinfo=eastern_tz))
-def test_csa_component_default_all_time_shows_available_tracker_rows(user: User):
+def test_csa_component_renders_totals_row_spanning_all_filtered_rows(user: User):
     client = Client()
     client.force_login(user=user)
 
+    # Twelve CSAs force a second page (the table caps at 10 rows).
+    for idx in range(12):
+        name = f"CSA{idx:02d}"
+        CSASupervisorTargetMap.objects.create(
+            csa_name_raw=f"{name}_{idx}",
+            csa_display_name=name,
+            csa_name_normalized=name.lower(),
+            supervisor_name="Supervisor",
+            csa_target=10,
+            status=CSASupervisorTargetMap.STATUS_ACTIVE,
+        )
+        CSADailyTracker.objects.create(
+            key=f"csa-total-{idx}",
+            enumerator=f"{name}_{idx}",
+            province="Lusaka",
+            district="Lusaka",
+            ward="Ward 1",
+            today="2026-03-15",
+            num_death="1",
+            num_preg="0",
+            num_outcome="0",
+        )
+
+    response = client.get(
+        "/regional-operations/components/csa/",
+        {"time_preset": "timeAll"},
+        follow=True,
+    )
+    assert response.status_code == 200
+
+    # The visible page is capped at 10 rows; the totals span all 12 CSAs.
+    assert len(response.context["csa_stats"]) == 10
+    csa_total = response.context["csa_total"]
+    assert csa_total is not None
+    assert csa_total["visits"] == 12
+    assert csa_total["deaths"] == 12
+    assert csa_total["events"] == 12
+    # Coverage is recomputed from the summed visits / target (12 / 120), not an
+    # average of the per-row percentages.
+    assert csa_total["csa_target"] == 120
+    assert csa_total["coverage_pct"] == 10.0
+    assert csa_total["coverage_band"] == "red"
+    assert b"csa-total-row" in response.content
+    assert b"Total / Average" in response.content
+
+
+def test_csa_totals_reflect_active_filters(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    specs = (("AlphaCsa", "Lusaka"), ("BetaCsa", "Lusaka"), ("GammaCsa", "Southern"))
+    for idx, (name, province) in enumerate(specs):
+        CSASupervisorTargetMap.objects.create(
+            csa_name_raw=f"{name}_{idx}",
+            csa_display_name=name,
+            csa_name_normalized=name.lower(),
+            supervisor_name="Supervisor",
+            csa_target=10,
+            status=CSASupervisorTargetMap.STATUS_ACTIVE,
+        )
+        CSADailyTracker.objects.create(
+            key=f"geo-{idx}",
+            enumerator=f"{name}_{idx}",
+            province=province,
+            district="Lusaka",
+            ward="Ward 1",
+            today="2026-03-15",
+            num_death="1",
+            num_preg="0",
+            num_outcome="0",
+        )
+
+    national = client.get(
+        "/regional-operations/components/csa/",
+        {"time_preset": "timeAll"},
+        follow=True,
+    )
+    assert national.context["csa_total"]["deaths"] == 3
+
+    # Narrowing the geography filter shrinks the totals to the Lusaka CSAs.
+    lusaka = client.get(
+        "/regional-operations/components/csa/",
+        {"time_preset": "timeAll", "geography": "lusaka"},
+        follow=True,
+    )
+    assert lusaka.context["csa_total"]["deaths"] == 2
+
+
+@time_machine.travel(dt.datetime(2026, 4, 26, 12, 0, tzinfo=eastern_tz))
+def test_csa_component_defaults_to_last_seven_days(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    # Within the last 7 days (2026-04-20..04-26): shown by the default window.
+    CSADailyTracker.objects.create(
+        key="recent-default-row",
+        enumerator="Recent_CSA_1",
+        province="Lusaka",
+        district="Lusaka",
+        ward="Ward 1",
+        today="2026-04-22",
+    )
+    # Older than 7 days: hidden by the default 7-day window.
     CSADailyTracker.objects.create(
         key="older-default-row",
         enumerator="Older_CSA_1",
@@ -1605,7 +1794,9 @@ def test_csa_component_default_all_time_shows_available_tracker_rows(user: User)
     response = client.get("/regional-operations/components/csa/", follow=True)
 
     assert response.status_code == 200
-    assert any(row["name"] == "Older CSA" for row in response.context["csa_stats"])
+    names = [row["name"] for row in response.context["csa_stats"]]
+    assert "Recent CSA" in names
+    assert "Older CSA" not in names
 
 
 @time_machine.travel(dt.datetime(2026, 3, 29, 12, 0, tzinfo=eastern_tz))
@@ -1721,6 +1912,79 @@ def test_csa_component_paginates_ten_rows_per_page(user: User):
     assert response.context["csa_visible_count"] == 10
     assert response.context["csa_total_count"] == 11
     assert response.context["csa_total_pages"] == 2
+
+
+def _csv_response_rows(response):
+    return list(csv.DictReader(io.StringIO(response.content.decode())))
+
+
+def test_csa_component_renders_download_button(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    response = client.get("/regional-operations/components/csa/", follow=True)
+
+    assert response.status_code == 200
+    assert b"Download CSV" in response.content
+    assert (
+        reverse("home:regional_operations_csa_csv_export").encode() in response.content
+    )
+
+
+def test_csa_csv_export_returns_full_unfiltered_dataset(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    for name, supervisor, district in (
+        ("Alice", "Supervisor Alpha", "Lusaka"),
+        ("Bob", "Supervisor Beta", "Kafue"),
+    ):
+        CSASupervisorTargetMap.objects.create(
+            csa_name_raw=f"{name}_1",
+            csa_display_name=name,
+            csa_name_normalized=name.lower(),
+            supervisor_name=supervisor,
+            csa_target=10,
+            status=CSASupervisorTargetMap.STATUS_ACTIVE,
+        )
+        CSADailyTracker.objects.create(
+            key=f"export-{name}",
+            enumerator=f"{name}_1",
+            province="Lusaka",
+            district=district,
+            ward="Ward 1",
+            today=date.today().isoformat(),
+            num_death="1",
+            num_preg="1",
+            num_outcome="0",
+        )
+
+    response = client.get(
+        reverse("home:regional_operations_csa_csv_export"),
+        {"csa_search": "Alice", "csa_supervisor_search": "Alpha"},
+    )
+
+    assert response.status_code == 200
+    assert response["Content-Type"].startswith("text/csv")
+    assert "attachment;" in response["Content-Disposition"]
+    rows = _csv_response_rows(response)
+    names = {row["CSA Name"] for row in rows}
+    assert {"Alice", "Bob", "Total / Average"}.issubset(names)
+    alice = next(row for row in rows if row["CSA Name"] == "Alice")
+    assert alice["Supervisor"] == "Supervisor Alpha"
+    assert alice["Deaths"] == "1"
+    assert alice["Pregnancies"] == "1"
+
+
+def test_csa_csv_export_empty_dataset_has_headers(user: User):
+    client = Client()
+    client.force_login(user=user)
+
+    response = client.get(reverse("home:regional_operations_csa_csv_export"))
+
+    assert response.status_code == 200
+    assert response.content.decode().splitlines()[0].startswith("CSA Name,Province")
+    assert _csv_response_rows(response) == []
 
 
 def test_mso_component_paginates_ten_rows_per_page(user: User):

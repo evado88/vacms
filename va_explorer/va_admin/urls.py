@@ -9,6 +9,7 @@ from va_explorer.va_admin.views import (
     admin_panel_upload_file_view,
     admin_panel_validate_file_view,
     admin_panel_view,
+    baseline_census_config_view,
     user_activity_log_download_view,
     user_activity_log_view,
 )
@@ -29,5 +30,10 @@ urlpatterns = [
         "activity/download/",
         view=user_activity_log_download_view,
         name="activity-log-download",
+    ),
+    path(
+        "baseline-census-config/",
+        view=baseline_census_config_view,
+        name="baseline-census-config",
     ),
 ]
