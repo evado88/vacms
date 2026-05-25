@@ -32,7 +32,7 @@ GROUPS_PERMISSIONS = {
         DataCleanup: ["view_datacleanup", "download", "bulk_download"],
     },
     "Data Managers": {
-        Dashboard: ["view_dashboard", "view_pii", "supervise_users"],
+        Dashboard: ["view_dashboard", "download_data", "view_pii", "supervise_users"],
         User: [],
         VerbalAutopsy: [
             "change_verbalautopsy",

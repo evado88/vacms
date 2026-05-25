@@ -133,6 +133,11 @@
                "dashboard"
             ],
             [
+               "download_data",
+               "va_analytics",
+               "dashboard"
+            ],
+            [
                "view_pii",
                "va_analytics",
                "dashboard"
