@@ -7,7 +7,7 @@ When the user selects `Verbal Autopsy` as the dataset in `va_export`, the export
 
 1. `Abridged VA`
    Label/meaning:
-   `Abridged VA (Location, Demographics, CoD, and necessary identifier values for analysis and tracking)`
+   `Abridged VA (Location, Demographics, CoD, PII)`
 
    When this option is selected, the downloaded file must include only the following categories of fields:
    - Necessary identifier fields for analysis, linkage, and tracking

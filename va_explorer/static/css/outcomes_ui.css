@@ -624,6 +624,35 @@
   opacity: 0.65;
 }
 
+/* "Group box" wrapper for the VA Record Type options. */
+.va-export-group-box {
+  border: 1px solid var(--ou-border, #ced4da);
+  border-radius: 0.375rem;
+  padding: 0.5rem 1rem 0.75rem;
+  margin-bottom: 1rem;
+  min-width: 0;
+}
+
+.va-export-group-box__legend {
+  width: auto;
+  padding: 0 0.5rem;
+  margin-bottom: 0.25rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--ou-text);
+}
+
+/* Native fieldset disable + dim class both grey out the whole group box. */
+.va-export-group-box:disabled,
+.va-export-group-box.va-export-config-disabled {
+  color: var(--ou-muted);
+  opacity: 0.65;
+}
+
+.va-export-group-box .form-group:last-child {
+  margin-bottom: 0;
+}
+
 @media (max-width: 767.98px) {
   .va-export-config-panels {
     grid-template-columns: 1fr;

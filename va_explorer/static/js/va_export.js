@@ -65,7 +65,7 @@ $(document).ready(function() {
   const locationRestrictionsClass = 'location-restrictions-select';
   const facilityRestrictionsClass = 'facility-restrictions-select';
   const datasetID = 'div_id_dataset';
-  const vaRecordTypeID = 'div_id_va_record_type';
+  const vaRecordTypeGroupID = 'va-record-type-group';
   const causesID = 'div_id_causes';
   const warningBoxID = '#exportValidationWarning';
 
@@ -273,11 +273,12 @@ $(document).ready(function() {
   function updateFormForDatasetSelected() {
     const selectedDataset = ($('#id_dataset').val() || 'verbalautopsy').toLowerCase();
     const isVerbalAutopsy = selectedDataset === 'verbalautopsy';
-    const $vaRecordType = $('#' + vaRecordTypeID);
-    const $vaRecordTypeInputs = $vaRecordType.find('input[type="radio"]');
+    const $vaRecordTypeGroup = $('#' + vaRecordTypeGroupID);
 
-    $vaRecordType.toggleClass('va-export-config-disabled', !isVerbalAutopsy);
-    $vaRecordTypeInputs.prop('disabled', !isVerbalAutopsy);
+    // Disabling the fieldset natively disables every control inside it; the dim
+    // class greys out the whole group box (border, legend and radio options).
+    $vaRecordTypeGroup.prop('disabled', !isVerbalAutopsy);
+    $vaRecordTypeGroup.toggleClass('va-export-config-disabled', !isVerbalAutopsy);
 
     if (isVerbalAutopsy) {
       $('#id_va_record_type_0').prop('checked', true);

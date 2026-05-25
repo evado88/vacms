@@ -44,13 +44,11 @@ class VADownloadForm(forms.Form):
     )
 
     va_record_type = forms.ChoiceField(
-        label="VA Record Type",
+        # Label is intentionally blank: the field is rendered inside a fieldset
+        # "group box" whose <legend> ("VA Record Type") provides the title.
+        label="",
         choices=(
-            (
-                "abridged",
-                "Abridged VA (Location, Demographics, CoD, and necessary "
-                "identifier values for analysis and tracking)",
-            ),
+            ("abridged", "Abridged VA (Location, Demographics, CoD, PII)"),
             ("full", "Full VA Record"),
         ),
         initial="abridged",

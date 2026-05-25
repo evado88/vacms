@@ -163,11 +163,35 @@ class TestAPIView:
             "div_id_format",
         ):
             assert wrapper_id in body
-        assert (
-            "Abridged VA (Location, Demographics, CoD, and necessary "
-            "identifier values for analysis and tracking)" in body
-        )
+        assert "Abridged VA (Location, Demographics, CoD, PII)" in body
         assert "Full VA Record" in body
+        right_panel_start = body.index(
+            "va-export-config-panel va-export-config-panel--right"
+        )
+        assert right_panel_start < body.index("div_id_action")
+
+    def test_va_record_type_is_rendered_in_disableable_group_box(self):
+        # The "disable VA Record Type when dataset != Verbal Autopsy" behaviour in
+        # va_export.js (updateFormForDatasetSelected) targets the <fieldset>
+        # #va-record-type-group, toggling its native `disabled` (which cascades to
+        # the radios) and checking #id_va_record_type_0. Lock that DOM contract so
+        # a future crispy/template change can't silently break the toggle.
+        permission = Permission.objects.filter(codename="download_data").first()
+        group = GroupFactory.create(permissions=[permission] if permission else [])
+        user = UserFactory.create(groups=[group])
+        client = Client()
+        client.force_login(user=user)
+
+        body = client.get(reverse("va_export:download_form")).content.decode()
+
+        # The group box is a fieldset (so `disabled` cascades) with a legend title.
+        assert '<fieldset id="va-record-type-group"' in body
+        group_start = body.index('id="va-record-type-group"')
+        assert "VA Record Type" in body  # legend title
+        # The toggle's target radios live inside the group box.
+        assert 'name="va_record_type"' in body
+        assert group_start < body.index('id="id_va_record_type_0"')
+        assert group_start < body.index('id="id_va_record_type_1"')
 
     def test_download_form_defaults_to_abridged_va_record_type(self):
         form = VADownloadForm(
