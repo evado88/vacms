@@ -318,6 +318,7 @@ def _command_specs() -> list[CommandRegistryItem]:
             ),
             safety="mutating",
             timeout_hint=900,
+            favorite=True,
         ),
         CommandRegistryItem(
             "load_locations",
@@ -391,6 +392,7 @@ def _command_specs() -> list[CommandRegistryItem]:
                 ),
             ),
             safety="mutating",
+            favorite=True,
         ),
         CommandRegistryItem(
             "load_social_mobilization",
@@ -477,6 +479,7 @@ def _command_specs() -> list[CommandRegistryItem]:
                 ),
             ),
             safety="mutating",
+            favorite=True,
         ),
         CommandRegistryItem(
             "assign_death_ids",
@@ -818,9 +821,20 @@ REGISTRY_ITEMS: tuple[CommandRegistryItem, ...] = tuple(_command_specs())
 ALLOWLIST: dict[str, CommandRegistryItem] = {item.key: item for item in REGISTRY_ITEMS}
 
 
+def requires_password_confirmation(item: CommandRegistryItem) -> bool:
+    """Higher-risk commands require the admin to re-enter their password before
+    execution: database-altering (``mutating``) commands that are not Favorites.
+    Favorites are exempt by design."""
+    return item.safety == "mutating" and not item.favorite
+
+
 def grouped_command_specs() -> dict[str, list[CommandRegistryItem]]:
+    # Favorites are surfaced under their own category only; exclude them from
+    # their home category so no command appears in more than one place.
     groups: dict[str, list[CommandRegistryItem]] = {}
     for item in REGISTRY_ITEMS:
+        if item.favorite:
+            continue
         groups.setdefault(item.category, []).append(item)
 
     ordered: dict[str, list[CommandRegistryItem]] = {}

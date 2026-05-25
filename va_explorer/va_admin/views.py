@@ -25,6 +25,7 @@ from va_explorer.va_admin.command_registry import (
     data_dir,
     grouped_command_specs,
     is_safe_filename,
+    requires_password_confirmation,
     resolve_data_file,
 )
 from va_explorer.va_admin.models import AdminPanelAlert
@@ -135,7 +136,11 @@ def _record_alert(
 
 
 def user_can_run_admin_commands(user):
-    return bool(getattr(user, "is_authenticated", False) and user.is_superuser)
+    if not getattr(user, "is_authenticated", False):
+        return False
+    # Superusers always pass; otherwise honour the dedicated permission so that
+    # (non-superuser) members of the Admins group can run admin commands too.
+    return bool(user.is_superuser or user.has_perm("vacms.can_run_admin_commands"))
 
 
 @login_required
@@ -176,6 +181,7 @@ def admin_panel_view(request):
                 "timeout_hint": spec.timeout_hint,
                 "favorite": spec.favorite,
                 "dangerous": spec.dangerous,
+                "requires_password": requires_password_confirmation(spec),
                 "inputs": [
                     {
                         "type": field.type,
@@ -403,6 +409,32 @@ def admin_panel_run_view(request):
             {"ok": False, "output": "inputs must be an object."}, status=400
         )
 
+    spec = ALLOWLIST[command_id]
+
+    # Higher-risk (database-altering, non-favorite) commands require the logged-in
+    # admin to confirm their password. The password is verified against the active
+    # user and is never stored, logged, or echoed back.
+    if requires_password_confirmation(spec):
+        password = str(payload.get("password") or "")
+        if not password or not request.user.check_password(password):
+            _record_alert(
+                request=request,
+                category=AdminPanelAlert.SECURITY,
+                severity=AdminPanelAlert.HIGH,
+                title="Command password confirmation failed",
+                summary=f"Password confirmation failed for command '{command_id}'.",
+                context={"command_id": command_id},
+            )
+            return JsonResponse(
+                {
+                    "ok": False,
+                    "output": "Password confirmation failed. Re-enter your "
+                    "password to run this command.",
+                    "password_required": True,
+                },
+                status=403,
+            )
+
     try:
         cmd_args, safe_inputs, filenames = _build_call_command_args(command_id, inputs)
     except ValueError as exc:
@@ -417,7 +449,10 @@ def admin_panel_run_view(request):
         )
         return JsonResponse({"ok": False, "output": str(exc)}, status=400)
 
-    spec = ALLOWLIST[command_id]
+    # Redact any password/secret/token-style inputs before they are persisted to
+    # the audit trail (e.g. seed_admin_user's --password).
+    safe_inputs = _mask_sensitive(safe_inputs)
+
     stdout_buffer = io.StringIO()
     stderr_buffer = io.StringIO()
     started_at = timezone.now()

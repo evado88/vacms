@@ -283,6 +283,13 @@
             <label class="small font-weight-bold text-danger">Type RUN to confirm destructive command</label>
             <input id="vacmsDangerConfirmInput" type="text" class="form-control form-control-sm" autocomplete="off">
           </div>
+          <div id="vacmsPasswordConfirmWrap" class="form-group d-none">
+            <label class="small font-weight-bold" for="vacmsPasswordConfirmInput">
+              Confirm your password to run this database-altering command
+            </label>
+            <input id="vacmsPasswordConfirmInput" type="password" class="form-control form-control-sm" autocomplete="off">
+            <small class="form-text text-muted">Your password is verified server-side and is never stored or logged.</small>
+          </div>
           <div id="vacmsRunModalError" class="alert alert-danger d-none mb-0"></div>
         </form>
       </div>
@@ -415,6 +422,6 @@
       });
     })();
   </script>
-  <script src="{% static 'js/vacms_admin_panel.js' %}?v=20260219a"></script>
+  <script src="{% static 'js/vacms_admin_panel.js' %}?v=20260525a"></script>
   <script src="{% static 'js/list_table.js' %}"></script>
 {% endblock %}

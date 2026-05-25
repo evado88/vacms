@@ -118,6 +118,11 @@
                "bulk_download",
                "va_data_cleanup",
                "datacleanup"
+            ],
+            [
+               "can_run_admin_commands",
+               "vacms",
+               "admincommandrun"
             ]
          ]
       }
