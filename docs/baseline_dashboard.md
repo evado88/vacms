@@ -3,7 +3,7 @@ validate the following plan for adding the baseline census dashboards to the vac
 ### Baseline Census Dashboard Clone (Overview + Trends + CSA)
 
 #### Summary
-Create a new Baseline Census dashboard under the `va_analytics` namespace that duplicates the existing Operational Dashboard implementation for only these tabs: `Overview`, `Trends`, and `CSA Supervision`. Wire the sidebar Baseline Census item to this new route, and introduce baseline-specific (renamed) template/CSS/JS/component assets and endpoint names.
+Create a new Baseline Census dashboard under the `va_analytics` namespace that duplicates the existing Operations Dashboard implementation for only these tabs: `Overview`, `Trends`, and `CSA Supervision`. Wire the sidebar Baseline Census item to this new route, and introduce baseline-specific (renamed) template/CSS/JS/component assets and endpoint names.
 
 #### Key Changes
 1. **Routing and View Wiring**

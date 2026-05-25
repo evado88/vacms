@@ -21,10 +21,10 @@
         <a
           class="nav-link {% if request.resolver_match.url_name == 'index' and request.resolver_match.namespace == 'home' %}active{% endif %}"
           href="{% url 'home:index' %}"
-          data-tooltip="Operational Dashboard"
+          data-tooltip="Operations Dashboard"
         >
           <i class="fas fa-chart-area nav-icon"></i>
-          <span class="nav-label">Operational Dashboard</span>
+          <span class="nav-label">Operations Dashboard</span>
         </a>
       </li>
       {% if perms.va_analytics.view_dashboard %}

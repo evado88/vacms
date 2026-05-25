@@ -1514,6 +1514,37 @@ body.modal-open {
   color: #e67816 !important;
 }
 
+/* Top-nav hover tooltips — mirror the sidebar tooltip styling
+   (#sidebar-tooltip in sidebar.css) but anchored below the menu item. */
+.top-navigation-wrapper .top-nav-dashboard-item {
+  position: relative;
+}
+
+.top-navigation-wrapper .top-nav-dashboard-item .nav-link[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 6px;
+  background: rgba(30, 30, 30, 0.7);
+  color: #fff;
+  padding: 5px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: bold;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  z-index: 9999;
+}
+
+.top-navigation-wrapper .top-nav-dashboard-item .nav-link[data-tooltip]:hover::after,
+.top-navigation-wrapper .top-nav-dashboard-item .nav-link[data-tooltip]:focus::after {
+  opacity: 1;
+}
+
 body {
   background: #f3f4f6;
   overflow-x: hidden;

@@ -44,6 +44,7 @@
           <a
             class="nav-link {% if request.resolver_match.url_name == 'index' and request.resolver_match.namespace == 'home' %}active{% endif %}"
             href="{% url 'home:index' %}"
+            data-tooltip="Operations Dashboards"
           >
             Operations
           </a>
@@ -53,6 +54,7 @@
           <a
             class="nav-link {% if request.resolver_match.url_name == 'outcomes-dashboard' %}active{% endif %}"
             href="{% url 'va_analytics:outcomes-dashboard' %}?tab=pregnancies"
+            data-tooltip="Outcomes Dashboards"
           >
             Outcomes
           </a>
@@ -61,6 +63,7 @@
           <a
             class="nav-link {% if request.resolver_match.url_name == 'baseline-census-dashboard' %}active{% endif %}"
             href="{% url 'va_analytics:baseline-census-dashboard' %}"
+            data-tooltip="Census Dashboards"
           >
             Census
           </a>

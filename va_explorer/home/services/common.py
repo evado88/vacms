@@ -209,7 +209,7 @@ def shallow_downsample(labels, series_map, max_points):
 def coverage_band(value):
     """Map a coverage percentage to a color band name.
 
-    Shared by the CSA supervision table (Operational Dashboard) and the Baseline
+    Shared by the CSA supervision table (Operations Dashboard) and the Baseline
     Census table so both use one set of thresholds. ``None`` or unparseable values
     fall back to ``empty``.
     """
