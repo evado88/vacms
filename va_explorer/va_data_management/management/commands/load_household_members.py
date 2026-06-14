@@ -42,9 +42,11 @@ class Command(BaseCommand):
 
         df = pd.read_csv(csv_file)
 
-        # Rename and check parent_key column
+        # Standardise KEY and PARENT_KEY column names
         if "PARENT_KEY" in df.columns:
             df.rename(columns={"PARENT_KEY": "parent_key"}, inplace=True)
+        if "KEY" in df.columns:
+            df.rename(columns={"KEY": "key"}, inplace=True)
 
         if "parent_key" not in df.columns:
             raise CommandError(
@@ -57,9 +59,7 @@ class Command(BaseCommand):
         for choice in odk_choices:
             field = normalize_string(choice.field_name)
             value = normalize_value(choice.value)
-            if field not in odk_map:
-                odk_map[field] = {}
-            odk_map[field][value] = choice.label
+            odk_map.setdefault(field, {})[value] = choice.label
 
         odk_map_columns = [
             "HH_04",
@@ -80,23 +80,54 @@ class Command(BaseCommand):
             if col in df.columns:
                 df[col] = df[col].apply(lambda v, c=col: apply_odk_map(c, v))
 
-        # Backup parent_key
+        # Preserve link columns before column normalization strips them
         parent_keys = df["parent_key"].copy()
+        member_keys = (
+            df["key"].copy()
+            if "key" in df.columns
+            else pd.Series([None] * len(df), index=df.index)
+        )
 
-        # Normalize model-compatible columns
+        # Normalize remaining columns to model field names
         df = normalize_dataframe_columns(df, HouseholdMember)
 
-        # Restore parent_key
+        # Restore link columns (normalization may rename or drop them)
         df["parent_key"] = parent_keys
+        df["key"] = member_keys
 
-        # Build household map, keyed by a trimmed key so trailing whitespace or
-        # quoting differences in the CSV's parent_key do not cause silent skips.
+        # Deduplicate: skip members whose key is already in the database
+        existing_keys: set = set()
+        csv_keys = [
+            str(k).strip() for k in member_keys if not pd.isnull(k) and str(k).strip()
+        ]
+        if csv_keys:
+            existing_keys = set(
+                HouseholdMember.objects.filter(key__in=csv_keys).values_list(
+                    "key", flat=True
+                )
+            )
+
+        # Build household lookup keyed by trimmed key
         hh_map = {str(h.key).strip(): h for h in Household.objects.all()}
+
         objects = []
         skipped_rows = []
-        skip_reasons = {"blank parent_key": 0, "household key not found": 0}
+        skip_reasons = {
+            "blank parent_key": 0,
+            "household key not found": 0,
+            "member key already exists": 0,
+        }
 
         for _, row in df.iterrows():
+            # Dedup by member key when one is present
+            member_key = row.get("key")
+            if not pd.isnull(member_key) and str(member_key).strip():
+                member_key_str = str(member_key).strip()
+                if member_key_str in existing_keys:
+                    skip_reasons["member key already exists"] += 1
+                    skipped_rows.append(row)
+                    continue
+
             parent_key = row.get("parent_key")
             if pd.isnull(parent_key) or not str(parent_key).strip():
                 skip_reasons["blank parent_key"] += 1
@@ -109,7 +140,13 @@ class Command(BaseCommand):
                 skipped_rows.append(row)
                 continue
 
-            data = row.drop("parent_key").to_dict()
+            data = row.drop(["parent_key"]).to_dict()
+            # Ensure key field gets the normalised value
+            if "key" in data and not pd.isnull(data.get("key")):
+                data["key"] = str(data["key"]).strip() or None
+            else:
+                data.pop("key", None)
+
             obj = HouseholdMember(**data)
             obj.household = household
             objects.append(obj)
@@ -120,8 +157,6 @@ class Command(BaseCommand):
         imported = len(objects)
         skipped = len(skipped_rows)
 
-        # Save skipped rows before reporting so the summary can point at the
-        # log that explains every skip.
         log_file = None
         if skipped_rows:
             os.makedirs(log_dir, exist_ok=True)
@@ -146,7 +181,6 @@ class Command(BaseCommand):
                     self.style.WARNING(f"Logged skipped rows to {log_file}")
                 )
 
-        # Make a failed or mostly-failed run impossible to mistake for success.
         if imported == 0:
             self.stderr.write(
                 self.style.ERROR(

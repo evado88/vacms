@@ -2,7 +2,12 @@ from .cluster_locations import ClusterLocationCodes
 from .csa_daily_tracker import CSADailyTracker
 from .csa_supervisor_target import CSASupervisorTargetMap
 from .death import Death
-from .household_census import Household, HouseholdMember, SRSClusterLocation
+from .household_census import (
+    Household,
+    HouseholdDeath,
+    HouseholdMember,
+    SRSClusterLocation,
+)
 from .odk_reference import ODKFormChoice
 from .odk_state import ODKPullLock, ODKPullState
 from .pregnancy import Pregnancy
@@ -22,6 +27,7 @@ from .verbal_autopsy import (
 __all__ = [
     "SRSClusterLocation",
     "Household",
+    "HouseholdDeath",
     "HouseholdMember",
     "ClusterLocationCodes",
     "Pregnancy",
