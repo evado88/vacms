@@ -71,7 +71,6 @@ class Households(
         "district",
         "ward",
         "locality_name",
-        "respondent",
     )
 
     def get_queryset(self):
@@ -104,6 +103,7 @@ class HouseholdDetail(
         history = self.object.history.all().reverse()
         context["history"] = history
         context["form"] = HouseholdForm(instance=self.object)
+        context["deaths"] = self.object.deaths.all()
 
         # Fetch issues via reverse relation through members
         ct = ContentType.objects.get_for_model(Household)

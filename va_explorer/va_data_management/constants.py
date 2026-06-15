@@ -914,6 +914,11 @@ HOUSEHOLD_PII_FIELDS = [
     "first_name",
     "last_name",
     "HH_07",  # Date of Birth
+    # HouseholdDeath fields (used in detail template deaths table)
+    "deathname",  # First name of deceased
+    "sirname",  # Surname of deceased
+    "nickdeath",  # Nickname of deceased
+    "HH_48E",  # Date of birth of deceased
 ]
 
 # PII fields for Pregnancy

@@ -236,6 +236,9 @@ class PregnancyOutcomeBaby(models.Model):
         related_name="babies",
     )
 
+    key = models.CharField(
+        max_length=200, unique=True, db_index=True, null=True, blank=True
+    )
     PO_49A = models.TextField("PO_49A. Identification of baby", blank=True, null=True)
     PO_49B = models.TextField("PO_49B. Full name", blank=True, null=True)
     PO_49C = models.TextField("PO_49C. Sex of the child", blank=True, null=True)
@@ -245,11 +248,21 @@ class PregnancyOutcomeBaby(models.Model):
         blank=True,
     )
     PO_50 = models.TextField(
-        "PO_50. Do you know the procedure for death Registration and/or Certification as required by DNRPC ?",
+        "PO_50. Do you know the procedure for death Registration and/or Certification as required by DNRPC?",
         blank=True,
+    )
+    death_reg_note = models.TextField(
+        "Note on death registration", blank=True, null=True
+    )
+    PO_51A_01 = models.TextField("PO_51A_01. Record of birth", blank=True, null=True)
+    PO_51A_02 = models.TextField(
+        "PO_51A_02. Mother's NRC (Front)", blank=True, null=True
+    )
+    PO_51A_03 = models.TextField(
+        "PO_51A_03. Father's NRC (Front)", blank=True, null=True
     )
 
     history = HistoricalRecords()
 
     def __str__(self):
-        return f"Baby of {self.pregnancy_outcome.key} - {self.po_49b or 'Unnamed'}"
+        return f"Baby of {self.pregnancy_outcome.key} - {self.PO_49B or 'Unnamed'}"

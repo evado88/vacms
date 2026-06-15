@@ -23,6 +23,9 @@
     <a class="nav-link" id="members-tab" data-toggle="tab" href="#members" role="tab" aria-controls="members" aria-selected="false">Members</a>
   </li>
   <li class="nav-item">
+    <a class="nav-link" id="deaths-tab" data-toggle="tab" href="#deaths" role="tab" aria-controls="deaths" aria-selected="false">Deaths{% if deaths %} ({{ deaths|length }}){% endif %}</a>
+  </li>
+  <li class="nav-item">
     <a class="nav-link" id="issues-tab" data-toggle="tab" href="#issues" role="tab" aria-controls="issues" aria-selected="false">Issues</a>
   </li>
   {% if diffs and not user.is_fieldworker %}
@@ -116,6 +119,43 @@
         </table>
       {% else %}
         <p class="mx-3">There are no household members listed for this household.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="tab-pane fade" id="deaths" role="tabpanel" aria-labelledby="deaths-tab">
+    <div class="row mt-4">
+      {% if deaths %}
+        <table class="table table-hover table-sm">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>First Name</th>
+              <th>Surname</th>
+              <th>Nickname</th>
+              <th>Sex</th>
+              <th>Age</th>
+              <th>Date of Birth</th>
+              <th>Date of Death</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for death in deaths %}
+              <tr>
+                <td>{{ forloop.counter }}</td>
+                <td>{% pii_filter "deathname" death.deathname|default:"-" %}</td>
+                <td>{% pii_filter "sirname" death.sirname|default:"-" %}</td>
+                <td>{% pii_filter "nickdeath" death.nickdeath|default:"-" %}</td>
+                <td>{{ death.HH_48F|default:"-" }}</td>
+                <td>{{ death.age|default:"-" }}</td>
+                <td>{% pii_filter "HH_48E" death.HH_48E|default:"-" %}</td>
+                <td>{{ death.HH_48G|default:"-" }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="mx-3">No deaths recorded for this household.</p>
       {% endif %}
     </div>
   </div>
