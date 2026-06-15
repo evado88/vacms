@@ -1685,7 +1685,7 @@ def _household_member_counts_by_geoid(start_iso, end_iso, date_filter, target_ro
     counts = {}
     rows = (
         date_filter(
-            HouseholdMember.objects.exclude(household__isnull=True),
+            HouseholdMember.objects.canonical().exclude(household__isnull=True),
             "household__submissiondate",
             start_iso,
             end_iso,
@@ -1720,7 +1720,7 @@ def _unmatched_household_member_counts(start_iso, end_iso, date_filter, target_r
 
     rows = (
         date_filter(
-            HouseholdMember.objects.exclude(household__isnull=True),
+            HouseholdMember.objects.canonical().exclude(household__isnull=True),
             "household__submissiondate",
             start_iso,
             end_iso,

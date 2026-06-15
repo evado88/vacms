@@ -213,23 +213,26 @@ def _compute_homepage_metrics(user=None) -> dict[str, int]:
         date_fields=("submissiondate", "start", "today"),
     )
 
-    # Total Number of people counted: count rows in HouseholdMember (counting IDs)
-    total_people = HouseholdMember.objects.count()
+    # Total Number of people counted: count rows in HouseholdMember (counting IDs).
+    # ``.canonical()`` excludes content-duplicate rows so each person counts once.
+    total_people = HouseholdMember.objects.canonical().count()
     if user and getattr(user, "is_authenticated", False):
-        total_people = HouseholdMember.objects.filter(
-            household_id__in=households_qs.values_list("key", flat=True)
-        ).count()
+        total_people = (
+            HouseholdMember.objects.canonical()
+            .filter(household_id__in=households_qs.values_list("key", flat=True))
+            .count()
+        )
     today_people = (
-        HouseholdMember.objects.filter(
-            household__key__in=list(today_household_keys)
-        ).count()
+        HouseholdMember.objects.canonical()
+        .filter(household__key__in=list(today_household_keys))
+        .count()
         if today_household_keys
         else 0
     )
     week_people = (
-        HouseholdMember.objects.filter(
-            household__key__in=list(week_household_keys)
-        ).count()
+        HouseholdMember.objects.canonical()
+        .filter(household__key__in=list(week_household_keys))
+        .count()
         if week_household_keys
         else 0
     )

@@ -3,9 +3,9 @@
     "issue_type": "duplicate",
     "subtype": "exact_fields",
     "member_ids": [
-      1,
-      2,
-      3
+      24,
+      25,
+      26
     ],
     "keys": {
       "ea": null,
@@ -29,7 +29,7 @@
     "issue_type": "incomplete",
     "subtype": "minimum_viable_record",
     "member_ids": [
-      1
+      24
     ],
     "keys": {
       "HH_01": null,
@@ -50,7 +50,7 @@
     "issue_type": "incomplete",
     "subtype": "minimum_viable_record",
     "member_ids": [
-      2
+      25
     ],
     "keys": {
       "HH_01": null,
@@ -71,7 +71,7 @@
     "issue_type": "incomplete",
     "subtype": "minimum_viable_record",
     "member_ids": [
-      3
+      26
     ],
     "keys": {
       "HH_01": null,
@@ -92,7 +92,7 @@
     "issue_type": "consent",
     "subtype": "household_consent_missing_or_invalid",
     "member_ids": [
-      3
+      26
     ],
     "keys": {
       "consent": "0",

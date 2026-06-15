@@ -6,6 +6,21 @@ from treebeard.mp_tree import MP_Node
 from va_explorer.va_data_management.models.data_quality import DataQualityIssueMember
 
 
+class RepeatGroupQuerySet(models.QuerySet):
+    """Shared queryset for ODK repeat-group child records (members, deaths, babies).
+
+    The default ``objects`` manager still returns every row so loading and
+    duplicate detection see all records; ``.canonical()`` is the explicit
+    opt-in used at count/display sites so each duplicate set counts once.
+    """
+
+    def canonical(self):
+        return self.filter(is_duplicate=False)
+
+    def duplicates(self):
+        return self.filter(is_duplicate=True)
+
+
 class SRSClusterLocation(MP_Node):
     name = models.TextField()
     location_type = models.TextField()  # e.g., "province", "district", etc.
@@ -408,6 +423,23 @@ class HouseholdMember(models.Model):
         "HH-14. Is he/she currently pregnant?", blank=True, null=True
     )
 
+    is_duplicate = models.BooleanField(default=False, db_index=True)
+    duplicate_of = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="duplicates",
+    )
+    dq_members = GenericRelation(
+        DataQualityIssueMember,
+        content_type_field="content_type",
+        object_id_field="object_id",
+        related_query_name="household_member",
+    )
+
+    objects = RepeatGroupQuerySet.as_manager()
+
     def __str__(self):
         return f"({self.household.hhn}){self.first_name} {self.last_name}"
 
@@ -434,6 +466,23 @@ class HouseholdDeath(models.Model):
     age = models.TextField("Age of deceased (calculated)", blank=True, null=True)
     HH_48F = models.TextField("HH-48F. Sex of deceased", blank=True, null=True)
     HH_48G = models.TextField("HH-48G. Date of death", blank=True, null=True)
+
+    is_duplicate = models.BooleanField(default=False, db_index=True)
+    duplicate_of = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="duplicates",
+    )
+    dq_members = GenericRelation(
+        DataQualityIssueMember,
+        content_type_field="content_type",
+        object_id_field="object_id",
+        related_query_name="household_death",
+    )
+
+    objects = RepeatGroupQuerySet.as_manager()
 
     def __str__(self):
         return f"({self.household.hhn}) {self.deathname} {self.sirname}"

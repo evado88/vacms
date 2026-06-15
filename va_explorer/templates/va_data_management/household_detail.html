@@ -92,7 +92,7 @@
   </div>
   <div class="tab-pane fade" id="members" role="tabpanel" aria-labelledby="members-tab">
     <div class="row mt-4">
-      {% if object.members.all %}
+      {% if members %}
         <table class="table table-hover table-sm">
           <thead>
             <tr>
@@ -105,7 +105,7 @@
             </tr>
           </thead>
           <tbody>
-            {% for member in object.members.all %}
+            {% for member in members %}
               <tr>
                 <td>{{ member.id }}</td>
                 <td>{% pii_filter "first_name" member.first_name|default:"-" %}</td>

@@ -974,8 +974,9 @@ class TestBaselineCensusChartData:
         total = sum(row["population_enumerated"] for row in payload["results"])
 
         # No enumerated member is silently dropped, mirroring the Enumeration
-        # Coverage summary.
-        assert total == HouseholdMember.objects.count()
+        # Coverage summary. Content-duplicate rows are excluded so each person
+        # counts once.
+        assert total == HouseholdMember.objects.canonical().count()
 
     def test_unmatched_ea_respects_drilldown_filter(self):
         _build_unmatched_ea_fixture()

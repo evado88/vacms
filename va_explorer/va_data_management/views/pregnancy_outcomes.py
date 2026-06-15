@@ -94,6 +94,8 @@ class PregnancyOutcomeDetail(
         context["id"] = self.object.id
         context["form"] = PregnancyOutcomeForm(None, instance=self.object)
         context["history"] = self.object.history.all().reverse()
+        # Show one row per duplicate set; flagged duplicates are excluded.
+        context["babies"] = self.object.babies.filter(is_duplicate=False)
         return context
 
 

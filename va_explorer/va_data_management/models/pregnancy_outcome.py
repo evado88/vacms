@@ -3,6 +3,7 @@ from django.db import models
 from simple_history.models import HistoricalRecords
 
 from va_explorer.va_data_management.models.data_quality import DataQualityIssueMember
+from va_explorer.va_data_management.models.household_census import RepeatGroupQuerySet
 
 
 class PregnancyOutcome(models.Model):
@@ -262,6 +263,22 @@ class PregnancyOutcomeBaby(models.Model):
         "PO_51A_03. Father's NRC (Front)", blank=True, null=True
     )
 
+    is_duplicate = models.BooleanField(default=False, db_index=True)
+    duplicate_of = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="duplicates",
+    )
+    dq_members = GenericRelation(
+        DataQualityIssueMember,
+        content_type_field="content_type",
+        object_id_field="object_id",
+        related_query_name="pregnancy_outcome_baby",
+    )
+
+    objects = RepeatGroupQuerySet.as_manager()
     history = HistoricalRecords()
 
     def __str__(self):
