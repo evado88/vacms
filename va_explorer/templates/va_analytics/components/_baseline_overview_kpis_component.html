@@ -5,8 +5,8 @@
         <article class="nov-kpi-card">
           <h6>Number of Clusters Visited</h6>
           <div class="nov-kpi-metrics">
-            <div><span>Today</span><strong id="nov-kpi-today-eas">0</strong></div>
-            <div><span>This week</span><strong id="nov-kpi-week-eas">0</strong></div>
+            <div><span>Last 24 hours</span><strong id="nov-kpi-today-eas">0</strong></div>
+            <div><span>Last 7 days</span><strong id="nov-kpi-week-eas">0</strong></div>
             <div><span>Last 30 days</span><strong id="nov-kpi-30d-eas">0</strong></div>
             <div><span>Cummulative Total</span><strong id="nov-kpi-total-eas">0</strong></div>
           </div>
@@ -14,8 +14,8 @@
         <article class="nov-kpi-card">
           <h6>Number of households</h6>
           <div class="nov-kpi-metrics">
-            <div><span>Today</span><strong id="nov-kpi-today-households">0</strong></div>
-            <div><span>This week</span><strong id="nov-kpi-week-households">0</strong></div>
+            <div><span>Last 24 hours</span><strong id="nov-kpi-today-households">0</strong></div>
+            <div><span>Last 7 days</span><strong id="nov-kpi-week-households">0</strong></div>
             <div><span>Last 30 days</span><strong id="nov-kpi-30d-households">0</strong></div>
             <div><span>Cummulative Total</span><strong id="nov-kpi-total-households">0</strong></div>
           </div>
@@ -23,8 +23,8 @@
         <article class="nov-kpi-card">
           <h6>Number of people counted</h6>
           <div class="nov-kpi-metrics">
-            <div><span>Today</span><strong id="nov-kpi-today-people">0</strong></div>
-            <div><span>This week</span><strong id="nov-kpi-week-people">0</strong></div>
+            <div><span>Last 24 hours</span><strong id="nov-kpi-today-people">0</strong></div>
+            <div><span>Last 7 days</span><strong id="nov-kpi-week-people">0</strong></div>
             <div><span>Last 30 days</span><strong id="nov-kpi-30d-people">0</strong></div>
             <div><span>Cummulative Total</span><strong id="nov-kpi-total-people">0</strong></div>
           </div>
@@ -48,29 +48,62 @@
     <div class="nov-kpi-cards nov-kpi-cards-events">
       <article class="nov-kpi-card">
         <h6>Pregnancies</h6>
-        <div class="nov-kpi-metrics">
-          <div><span>Today</span><strong id="nov-kpi-today-pregnancies">0</strong></div>
-          <div><span>This week</span><strong id="nov-kpi-week-pregnancies">0</strong></div>
-          <div><span>Last 30 days</span><strong id="nov-kpi-30d-pregnancies">0</strong></div>
-          <div><span>Cummulative Total</span><strong id="nov-kpi-total-pregnancies">0</strong></div>
+        <div class="nov-kpi-split">
+          <span class="nov-kpi-split-header" aria-hidden="true"></span>
+          <span class="nov-kpi-split-header">Detected</span>
+          <span class="nov-kpi-split-header">Captured</span>
+          <span class="nov-kpi-split-label">Last 24 hours</span>
+          <strong id="nov-kpi-24h-pregnancies-detected">0</strong>
+          <strong id="nov-kpi-today-pregnancies">0</strong>
+          <span class="nov-kpi-split-label">Last 7 days</span>
+          <strong id="nov-kpi-week-pregnancies-detected">0</strong>
+          <strong id="nov-kpi-week-pregnancies">0</strong>
+          <span class="nov-kpi-split-label">Last 30 days</span>
+          <strong id="nov-kpi-30d-pregnancies-detected">0</strong>
+          <strong id="nov-kpi-30d-pregnancies">0</strong>
+          <span class="nov-kpi-split-label">Cumulative Total</span>
+          <strong id="nov-kpi-total-pregnancies-detected">0</strong>
+          <strong id="nov-kpi-total-pregnancies">0</strong>
         </div>
       </article>
       <article class="nov-kpi-card">
         <h6>Pregnancy Outcomes</h6>
-        <div class="nov-kpi-metrics">
-          <div><span>Today</span><strong id="nov-kpi-today-preg-outcomes">0</strong></div>
-          <div><span>This week</span><strong id="nov-kpi-week-preg-outcomes">0</strong></div>
-          <div><span>Last 30 days</span><strong id="nov-kpi-30d-preg-outcomes">0</strong></div>
-          <div><span>Cummulative Total</span><strong id="nov-kpi-total-preg-outcomes">0</strong></div>
+        <div class="nov-kpi-split">
+          <span class="nov-kpi-split-header" aria-hidden="true"></span>
+          <span class="nov-kpi-split-header">Detected</span>
+          <span class="nov-kpi-split-header">Captured</span>
+          <span class="nov-kpi-split-label">Last 24 hours</span>
+          <strong id="nov-kpi-24h-preg-outcomes-detected">0</strong>
+          <strong id="nov-kpi-today-preg-outcomes">0</strong>
+          <span class="nov-kpi-split-label">Last 7 days</span>
+          <strong id="nov-kpi-week-preg-outcomes-detected">0</strong>
+          <strong id="nov-kpi-week-preg-outcomes">0</strong>
+          <span class="nov-kpi-split-label">Last 30 days</span>
+          <strong id="nov-kpi-30d-preg-outcomes-detected">0</strong>
+          <strong id="nov-kpi-30d-preg-outcomes">0</strong>
+          <span class="nov-kpi-split-label">Cumulative Total</span>
+          <strong id="nov-kpi-total-preg-outcomes-detected">0</strong>
+          <strong id="nov-kpi-total-preg-outcomes">0</strong>
         </div>
       </article>
       <article class="nov-kpi-card">
         <h6>Deaths</h6>
-        <div class="nov-kpi-metrics">
-          <div><span>Today</span><strong id="nov-kpi-today-deaths">0</strong></div>
-          <div><span>This week</span><strong id="nov-kpi-week-deaths">0</strong></div>
-          <div><span>Last 30 days</span><strong id="nov-kpi-30d-deaths">0</strong></div>
-          <div><span>Cummulative Total</span><strong id="nov-kpi-total-deaths">0</strong></div>
+        <div class="nov-kpi-split">
+          <span class="nov-kpi-split-header" aria-hidden="true"></span>
+          <span class="nov-kpi-split-header">Detected</span>
+          <span class="nov-kpi-split-header">Captured</span>
+          <span class="nov-kpi-split-label">Last 24 hours</span>
+          <strong id="nov-kpi-24h-deaths-detected">0</strong>
+          <strong id="nov-kpi-today-deaths">0</strong>
+          <span class="nov-kpi-split-label">Last 7 days</span>
+          <strong id="nov-kpi-week-deaths-detected">0</strong>
+          <strong id="nov-kpi-week-deaths">0</strong>
+          <span class="nov-kpi-split-label">Last 30 days</span>
+          <strong id="nov-kpi-30d-deaths-detected">0</strong>
+          <strong id="nov-kpi-30d-deaths">0</strong>
+          <span class="nov-kpi-split-label">Cumulative Total</span>
+          <strong id="nov-kpi-total-deaths-detected">0</strong>
+          <strong id="nov-kpi-total-deaths">0</strong>
         </div>
       </article>
     </div>

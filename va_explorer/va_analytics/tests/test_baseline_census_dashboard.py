@@ -140,9 +140,12 @@ class TestBaselineCensusComponentEndpoints:
         assert "baseline-census-table" in body
         assert "baseline-census-pagination" in body
         assert "HH Enumerated" in body
-        assert "Total Deaths" in body
-        assert "Total Pregnancies" in body
-        assert "Total Preg. Outcomes" in body
+        assert "Detected Deaths" in body
+        assert "Captured Deaths" in body
+        assert "Detected Pregnancies" in body
+        assert "Captured Pregnancies" in body
+        assert "Detected Preg. Outcomes" in body
+        assert "Captured Preg. Outcomes" in body
         assert "Download CSV" in body
         assert reverse("va_analytics:baseline-census-province-table-csv-export") in body
 
@@ -234,6 +237,10 @@ def _build_baseline_census_fixture():
         submissiondate=recent,
         consent="Yes",
         result_list="Completed",
+        # Self-reported (detected) counts parsed from the census text fields.
+        HH_46A="2",
+        HH_47A="1",
+        death_size="1",
     )
     Household.objects.create(
         key="hh-a-2",
@@ -255,6 +262,9 @@ def _build_baseline_census_fixture():
         submissiondate=old,
         consent="Yes",
         result_list="Refused",  # outside the rolling window
+        HH_46A="4",
+        HH_47A="2",
+        death_size="3",
     )
 
     for idx in range(3):  # 3 members in the rolling window
@@ -454,7 +464,8 @@ class TestBaselineCensusTableData:
 
         assert row_b["hh_enumerated"] == 0
         assert row_b["pop_enumerated"] == 0
-        assert row_b["total_deaths"] == 0
+        assert row_b["captured_deaths"] == 0
+        assert row_b["detected_deaths"] == 0
         assert row_b["pop_estimate"] == 50
 
     def test_default_aggregation_includes_every_record(self):
@@ -470,9 +481,14 @@ class TestBaselineCensusTableData:
         assert row_a["pop_enumerated"] == 4
         assert row_a["refusals"] == 2  # consent="No" + the old result="Refused"
         assert row_a["non_contact"] == 1
-        assert row_a["total_pregnancies"] == 2
-        assert row_a["total_deaths"] == 1
-        assert row_a["total_preg_outcomes"] == 1
+        assert row_a["captured_pregnancies"] == 2
+        assert row_a["captured_deaths"] == 1
+        assert row_a["captured_preg_outcomes"] == 1
+        # Detected = household self-reported sums across both EA-A households
+        # (recent hh1 + old hh_old), unbounded by the default no-window query.
+        assert row_a["detected_pregnancies"] == 6  # HH_46A: 2 + 4
+        assert row_a["detected_preg_outcomes"] == 3  # HH_47A: 1 + 2
+        assert row_a["detected_deaths"] == 4  # death_size: 1 + 3
 
     def test_population_and_households_fallback_to_household_ea_when_cluster_missing(
         self,
@@ -528,7 +544,10 @@ class TestBaselineCensusTableData:
         row_a = _table_rows(client, preset="24", bc_current="1")[GEOID_A]
 
         assert row_a["hh_enumerated"] == 0
-        assert row_a["total_pregnancies"] == 0
+        assert row_a["captured_pregnancies"] == 0
+        # Both EA-A households are older than 24h, so detected drops to zero too.
+        assert row_a["detected_pregnancies"] == 0
+        assert row_a["detected_deaths"] == 0
 
     def test_coverage_calculation_and_bands(self):
         _build_baseline_census_fixture()
@@ -580,9 +599,9 @@ class TestBaselineCensusTableData:
 
         row = _table_rows(_client())[GEOID_CODED]
 
-        assert row["total_deaths"] == 1
-        assert row["total_pregnancies"] == 1
-        assert row["total_preg_outcomes"] == 1
+        assert row["captured_deaths"] == 1
+        assert row["captured_pregnancies"] == 1
+        assert row["captured_preg_outcomes"] == 1
 
     def test_csv_export_returns_full_dataset_and_ignores_normal_filters(self):
         _build_baseline_census_fixture()
@@ -630,6 +649,35 @@ class TestBaselineCensusTableData:
         }
         assert {GEOID_A, GEOID_B}.issubset(all_eas)
         assert current_eas == {GEOID_A}
+
+    def test_csv_export_includes_detected_and_captured_event_columns(self):
+        _build_baseline_census_fixture()
+        # CSV export requires can_download_csv_exports; the plain dashboard user
+        # lacks it, so use a superuser (mirrors the other CSV export tests).
+        client = Client()
+        client.force_login(user=AdminFactory.create())
+
+        response = client.get(
+            reverse("va_analytics:baseline-census-province-table-csv-export")
+        )
+
+        assert response.status_code == 200
+        header = response.content.decode().splitlines()[0]
+        for label in (
+            "Detected Deaths",
+            "Captured Deaths",
+            "Detected Pregnancies",
+            "Captured Pregnancies",
+            "Detected Preg. Outcomes",
+            "Captured Preg. Outcomes",
+        ):
+            assert label in header
+
+        by_ea = {row["EA"]: row for row in _csv_response_rows(response) if row["EA"]}
+        assert by_ea[GEOID_A]["Detected Pregnancies"] == "6"
+        assert by_ea[GEOID_A]["Captured Pregnancies"] == "2"
+        assert by_ea[GEOID_A]["Detected Deaths"] == "4"
+        assert by_ea[GEOID_A]["Captured Deaths"] == "1"
 
     def test_csv_export_empty_dataset_has_headers(self):
         response = _client().get(

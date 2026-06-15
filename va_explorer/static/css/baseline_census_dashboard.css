@@ -1047,6 +1047,51 @@
   font-weight: 700;
 }
 
+/* Detected vs Captured split layout for the three event cards. Column 1 holds
+   the window labels; columns 2 and 3 hold the Detected and Captured values. */
+#national-operational-view .nov-kpi-split {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: baseline;
+  column-gap: 14px;
+  row-gap: 7px;
+}
+
+#national-operational-view #novKpiCardsContainer .nov-kpi-split {
+  column-gap: clamp(8px, 1.2vw, 14px);
+  row-gap: clamp(2px, 0.7vh, 5px);
+}
+
+#national-operational-view .nov-kpi-split-header {
+  color: #64748b;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-align: right;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+#national-operational-view .nov-kpi-split-label {
+  color: #475569;
+  font-size: 0.82rem;
+  line-height: 1.2;
+}
+
+#national-operational-view #novKpiCardsContainer .nov-kpi-split-label {
+  font-size: clamp(0.7rem, 1.3vh, 0.8rem);
+}
+
+#national-operational-view .nov-kpi-split strong {
+  color: #0f172a;
+  font-size: 1.02rem;
+  font-weight: 700;
+  text-align: right;
+}
+
+#national-operational-view #novKpiCardsContainer .nov-kpi-split strong {
+  font-size: clamp(0.8rem, 1.5vh, 0.95rem);
+}
+
 @media (max-width: 991.98px) {
   #national-operational-view .national-operational-view-shell {
     height: auto;

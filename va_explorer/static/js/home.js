@@ -301,7 +301,20 @@ const clearPresetSelection = () => {
 const NOV_LOCATION_OPTIONS = {
   national: [],
   province: ["Central", "Copperbelt", "Eastern", "Southern", "Lusaka", "Western"],
-  district: ["Chirundu", "Chongwe", "Kazungula", "Lusaka", "Namwala"],
+  district: [
+    "Chirundu",
+    "Chisamba",
+    "Chongwe",
+    "Kalulushi",
+    "Kapiri Mposhi",
+    "Kazungula",
+    "Luanshya",
+    "Lusaka",
+    "Mpongwe",
+    "Mumbwa",
+    "Namwala",
+    "Ndola",
+  ],
   constituency: [
     "Chirundu Constituency",
     "Chongwe Constituency",

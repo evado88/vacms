@@ -415,6 +415,10 @@ def test_home_dashboard_kpis_include_last_30_days_counts():
             submissiondate=recorded_on,
             today=recorded_on,
             start=recorded_on,
+            # Self-reported (detected) counts parsed from the census text fields.
+            HH_46A="2",
+            HH_47A="3",
+            death_size="4",
         )
         HouseholdMember.objects.create(
             household=household,
@@ -469,6 +473,19 @@ def test_home_dashboard_kpis_include_last_30_days_counts():
         assert kpis[key]["week"] == 1
         assert kpis[key]["last_30_days"] == 2
         assert kpis[key]["total"] == 3
+
+    # Detected = sum of household self-reported text fields, windowed the same
+    # way (today=1 hh, week=1 hh, last_30_days=2 hh, total=3 hh).
+    detected_per_field = {
+        "pregnancies_detected": 2,  # HH_46A
+        "preg_outcomes_detected": 3,  # HH_47A
+        "deaths_detected": 4,  # death_size
+    }
+    for key, per_household in detected_per_field.items():
+        assert kpis[key]["today"] == per_household
+        assert kpis[key]["week"] == per_household
+        assert kpis[key]["last_30_days"] == per_household * 2
+        assert kpis[key]["total"] == per_household * 3
 
 
 def test_home_dashboard_overview_chart_is_scoped_to_user_province():

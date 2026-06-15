@@ -1675,6 +1675,67 @@ def _household_counts_by_geoid(start_iso, end_iso, date_filter, target_rows):
     return counts
 
 
+def _safe_household_count(value):
+    """Parse a household self-reported count from a free-text census field.
+
+    HH_46A / HH_47A / death_size are ``TextField``s, so values are parsed in
+    Python rather than DB-cast. Tolerates commas, decimals, and stray text.
+    """
+    if value in (None, ""):
+        return 0
+    text = str(value).strip().replace(",", "")
+    if not text:
+        return 0
+    try:
+        return int(float(text))
+    except (TypeError, ValueError):
+        digits = "".join(ch for ch in text if (ch.isdigit() or ch == "-"))
+        try:
+            return int(digits)
+        except (TypeError, ValueError):
+            return 0
+
+
+def _household_detected_counts_by_geoid(start_iso, end_iso, date_filter, target_rows):
+    """Per-geoid sums of household self-reported (detected) event counts.
+
+    Mirrors :func:`_household_counts_by_geoid` but sums the parsed text fields
+    HH_46A (pregnancies), HH_47A (pregnancy outcomes) and death_size (deaths)
+    rather than counting rows.
+    """
+    target_by_geoid = _baseline_target_by_geoid(target_rows)
+    if not target_by_geoid:
+        return {}
+
+    from va_explorer.va_data_management.models import Household
+
+    counts = {}
+    rows = date_filter(
+        Household.objects.all(), "submissiondate", start_iso, end_iso
+    ).values("cluster__name", "ea", "HH_46A", "HH_47A", "death_size")
+    for row in rows.iterator():
+        geoid = _resolve_household_geoid(
+            row,
+            cluster_key="cluster__name",
+            ea_key="ea",
+            target_by_geoid=target_by_geoid,
+        )
+        if not geoid:
+            continue
+        acc = counts.setdefault(
+            geoid,
+            {
+                "detected_deaths": 0,
+                "detected_pregnancies": 0,
+                "detected_preg_outcomes": 0,
+            },
+        )
+        acc["detected_pregnancies"] += _safe_household_count(row["HH_46A"])
+        acc["detected_preg_outcomes"] += _safe_household_count(row["HH_47A"])
+        acc["detected_deaths"] += _safe_household_count(row["death_size"])
+    return counts
+
+
 def _household_member_counts_by_geoid(start_iso, end_iso, date_filter, target_rows):
     target_by_geoid = _baseline_target_by_geoid(target_rows)
     if not target_by_geoid:
@@ -1812,9 +1873,12 @@ class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
         "pop_coverage",
         "refusals",
         "non_contact",
-        "total_deaths",
-        "total_pregnancies",
-        "total_preg_outcomes",
+        "detected_deaths",
+        "captured_deaths",
+        "detected_pregnancies",
+        "captured_pregnancies",
+        "detected_preg_outcomes",
+        "captured_preg_outcomes",
     }
     _LOCATION_FIELD_MAP = {
         "province": "province_name",
@@ -1832,9 +1896,12 @@ class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
         "pop_enumerated",
         "refusals",
         "non_contact",
-        "total_deaths",
-        "total_pregnancies",
-        "total_preg_outcomes",
+        "detected_deaths",
+        "captured_deaths",
+        "detected_pregnancies",
+        "captured_pregnancies",
+        "detected_preg_outcomes",
+        "captured_preg_outcomes",
     )
 
     def _build_census_rows(
@@ -1901,6 +1968,12 @@ class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
             self._date_filter,
             all_target_rows_for_geo,
         )
+        detected_by_geoid = _household_detected_counts_by_geoid(
+            start_iso,
+            end_iso,
+            self._date_filter,
+            all_target_rows_for_geo,
+        )
 
         # --- Base rows: every EA in the target table (all 10 provinces) ---
         targets = SRSEAPopulationTarget.objects.all()
@@ -1933,6 +2006,7 @@ class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
         for target in targets:
             geoid = target["geoid"]
             hh = hh_by_geoid.get(geoid, {})
+            detected = detected_by_geoid.get(geoid, {})
             hh_enumerated = hh.get("hh_enumerated", 0)
             pop_enumerated = pop_by_geoid.get(geoid, 0)
             hh_estimate = target["household_target"]
@@ -1955,9 +2029,12 @@ class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
                     "pop_coverage_band": coverage_band(pop_coverage),
                     "refusals": hh.get("refusals", 0),
                     "non_contact": hh.get("non_contact", 0),
-                    "total_deaths": death_by_geoid.get(geoid, 0),
-                    "total_pregnancies": preg_by_geoid.get(geoid, 0),
-                    "total_preg_outcomes": po_by_geoid.get(geoid, 0),
+                    "detected_deaths": detected.get("detected_deaths", 0),
+                    "captured_deaths": death_by_geoid.get(geoid, 0),
+                    "detected_pregnancies": detected.get("detected_pregnancies", 0),
+                    "captured_pregnancies": preg_by_geoid.get(geoid, 0),
+                    "detected_preg_outcomes": detected.get("detected_preg_outcomes", 0),
+                    "captured_preg_outcomes": po_by_geoid.get(geoid, 0),
                 }
             )
         return rows
@@ -2212,9 +2289,12 @@ class BaselineCensusTableCsvExport(
         ("pop_coverage", "Pop. Coverage %"),
         ("refusals", "Refusals"),
         ("non_contact", "Non-Contact"),
-        ("total_deaths", "Total Deaths"),
-        ("total_pregnancies", "Total Pregnancies"),
-        ("total_preg_outcomes", "Total Preg. Outcomes"),
+        ("detected_deaths", "Detected Deaths"),
+        ("captured_deaths", "Captured Deaths"),
+        ("detected_pregnancies", "Detected Pregnancies"),
+        ("captured_pregnancies", "Captured Pregnancies"),
+        ("detected_preg_outcomes", "Detected Preg. Outcomes"),
+        ("captured_preg_outcomes", "Captured Preg. Outcomes"),
     )
 
     def get(self, request, *args, **kwargs):
@@ -2246,25 +2326,16 @@ class BaselineCensusTableCsvExport(
                 [self._csv_value(row.get(key)) for key, _ in self._CSV_COLUMNS]
             )
         if total:
-            writer.writerow(
-                [
-                    "Grand Total / Average",
-                    "",
-                    "",
-                    "",
-                    self._csv_value(total.get("hh_estimate")),
-                    self._csv_value(total.get("hh_enumerated")),
-                    self._csv_value(total.get("hh_coverage")),
-                    self._csv_value(total.get("pop_estimate")),
-                    self._csv_value(total.get("pop_enumerated")),
-                    self._csv_value(total.get("pop_coverage")),
-                    self._csv_value(total.get("refusals")),
-                    self._csv_value(total.get("non_contact")),
-                    self._csv_value(total.get("total_deaths")),
-                    self._csv_value(total.get("total_pregnancies")),
-                    self._csv_value(total.get("total_preg_outcomes")),
-                ]
-            )
+            # First column carries the label; ward/ea are blank; the rest are
+            # the summarized values keyed by column, so the row stays aligned
+            # with _CSV_COLUMNS automatically.
+            grand_total_row = ["Grand Total / Average"]
+            for key, _ in self._CSV_COLUMNS[1:]:
+                if key in {"district", "ward", "ea"}:
+                    grand_total_row.append("")
+                else:
+                    grand_total_row.append(self._csv_value(total.get(key)))
+            writer.writerow(grand_total_row)
         return response
 
     @staticmethod
