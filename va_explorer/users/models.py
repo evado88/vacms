@@ -155,7 +155,20 @@ class User(AbstractUser):
     def can_view_pii(self):
         # Gates personally identifiable information including names, contact details,
         # and precise GPS coordinates surfaced on dashboard maps.
+        #
+        # PII access granted by the user's role (group) is a guarantee and cannot
+        # be revoked by a per-user denial. Fall back to the standard permission
+        # check (direct user grant, superuser) for users whose role doesn't grant
+        # it.
+        if self._role_grants_pii():
+            return True
         return self.has_perm("va_analytics.view_pii")
+
+    def _role_grants_pii(self):
+        return self.groups.filter(
+            permissions__content_type__app_label="va_analytics",
+            permissions__codename="view_pii",
+        ).exists()
 
     @can_view_pii.setter
     def can_view_pii(self, value):
