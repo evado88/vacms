@@ -138,8 +138,9 @@
   </div>
   </div>
 
-  {% if can_update_va_status %}
+  {% if can_update_va_status or can_reassign %}
   <div class="col-lg-5 col-md-5">
+    {% if can_update_va_status %}
     <h3 class="mb-3">Update VA Interview Status</h3>
     <form method="post" class="border rounded p-3 bg-light">
       {% csrf_token %}
@@ -183,6 +184,28 @@
 
       <button type="submit" class="btn btn-primary w-100">Update Status</button>
     </form>
+    {% endif %}
+
+    {% if can_reassign %}
+    <h3 class="mb-3 {% if can_update_va_status %}mt-4{% endif %}">Reassign VA Interview</h3>
+    <form method="post" class="border rounded p-3 bg-light">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="reassign">
+      {% if reassign_form.non_field_errors %}
+      <div class="alert alert-danger">{{ reassign_form.non_field_errors }}</div>
+      {% endif %}
+      <div class="mb-3">
+        <label for="{{ reassign_form.va_interview_staff.id_for_label }}" class="form-label">
+          {{ reassign_form.va_interview_staff.label }}
+        </label>
+        {{ reassign_form.va_interview_staff }}
+        {% if reassign_form.va_interview_staff.errors %}
+          <div class="text-danger small">{{ reassign_form.va_interview_staff.errors|join:", " }}</div>
+        {% endif %}
+      </div>
+      <button type="submit" class="btn btn-warning w-100">Reassign</button>
+    </form>
+    {% endif %}
   </div>
   {% endif %}
 </div>

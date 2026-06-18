@@ -3284,27 +3284,84 @@ class RegionalOperationsComponentContextMixin:
         }
 
     def _get_csa_export_rows(self):
-        """Full CSA table dataset for CSV export.
+        """CSA dataset for CSV export, respecting active filters from the request."""
+        params = self._resolve_regional_params(default_preset="7")
+        selected_geo = params["selected_geo"]
+        time_window = params["time_window"]
+        province_scope = params["province_scope"]
 
-        The export intentionally ignores interactive geography, date, search,
-        sort, and pagination filters while preserving user province access
-        restrictions and the table's CSA aggregation/coverage logic.
-        """
         rows = self._build_csa_rows(
-            "national",
-            "",
-            "",
-            self._allowed_province_names(),
-            "all",
+            selected_geo,
+            time_window["start_date_str"],
+            time_window["end_date_str"],
+            province_scope,
+            time_window["selected_preset"],
         )
-        rows = self._sort_rows(rows, "visits", "desc")
-        return sorted(
-            rows,
-            key=lambda row: (
-                str(row.get("status") or "").strip().lower()
+        # Drop dead roster rows (no supervisor, inactive, zero visits)
+        rows = [
+            row
+            for row in rows
+            if not (
+                str(row.get("supervisor") or "").strip() in ("", "—")
+                and str(row.get("status") or "").strip().lower()
                 == CSASupervisorTargetMap.STATUS_INACTIVE
-            ),
+                and self._to_int(row.get("visits")) == 0
+            )
+        ]
+        if selected_geo and selected_geo != "national":
+            rows = [
+                row
+                for row in rows
+                if self._matches_geo_by_province(row.get("province"), selected_geo)
+            ]
+        csa_search = self.request.GET.get("csa_search", "").strip()
+        csa_supervisor_search = self.request.GET.get(
+            "csa_supervisor_search", ""
+        ).strip()
+        csa_district_search = self.request.GET.get("csa_district_search", "").strip()
+        csa_ward_search = self.request.GET.get("csa_ward_search", "").strip()
+        if csa_search:
+            rows = [
+                row
+                for row in rows
+                if self._matches_name_search(row.get("name", ""), csa_search)
+            ]
+        if csa_supervisor_search:
+            q = csa_supervisor_search.lower()
+            rows = [
+                row for row in rows if q in str(row.get("supervisor") or "").lower()
+            ]
+        if csa_district_search:
+            q = csa_district_search.lower()
+            rows = [row for row in rows if q in str(row.get("district") or "").lower()]
+        if csa_ward_search:
+            q = csa_ward_search.lower()
+            rows = [row for row in rows if q in str(row.get("ward") or "").lower()]
+
+        csa_sort = self._pick(
+            self.request.GET.get("csa_sort", "visits"),
+            {key for key, _ in self.csa_column_map},
+            "visits",
         )
+        csa_dir = self._pick(
+            self.request.GET.get("csa_dir", "desc"), {"asc", "desc"}, "desc"
+        )
+        rows = self._sort_rows(rows, csa_sort, csa_dir)
+        csa_sort_param = (self.request.GET.get("csa_sort") or "").strip().lower()
+        csa_dir_param = (self.request.GET.get("csa_dir") or "").strip().lower()
+        using_default_sort = csa_sort_param in {"", "visits"} and csa_dir_param in {
+            "",
+            "desc",
+        }
+        if using_default_sort:
+            rows = sorted(
+                rows,
+                key=lambda row: (
+                    str(row.get("status") or "").strip().lower()
+                    == CSASupervisorTargetMap.STATUS_INACTIVE
+                ),
+            )
+        return rows
 
     def _get_csa_context(self, params):
         """Build context for the CSA supervision table only."""
