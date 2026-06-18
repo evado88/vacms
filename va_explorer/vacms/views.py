@@ -331,7 +331,7 @@ def EventCreateDeathView(request, death):
             deathDetail.eventid = newEvent.id
             deathDetail.save()
 
-            return redirect(reverse("cms-event-list"))
+            return redirect(reverse("va_data_management:deaths"))
 
             """
               return HttpResponse(
