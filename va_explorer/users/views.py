@@ -448,11 +448,18 @@ class FeedbackMailboxListView(CustomAuthMixin, SystemAdminRequiredMixin, ListVie
     context_object_name = "feedback_list"
     paginate_by = 25
 
+    _VALID_TABS = {
+        Feedback.Status.NEW,
+        Feedback.Status.IN_PROGRESS,
+        Feedback.Status.RESOLVED,
+    }
+
+    def _active_tab(self):
+        tab = self.request.GET.get("tab", Feedback.Status.NEW)
+        return tab if tab in self._VALID_TABS else Feedback.Status.NEW
+
     def get_queryset(self):
-        qs = super().get_queryset()
-        status = self.request.GET.get("status")
-        if status:
-            qs = qs.filter(status=status)
+        qs = super().get_queryset().filter(status=self._active_tab())
         severity = self.request.GET.get("severity")
         if severity:
             qs = qs.filter(severity=severity)
@@ -460,10 +467,23 @@ class FeedbackMailboxListView(CustomAuthMixin, SystemAdminRequiredMixin, ListVie
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context["selected_status"] = self.request.GET.get("status", "")
-        context["selected_severity"] = self.request.GET.get("severity", "")
-        context["status_choices"] = Feedback.Status.choices
+        active_tab = self._active_tab()
+        severity = self.request.GET.get("severity", "")
+        base_qs = Feedback.objects.all()
+        if severity:
+            base_qs = base_qs.filter(severity=severity)
+        context["active_tab"] = active_tab
+        context["selected_severity"] = severity
         context["severity_choices"] = Feedback.Severity.choices
+        context["tab_counts"] = {
+            Feedback.Status.NEW: base_qs.filter(status=Feedback.Status.NEW).count(),
+            Feedback.Status.IN_PROGRESS: base_qs.filter(
+                status=Feedback.Status.IN_PROGRESS
+            ).count(),
+            Feedback.Status.RESOLVED: base_qs.filter(
+                status=Feedback.Status.RESOLVED
+            ).count(),
+        }
         return context
 
 
