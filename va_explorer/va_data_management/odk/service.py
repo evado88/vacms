@@ -54,6 +54,12 @@ FORM_PRE_NORMALIZE_RENAMES = {
     }
 }
 
+# Maps form_name → OData table_name for ODK repeat-group child forms.
+# ODK Central serves a repeat group from the same form_id but a different table.
+FORM_REPEAT_TABLE_MAP = {
+    "social_mobilization_rumor_log": "Submissions.rumors_log_repeat",
+}
+
 # Maps form_name → (ODK split-column prefix, single target model field).
 # The four ODK component columns (e.g. PE-25-Latitude/Longitude/Altitude/Accuracy)
 # are composed into the existing single GPS TextField before column normalisation.
@@ -247,6 +253,214 @@ def import_dataframe_records(form_name: str, df: pd.DataFrame) -> Dict[str, int]
     }
 
 
+# Rumour descriptions that carry no real information (typos, placeholders, negations).
+# Public so management commands can import it and avoid duplication.
+# Comparison is case-insensitive and whitespace-stripped.
+RUMOR_JUNK_DESCRIPTIONS: frozenset = frozenset(
+    d.lower()
+    for d in [
+        "0",
+        "12",
+        "3",
+        "4",
+        "E",
+        "N",
+        "O",
+        "N0",
+        "Ni",
+        "No",
+        "Ye",
+        "999",
+        "Csa",
+        "Ele",
+        "Mil",
+        "Ni5",
+        "Nii",
+        "Nil",
+        "Nmx",
+        "Non",
+        "Srs",
+        "Ues",
+        "Yes",
+        "Good",
+        "Nill",
+        "No e",
+        "None",
+        "Npne",
+        ".none",
+        "Birth",
+        "Death",
+        "No ne",
+        "None.",
+        "Junkies",
+        "Nothing",
+        "Postive",
+        "Unknown",
+        "Ni rumor",
+        "No rumor",
+        "About srs",
+        "I'm a CSA",
+        "Ni rumour",
+        "No rumors",
+        "No rumour",
+        "N0 rumours",
+        "No rumours",
+        "Norl Rumor",
+        "Never heard",
+        "Nor rumours",
+        "No rumourals",
+    ]
+)
+
+# Keep private alias for backward compat within this module
+_RUMOR_JUNK_DESCRIPTIONS = RUMOR_JUNK_DESCRIPTIONS
+
+_RUMOR_UPDATE_FIELDS = [
+    "rumor_description",
+    "rumor_source",
+    "community_group_name",
+    "person_name",
+    "offline_channel_name",
+    "online_page_group_name",
+]
+
+
+def purge_junk_rumor_logs() -> int:
+    """Delete any RumorLog rows whose description is in RUMOR_JUNK_DESCRIPTIONS.
+
+    Safe to call repeatedly — idempotent once junk records have been removed.
+    Returns the number of records deleted.
+    """
+    from django.db.models.functions import Lower
+
+    from va_explorer.va_data_management.models import RumorLog
+
+    junk_ids = list(
+        RumorLog.objects.annotate(desc_lower=Lower("rumor_description"))
+        .filter(desc_lower__in=RUMOR_JUNK_DESCRIPTIONS)
+        .values_list("id", flat=True)
+    )
+    if not junk_ids:
+        return 0
+    deleted, _ = RumorLog.objects.filter(id__in=junk_ids).delete()
+    return deleted
+
+
+def import_rumor_log_records(df: pd.DataFrame) -> Dict[str, int]:
+    """Load RumorLog child records from a DataFrame.
+
+    Handles both the ODK OData API path (columns after group-prefix stripping:
+    ``__id`` for the child key, ``id`` for the parent submission key) and the
+    direct CSV / test path (``KEY`` / ``PARENT_KEY`` columns).
+
+    Records are upserted by KEY; rows with junk descriptions are skipped.
+    """
+    from va_explorer.va_data_management.models import RumorLog, SocialMobilization
+    from va_explorer.va_data_management.utils.loading import normalize_dataframe_columns
+
+    # Normalise key columns for both CSV and ODK API paths.
+    rename: Dict[str, str] = {}
+    if "KEY" in df.columns:
+        rename["KEY"] = "key"
+    if "PARENT_KEY" in df.columns:
+        rename["PARENT_KEY"] = "parent_key"
+    # ODK OData: __id = child record UUID; id (from __Submissions-id) = parent key
+    if "__id" in df.columns and "key" not in df.columns and "KEY" not in df.columns:
+        rename["__id"] = "key"
+    if (
+        "id" in df.columns
+        and "parent_key" not in df.columns
+        and "PARENT_KEY" not in df.columns
+    ):
+        rename["id"] = "parent_key"
+    if rename:
+        df = df.rename(columns=rename)
+
+    if "parent_key" not in df.columns:
+        logger.warning(
+            "import_rumor_log_records: no parent_key column; skipping all rows"
+        )
+        return {"created": 0, "updated": 0, "skipped": 0}
+
+    df["parent_key"] = df["parent_key"].astype(str).str.strip()
+    df = df[
+        df["parent_key"].notna()
+        & (df["parent_key"] != "")
+        & (df["parent_key"] != "nan")
+    ]
+    if df.empty:
+        return {"created": 0, "updated": 0, "skipped": 0}
+
+    if "key" in df.columns:
+        df["key"] = df["key"].astype(str).str.strip()
+        df = df[df["key"].notna() & (df["key"] != "") & (df["key"] != "nan")]
+        df = df.drop_duplicates(subset=["key"], keep="last")
+
+    parent_keys = df["parent_key"].copy()
+    child_keys = (
+        df["key"].copy()
+        if "key" in df.columns
+        else pd.Series([None] * len(df), index=df.index)
+    )
+
+    df = normalize_dataframe_columns(df, RumorLog)
+    df["parent_key"] = parent_keys
+    df["key"] = child_keys
+
+    # Snapshot existing keys before upsert for created/updated counting
+    csv_keys = [
+        str(k).strip()
+        for k in child_keys
+        if not pd.isnull(k) and str(k).strip() not in ("", "nan")
+    ]
+    existing_keys = (
+        set(RumorLog.objects.filter(key__in=csv_keys).values_list("key", flat=True))
+        if csv_keys
+        else set()
+    )
+
+    sm_map = {
+        sm.key: sm
+        for sm in SocialMobilization.objects.exclude(key__isnull=True).only("key")
+    }
+
+    objects = []
+    skipped = 0
+    for _, row in df.iterrows():
+        parent_key = (row.get("parent_key") or "").strip()
+        social_mobilization = sm_map.get(parent_key)
+        if not social_mobilization:
+            skipped += 1
+            continue
+
+        description = str(row.get("rumor_description") or "").strip()
+        if description.lower() in _RUMOR_JUNK_DESCRIPTIONS:
+            skipped += 1
+            continue
+
+        data = row.drop(["parent_key"]).to_dict()
+        if "key" in data and not pd.isnull(data.get("key")):
+            data["key"] = str(data["key"]).strip() or None
+        else:
+            data.pop("key", None)
+        obj = RumorLog(**{k: _clean_import_value(v) for k, v in data.items()})
+        obj.social_mobilization = social_mobilization
+        objects.append(obj)
+
+    if objects:
+        RumorLog.objects.bulk_create(
+            objects,
+            batch_size=2000,
+            update_conflicts=True,
+            unique_fields=["key"],
+            update_fields=_RUMOR_UPDATE_FIELDS,
+        )
+
+    created = sum(1 for obj in objects if (obj.key or "") not in existing_keys)
+    updated = len(objects) - created
+    return {"created": created, "updated": updated, "skipped": skipped}
+
+
 class ODKPullService:
     """Encapsulate pyODK usage, locking, and incremental state."""
 
@@ -374,6 +588,7 @@ class ODKPullService:
                     since=since_dt,
                     fetch_expand=fetch_expand,
                     include_attachments=not no_attachments and self.allow_attachments,
+                    table_name=FORM_REPEAT_TABLE_MAP.get(form_name),
                 )
                 counts: Dict[str, Any] = {"fetched": len(df)}
                 self._logger.info(
@@ -435,6 +650,7 @@ class ODKPullService:
         since: Optional[datetime] = None,
         fetch_expand: Optional[str] = None,
         include_attachments: bool = False,
+        table_name: Optional[str] = None,
     ) -> Tuple[pd.DataFrame, Dict[str, Optional[datetime]]]:
         """Return submissions DataFrame and extracted watermark timestamps."""
         with self.get_client(project_id).open() as client:
@@ -449,6 +665,8 @@ class ODKPullService:
             }
             if fetch_expand:
                 get_table_kwargs["expand"] = fetch_expand
+            if table_name:
+                get_table_kwargs["table_name"] = table_name
             data = client.submissions.get_table(**get_table_kwargs)
             records = data.get("value", [])
             if not records:
@@ -494,6 +712,8 @@ class ODKPullService:
         self, df: pd.DataFrame, form_name: Optional[str]
     ) -> Dict[str, Any]:
         """Route data to appropriate loader."""
+        if form_name == "social_mobilization_rumor_log":
+            return import_rumor_log_records(df)
         if form_name and form_name in FORM_MODEL_MAP:
             return import_dataframe_records(form_name, df)
         with transaction.atomic():

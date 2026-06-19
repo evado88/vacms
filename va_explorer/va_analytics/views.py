@@ -3244,30 +3244,56 @@ class SocialMobilizationComponentView(
         return BaselineCensusProvinceTableComponent._iso_bounds(start_dt, end_dt)
 
     def _rumour_log(self, request, location_level, location_value, start_iso, end_iso):
-        qs = _socmob_base_queryset(
-            request, location_level, location_value, start_iso, end_iso
+        from va_explorer.va_data_management.models import RumorLog
+
+        qs = RumorLog.objects.filter(is_duplicate=False)
+        qs = (
+            qs.exclude(rumor_description__isnull=True)
+            .exclude(rumor_description="")
+            .exclude(rumor_description__iexact="nil")
         )
-        qs = qs.exclude(rumor_description__isnull=True).exclude(rumor_description="")
+        qs = restrict_queryset_to_user_locations(
+            qs,
+            getattr(request, "user", None),
+            field_mapping={
+                "province": "social_mobilization__province",
+                "district": "social_mobilization__district",
+            },
+        )
+        qs = BaselineCensusProvinceTableComponent._date_filter(
+            qs, "social_mobilization__submissiondate", start_iso, end_iso
+        )
+        level_field = _SOCMOB_LEVEL_FIELD.get((location_level or "").lower())
+        if location_value and level_field:
+            qs = qs.filter(
+                **{f"social_mobilization__{level_field}__icontains": location_value}
+            )
         records = qs.values(
-            "submissiondate",
-            "today",
-            "province",
-            "district",
-            "health_facility",
-            "village_neighbourhood",
+            "social_mobilization__submissiondate",
+            "social_mobilization__today",
+            "social_mobilization__province",
+            "social_mobilization__district",
+            "social_mobilization__health_facility",
+            "social_mobilization__village_neighbourhood",
             "rumor_source",
             "rumor_description",
-        ).order_by("-submissiondate")[: self._RUMOUR_LIMIT]
+        ).order_by("-social_mobilization__submissiondate")[: self._RUMOUR_LIMIT]
         log = []
         for record in records:
             log.append(
                 {
-                    "date": (record.get("submissiondate") or "")[:10]
-                    or (record.get("today") or ""),
-                    "province": record.get("province"),
-                    "district": record.get("district"),
-                    "health_facility": record.get("health_facility"),
-                    "village_neighbourhood": record.get("village_neighbourhood"),
+                    "date": (record.get("social_mobilization__submissiondate") or "")[
+                        :10
+                    ]
+                    or (record.get("social_mobilization__today") or ""),
+                    "province": record.get("social_mobilization__province"),
+                    "district": record.get("social_mobilization__district"),
+                    "health_facility": record.get(
+                        "social_mobilization__health_facility"
+                    ),
+                    "village_neighbourhood": record.get(
+                        "social_mobilization__village_neighbourhood"
+                    ),
                     "source": record.get("rumor_source"),
                     "description": record.get("rumor_description"),
                 }

@@ -8,7 +8,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from va_explorer.tests.factories import GroupFactory, LocationFactory, UserFactory
-from va_explorer.va_data_management.models import SocialMobilization
+from va_explorer.va_data_management.models import RumorLog, SocialMobilization
 
 pytestmark = pytest.mark.django_db
 
@@ -75,74 +75,94 @@ def _build_fixture():
     recent = _iso(now - timedelta(days=5))
     old = _iso(now - timedelta(days=200))
 
-    SocialMobilization.objects.bulk_create(
+    rows = [
+        _row(
+            "copperbelt",
+            "mpongwe",
+            "HP1",
+            "V1",
+            recent,
+            people_over_15=10,
+            children_5_14=7,
+            children_12_59months=3,
+            refusal_reluctance_identified="yes",
+            refusal_reluctance_managed="yes",
+            rumor_description="",
+        ),
+        _row(
+            "copperbelt",
+            "mpongwe",
+            "HP1",
+            "V1",
+            recent + "-b",
+            people_over_15=5,
+            children_5_14=2,
+            children_12_59months=1,
+            refusal_reluctance_identified="yes",
+            refusal_reluctance_managed="no",
+            rumor_description="Salt prevents disease",
+            rumor_source="community",
+        ),
+        _row(
+            "copperbelt",
+            "kitwe",
+            "HP2",
+            "V2",
+            recent,
+            people_over_15=4,
+            children_5_14=0,
+            children_12_59months=0,
+            refusal_reluctance_identified="no",
+            refusal_reluctance_managed="no",
+            rumor_description="",
+        ),
+        _row(
+            "central",
+            "kabwe",
+            "HP3",
+            "V3",
+            recent,
+            people_over_15=8,
+            children_5_14=3,
+            children_12_59months=2,
+            refusal_reluctance_identified="yes",
+            refusal_reluctance_managed="yes",
+            rumor_description="Water is unsafe",
+            rumor_source="market",
+        ),
+        _row(
+            "copperbelt",
+            "mpongwe",
+            "HP1",
+            "V1",
+            old,
+            people_over_15=9,
+            children_5_14=0,
+            children_12_59months=0,
+            refusal_reluctance_identified="no",
+            refusal_reluctance_managed="no",
+            rumor_description="",
+        ),
+    ]
+    SocialMobilization.objects.bulk_create(rows)
+
+    # Create RumorLog child records for rows that reported rumours.
+    # The _row() helper sets key=f"{province}-{village}-{submissiondate}".
+    sm_salt = SocialMobilization.objects.get(key="copperbelt-V1-" + recent + "-b")
+    sm_water = SocialMobilization.objects.get(key="central-V3-" + recent)
+    RumorLog.objects.bulk_create(
         [
-            _row(
-                "copperbelt",
-                "mpongwe",
-                "HP1",
-                "V1",
-                recent,
-                people_over_15=10,
-                children_5_14=7,
-                children_12_59months=3,
-                refusal_reluctance_identified="yes",
-                refusal_reluctance_managed="yes",
-                rumor_description="",
-            ),
-            _row(
-                "copperbelt",
-                "mpongwe",
-                "HP1",
-                "V1",
-                recent + "-b",
-                people_over_15=5,
-                children_5_14=2,
-                children_12_59months=1,
-                refusal_reluctance_identified="yes",
-                refusal_reluctance_managed="no",
+            RumorLog(
+                social_mobilization=sm_salt,
+                key="copperbelt-V1-" + recent + "-b/rumors_log_repeat[1]",
                 rumor_description="Salt prevents disease",
                 rumor_source="community",
             ),
-            _row(
-                "copperbelt",
-                "kitwe",
-                "HP2",
-                "V2",
-                recent,
-                people_over_15=4,
-                children_5_14=0,
-                children_12_59months=0,
-                refusal_reluctance_identified="no",
-                refusal_reluctance_managed="no",
-                rumor_description="",
-            ),
-            _row(
-                "central",
-                "kabwe",
-                "HP3",
-                "V3",
-                recent,
-                people_over_15=8,
-                children_5_14=3,
-                children_12_59months=2,
-                refusal_reluctance_identified="yes",
-                refusal_reluctance_managed="yes",
+            RumorLog(
+                social_mobilization=sm_water,
+                key="central-V3-" + recent + "/rumors_log_repeat[1]",
                 rumor_description="Water is unsafe",
                 rumor_source="market",
-            ),
-            _row(
-                "copperbelt",
-                "mpongwe",
-                "HP1",
-                "V1",
-                old,
-                people_over_15=9,
-                children_5_14=0,
-                children_12_59months=0,
-                refusal_reluctance_identified="no",
-                refusal_reluctance_managed="no",
-                rumor_description="",
             ),
         ]
     )

@@ -1,6 +1,8 @@
 from django.db import models
 from simple_history.models import HistoricalRecords
 
+from va_explorer.va_data_management.models.household_census import RepeatGroupQuerySet
+
 
 class SocialMobilization(models.Model):
     """
@@ -133,3 +135,52 @@ class SocialMobilization(models.Model):
     def __str__(self):
         # keep it lightweight + consistent
         return f"{self.today} - {self.village_neighbourhood} - {self.health_facility}"
+
+
+class RumorLog(models.Model):
+    """Each row is one rumour reported during a Social Mobilization event.
+
+    Linked to the parent submission via SocialMobilization.key (the ODK KEY field),
+    mirroring the PregnancyOutcomeBaby / HouseholdDeath repeat-group pattern.
+    """
+
+    social_mobilization = models.ForeignKey(
+        SocialMobilization,
+        to_field="key",
+        db_column="parent_key",
+        on_delete=models.CASCADE,
+        related_name="rumor_logs",
+    )
+    key = models.CharField(
+        max_length=200, unique=True, db_index=True, null=True, blank=True
+    )
+
+    rumor_description = models.TextField("Rumour Description", blank=True, null=True)
+    rumor_source = models.TextField("Rumour Source", blank=True, null=True)
+    community_group_name = models.TextField(
+        "Community Group Name", blank=True, null=True
+    )
+    person_name = models.TextField("Person Name", blank=True, null=True)
+    offline_channel_name = models.TextField(
+        "Offline Channel Name", blank=True, null=True
+    )
+    online_page_group_name = models.TextField(
+        "Online Page / Group Name", blank=True, null=True
+    )
+
+    is_duplicate = models.BooleanField(default=False, db_index=True)
+    duplicate_of = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="duplicates",
+    )
+
+    objects = RepeatGroupQuerySet.as_manager()
+    history = HistoricalRecords()
+
+    def __str__(self):
+        return (
+            f"RumorLog({self.social_mobilization_id}) - {self.rumor_description or '—'}"
+        )

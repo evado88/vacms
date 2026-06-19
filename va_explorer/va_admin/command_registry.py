@@ -808,6 +808,31 @@ def _command_specs() -> list[CommandRegistryItem]:
             safety="mutating",
         ),
         CommandRegistryItem(
+            key="load_rumor_log",
+            management_command="load_rumor_log",
+            category="Data Loading",
+            description=_description_for("load_rumor_log"),
+            inputs=(
+                CommandInputSpec(
+                    type="file",
+                    name="csv_file",
+                    required=True,
+                    help="Social mobilization rumour log repeat-group CSV.",
+                    filename_pattern="RUMORS_LOG_REPEAT.csv",
+                    standardized_name="RUMORS_LOG_REPEAT.csv",
+                    allowed_pattern=r"^[A-Za-z0-9._-]+\.csv$",
+                ),
+            ),
+            safety="mutating",
+        ),
+        CommandRegistryItem(
+            key="cleanup_rumor_log",
+            management_command="cleanup_rumor_log",
+            category="Maintenance",
+            description=_description_for("cleanup_rumor_log"),
+            safety="mutating",
+        ),
+        CommandRegistryItem(
             key="refresh_csa_first_dates",
             management_command="refresh_csa_first_dates",
             category="Maintenance",
