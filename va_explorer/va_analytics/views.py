@@ -15,12 +15,15 @@ from django.db.models import (
     Count,
     DateField,
     F,
+    IntegerField,
     Max,
+    OuterRef,
     Q,
+    Subquery,
     Value,
     When,
 )
-from django.db.models.functions import Cast, Lower, Substr, Trim
+from django.db.models.functions import Cast, Coalesce, Lower, Substr, Trim
 from django.http import HttpResponse, JsonResponse
 from django.urls import reverse
 from django.utils import timezone
@@ -2891,6 +2894,23 @@ def _socmob_base_queryset(
         field = _SOCMOB_LEVEL_FIELD.get(parent_level)
         if parent_value and field:
             qs = qs.filter(**{field: parent_value})
+
+    from va_explorer.va_data_management.models import RumorLog as _RumorLog
+
+    rumor_count_subq = (
+        _RumorLog.objects.filter(
+            social_mobilization_id=OuterRef("key"),
+            is_duplicate=False,
+        )
+        .values("social_mobilization_id")
+        .annotate(_n=Count("id"))
+        .values("_n")[:1]
+    )
+    qs = qs.annotate(
+        rumor_log_count=Coalesce(
+            Subquery(rumor_count_subq, output_field=IntegerField()), 0
+        )
+    )
     return qs
 
 
@@ -2900,6 +2920,9 @@ def _socmob_new_group():
     acc["refusal_reluctance_identified_count"] = 0
     acc["refusal_reluctance_managed_count"] = 0
     acc["rumours_reported"] = 0
+    acc["households_count"] = 0
+    acc["schools_count"] = 0
+    acc["religious_org_count"] = 0
     return acc
 
 
@@ -2911,8 +2934,14 @@ def _socmob_accumulate(acc, row):
         acc["refusal_reluctance_identified_count"] += 1
     if str(row.get("refusal_reluctance_managed") or "").strip().lower() == "yes":
         acc["refusal_reluctance_managed_count"] += 1
-    if (row.get("rumor_description") or "").strip():
-        acc["rumours_reported"] += 1
+    acc["rumours_reported"] += row.get("rumor_log_count") or 0
+    et = (row.get("event_type") or "").strip().lower()
+    if et == "household":
+        acc["households_count"] += 1
+    elif et == "school":
+        acc["schools_count"] += 1
+    elif et == "religious_org":
+        acc["religious_org_count"] += 1
 
 
 def _socmob_metrics_from_group(acc):
@@ -2933,6 +2962,15 @@ def _socmob_metrics_from_group(acc):
             acc["refusal_reluctance_identified_count"],
         ),
         "rumours_reported": acc["rumours_reported"],
+        "households_count": acc["households_count"],
+        "schools_count": acc["schools_count"],
+        "religious_org_count": acc["religious_org_count"],
+        "other_count": (
+            acc["event_count"]
+            - acc["households_count"]
+            - acc["schools_count"]
+            - acc["religious_org_count"]
+        ),
     }
 
 
@@ -2948,7 +2986,11 @@ def aggregate_social_mobilization_by_level(
         request, location_level, location_value, start_iso, end_iso, parent_filters
     )
     rows = qs.values(
-        group_field, *_SOCMOB_SUM_FIELDS, *_SOCMOB_REFUSAL_FIELDS, "rumor_description"
+        group_field,
+        *_SOCMOB_SUM_FIELDS,
+        *_SOCMOB_REFUSAL_FIELDS,
+        "event_type",
+        "rumor_log_count",
     )
 
     groups = {}
@@ -2993,6 +3035,7 @@ def aggregate_social_mobilization_trend(
     )
     rows = qs.values(
         "submissiondate",
+        "event_type",
         "people_over_15",
         "children_5_14",
         "children_12_59months",
@@ -3010,6 +3053,10 @@ def aggregate_social_mobilization_trend(
                 "people_reached": 0,
                 "refusals_identified": 0,
                 "refusals_managed": 0,
+                "households_count": 0,
+                "schools_count": 0,
+                "religious_org_count": 0,
+                "other_count": 0,
             },
         )
         acc["people_reached"] += (
@@ -3021,6 +3068,15 @@ def aggregate_social_mobilization_trend(
             acc["refusals_identified"] += 1
         if str(row.get("refusal_reluctance_managed") or "").strip().lower() == "yes":
             acc["refusals_managed"] += 1
+        et = (row.get("event_type") or "").strip().lower()
+        if et == "household":
+            acc["households_count"] += 1
+        elif et == "school":
+            acc["schools_count"] += 1
+        elif et == "religious_org":
+            acc["religious_org_count"] += 1
+        else:
+            acc["other_count"] += 1
     return [{"date": day, **buckets[day]} for day in sorted(buckets)]
 
 
@@ -3036,7 +3092,8 @@ def aggregate_social_mobilization_table(
         *_SOCMOB_TABLE_GROUP_FIELDS,
         *_SOCMOB_SUM_FIELDS,
         *_SOCMOB_REFUSAL_FIELDS,
-        "rumor_description",
+        "event_type",
+        "rumor_log_count",
     )
 
     groups = {}
@@ -3090,6 +3147,9 @@ def _socmob_totals_from_rows(rows):
         "refusal_reluctance_identified": 0,
         "refusal_reluctance_managed": 0,
         "rumours_reported": 0,
+        "households_count": 0,
+        "schools_count": 0,
+        "religious_org_count": 0,
     }
     for row in rows:
         for field in totals:

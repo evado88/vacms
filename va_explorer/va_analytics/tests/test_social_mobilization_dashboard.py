@@ -58,15 +58,16 @@ def _build_fixture():
     Fixture reflects the updated SRS form: refusal fields are yes/no strings,
     people counts are numeric text, households_visited / schools are not used.
 
-    Totals:
+    Totals (all 5 rows):
       event_count=5, people_reached=54, rumours_reported=2,
       refusal_reluctance_identified=3 (yes), refusal_reluctance_managed=2 (yes),
-      refusal_managed_rate=66.7%
+      refusal_managed_rate=66.7%, households_count=3, schools_count=1,
+      religious_org_count=1
 
     Copperbelt (rows 1-3, 5):
       event_count=4, people_reached=41,
       refusal_reluctance_identified=2, refusal_reluctance_managed=1, rate=50.0%,
-      rumours_reported=1
+      rumours_reported=1, households_count=2, schools_count=1, religious_org_count=1
 
     Mpongwe V1 (rows 1, 2, 5):
       event_count=3, people_reached=37
@@ -82,6 +83,7 @@ def _build_fixture():
             "HP1",
             "V1",
             recent,
+            event_type="household",
             people_over_15=10,
             children_5_14=7,
             children_12_59months=3,
@@ -95,6 +97,7 @@ def _build_fixture():
             "HP1",
             "V1",
             recent + "-b",
+            event_type="school",
             people_over_15=5,
             children_5_14=2,
             children_12_59months=1,
@@ -109,6 +112,7 @@ def _build_fixture():
             "HP2",
             "V2",
             recent,
+            event_type="religious_org",
             people_over_15=4,
             children_5_14=0,
             children_12_59months=0,
@@ -122,6 +126,7 @@ def _build_fixture():
             "HP3",
             "V3",
             recent,
+            event_type="household",
             people_over_15=8,
             children_5_14=3,
             children_12_59months=2,
@@ -136,6 +141,7 @@ def _build_fixture():
             "HP1",
             "V1",
             old,
+            event_type="household",
             people_over_15=9,
             children_5_14=0,
             children_12_59months=0,
@@ -184,13 +190,14 @@ class TestSocialMobilizationTab:
 
         assert 'id="smChartTabs"' in body
         for canvas_id in (
-            "smReachChart",
+            "smEventTypesChart",
+            "smPeopleReachedChart",
             "smRefusalsChart",
             "smRumoursChart",
             "smTrendChart",
         ):
             assert f'id="{canvas_id}"' in body
-        assert 'data-sm-subtab="reach" role="tab" aria-selected="true"' in body
+        assert 'data-sm-subtab="event_types" role="tab" aria-selected="true"' in body
 
     def test_query_param_marks_tab_active(self):
         response = _client().get(reverse(DASHBOARD_URL) + "?tab=social_mob")
@@ -307,6 +314,10 @@ class TestSocialMobilizationComponent:
         assert totals["refusal_reluctance_identified"] == 3
         assert totals["refusal_reluctance_managed"] == 2
         assert totals["refusal_managed_rate"] == 66.7
+        # event_type counts: rows 1,4,5=household; row 2=school; row 3=religious_org.
+        assert totals["households_count"] == 3
+        assert totals["schools_count"] == 1
+        assert totals["religious_org_count"] == 1
 
     def test_table_has_one_row_per_location_tuple(self):
         _build_fixture()

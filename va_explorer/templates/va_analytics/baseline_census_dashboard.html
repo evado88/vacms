@@ -186,16 +186,26 @@
               </span>
             </div>
             <div class="census-chart-subtabs" id="smChartTabs" role="tablist" aria-label="Social mobilization indicators">
-              <button type="button" class="census-chart-subtab census-chart-subtab--active" data-sm-subtab="reach" role="tab" aria-selected="true">Reach</button>
+              <button type="button" class="census-chart-subtab census-chart-subtab--active" data-sm-subtab="event_types" role="tab" aria-selected="true">Event Types</button>
+              <button type="button" class="census-chart-subtab" data-sm-subtab="people_reached" role="tab" aria-selected="false">People Reached</button>
               <button type="button" class="census-chart-subtab" data-sm-subtab="refusals" role="tab" aria-selected="false">Refusals</button>
               <button type="button" class="census-chart-subtab" data-sm-subtab="rumours" role="tab" aria-selected="false">Rumours</button>
               <button type="button" class="census-chart-subtab" data-sm-subtab="trend" role="tab" aria-selected="false">Trend</button>
             </div>
             <div class="census-chart-subpanels sm-chart-subpanels" id="smChartSubpanels">
-              <div class="census-chart-subpanel census-chart-subpanel--active" data-subtab="reach" role="tabpanel">
+              <div class="census-chart-subpanel census-chart-subpanel--active" data-subtab="event_types" role="tabpanel">
+                <p class="census-chart-note">Events broken down by type — household, school, religious org, or other — by location.</p>
                 <div class="baseline-chart-wrap">
                   <div class="baseline-chart-canvas-box">
-                    <canvas id="smReachChart"></canvas>
+                    <canvas id="smEventTypesChart"></canvas>
+                  </div>
+                </div>
+              </div>
+              <div class="census-chart-subpanel" data-subtab="people_reached" role="tabpanel">
+                <p class="census-chart-note">Total people reached per location.</p>
+                <div class="baseline-chart-wrap">
+                  <div class="baseline-chart-canvas-box">
+                    <canvas id="smPeopleReachedChart"></canvas>
                   </div>
                 </div>
               </div>
