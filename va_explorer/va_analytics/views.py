@@ -2793,18 +2793,16 @@ _SOCMOB_CHILD_OF = {
     "district": "health_facility",
     "health_facility": "village_neighbourhood",
 }
-# Numeric tally fields summed during roll-up.
+# Numeric tally fields summed during roll-up (new form; people counts remain numeric).
 _SOCMOB_SUM_FIELDS = (
-    "households_visited",
     "people_over_15",
     "children_5_14",
     "children_12_59months",
-    "schools_reached",
-    "religious_leaders_reached",
-    "refusal_identified",
-    "refusal_managed",
-    "children_affected",
-    "refusals_from_rumor",
+)
+# Yes/no refusal flag fields (new form) — accumulated by counting "yes" responses.
+_SOCMOB_REFUSAL_FIELDS = (
+    "refusal_reluctance_identified",
+    "refusal_reluctance_managed",
 )
 # Location columns shown on the aggregated table (one row per village).
 _SOCMOB_TABLE_GROUP_FIELDS = (
@@ -2817,7 +2815,14 @@ _SOCMOB_TABLE_GROUP_FIELDS = (
 _SOCMOB_SORT_FIELDS = frozenset(
     _SOCMOB_TABLE_GROUP_FIELDS
     + _SOCMOB_SUM_FIELDS
-    + ("people_reached", "refusal_managed_rate", "rumours_reported")
+    + (
+        "event_count",
+        "people_reached",
+        "refusal_reluctance_identified",
+        "refusal_reluctance_managed",
+        "refusal_managed_rate",
+        "rumours_reported",
+    )
 )
 
 
@@ -2891,6 +2896,9 @@ def _socmob_base_queryset(
 
 def _socmob_new_group():
     acc = dict.fromkeys(_SOCMOB_SUM_FIELDS, 0)
+    acc["event_count"] = 0
+    acc["refusal_reluctance_identified_count"] = 0
+    acc["refusal_reluctance_managed_count"] = 0
     acc["rumours_reported"] = 0
     return acc
 
@@ -2898,6 +2906,11 @@ def _socmob_new_group():
 def _socmob_accumulate(acc, row):
     for field in _SOCMOB_SUM_FIELDS:
         acc[field] += _socmob_to_int(row.get(field))
+    acc["event_count"] += 1
+    if str(row.get("refusal_reluctance_identified") or "").strip().lower() == "yes":
+        acc["refusal_reluctance_identified_count"] += 1
+    if str(row.get("refusal_reluctance_managed") or "").strip().lower() == "yes":
+        acc["refusal_reluctance_managed_count"] += 1
     if (row.get("rumor_description") or "").strip():
         acc["rumours_reported"] += 1
 
@@ -2908,21 +2921,18 @@ def _socmob_metrics_from_group(acc):
         acc["people_over_15"] + acc["children_5_14"] + acc["children_12_59months"]
     )
     return {
-        "households_visited": acc["households_visited"],
+        "event_count": acc["event_count"],
         "people_over_15": acc["people_over_15"],
         "children_5_14": acc["children_5_14"],
         "children_12_59months": acc["children_12_59months"],
         "people_reached": people_reached,
-        "schools_reached": acc["schools_reached"],
-        "religious_leaders_reached": acc["religious_leaders_reached"],
-        "refusal_identified": acc["refusal_identified"],
-        "refusal_managed": acc["refusal_managed"],
+        "refusal_reluctance_identified": acc["refusal_reluctance_identified_count"],
+        "refusal_reluctance_managed": acc["refusal_reluctance_managed_count"],
         "refusal_managed_rate": _socmob_rate(
-            acc["refusal_managed"], acc["refusal_identified"]
+            acc["refusal_reluctance_managed_count"],
+            acc["refusal_reluctance_identified_count"],
         ),
         "rumours_reported": acc["rumours_reported"],
-        "children_affected": acc["children_affected"],
-        "refusals_from_rumor": acc["refusals_from_rumor"],
     }
 
 
@@ -2937,7 +2947,9 @@ def aggregate_social_mobilization_by_level(
     qs = _socmob_base_queryset(
         request, location_level, location_value, start_iso, end_iso, parent_filters
     )
-    rows = qs.values(group_field, *_SOCMOB_SUM_FIELDS, "rumor_description")
+    rows = qs.values(
+        group_field, *_SOCMOB_SUM_FIELDS, *_SOCMOB_REFUSAL_FIELDS, "rumor_description"
+    )
 
     groups = {}
     order = []
@@ -2984,9 +2996,7 @@ def aggregate_social_mobilization_trend(
         "people_over_15",
         "children_5_14",
         "children_12_59months",
-        "households_visited",
-        "refusal_identified",
-        "refusal_managed",
+        *_SOCMOB_REFUSAL_FIELDS,
     )
     buckets = {}
     for row in rows:
@@ -2997,20 +3007,20 @@ def aggregate_social_mobilization_trend(
         acc = buckets.setdefault(
             day,
             {
-                "households_visited": 0,
                 "people_reached": 0,
                 "refusals_identified": 0,
                 "refusals_managed": 0,
             },
         )
-        acc["households_visited"] += _socmob_to_int(row.get("households_visited"))
         acc["people_reached"] += (
             _socmob_to_int(row.get("people_over_15"))
             + _socmob_to_int(row.get("children_5_14"))
             + _socmob_to_int(row.get("children_12_59months"))
         )
-        acc["refusals_identified"] += _socmob_to_int(row.get("refusal_identified"))
-        acc["refusals_managed"] += _socmob_to_int(row.get("refusal_managed"))
+        if str(row.get("refusal_reluctance_identified") or "").strip().lower() == "yes":
+            acc["refusals_identified"] += 1
+        if str(row.get("refusal_reluctance_managed") or "").strip().lower() == "yes":
+            acc["refusals_managed"] += 1
     return [{"date": day, **buckets[day]} for day in sorted(buckets)]
 
 
@@ -3023,7 +3033,10 @@ def aggregate_social_mobilization_table(
         request, location_level, location_value, start_iso, end_iso
     )
     raw_rows = qs.values(
-        *_SOCMOB_TABLE_GROUP_FIELDS, *_SOCMOB_SUM_FIELDS, "rumor_description"
+        *_SOCMOB_TABLE_GROUP_FIELDS,
+        *_SOCMOB_SUM_FIELDS,
+        *_SOCMOB_REFUSAL_FIELDS,
+        "rumor_description",
     )
 
     groups = {}
@@ -3072,19 +3085,17 @@ def _socmob_sort_rows(rows, sort_key, sort_dir):
 
 def _socmob_totals_from_rows(rows):
     totals = {
-        "households_visited": 0,
+        "event_count": 0,
         "people_reached": 0,
-        "schools_reached": 0,
-        "religious_leaders_reached": 0,
-        "refusal_identified": 0,
-        "refusal_managed": 0,
+        "refusal_reluctance_identified": 0,
+        "refusal_reluctance_managed": 0,
         "rumours_reported": 0,
     }
     for row in rows:
         for field in totals:
             totals[field] += _socmob_to_int(row.get(field))
     totals["refusal_managed_rate"] = _socmob_rate(
-        totals["refusal_managed"], totals["refusal_identified"]
+        totals["refusal_reluctance_managed"], totals["refusal_reluctance_identified"]
     )
     return totals
 
@@ -3130,21 +3141,18 @@ class SocialMobilizationComponentView(
         ("village_neighbourhood", "Village"),
     )
     _METRIC_COLUMNS = (
-        ("households_visited", "Households Visited"),
+        ("event_count", "Events"),
         ("people_reached", "People Reached"),
-        ("schools_reached", "Schools"),
-        ("religious_leaders_reached", "Religious Leaders"),
-        ("refusal_identified", "Refusals Identified"),
-        ("refusal_managed", "Refusals Managed"),
+        ("refusal_reluctance_identified", "Refusals Identified"),
+        ("refusal_reluctance_managed", "Refusals Managed"),
         ("refusal_managed_rate", "Managed Rate"),
         ("rumours_reported", "Rumours"),
     )
     _WRAPPING_METRIC_COLUMNS = (
-        "households_visited",
+        "event_count",
         "people_reached",
-        "religious_leaders_reached",
-        "refusal_identified",
-        "refusal_managed",
+        "refusal_reluctance_identified",
+        "refusal_reluctance_managed",
         "refusal_managed_rate",
     )
 
@@ -3248,10 +3256,7 @@ class SocialMobilizationComponentView(
             "health_facility",
             "village_neighbourhood",
             "rumor_source",
-            "rumor_source_other",
             "rumor_description",
-            "children_affected",
-            "refusals_from_rumor",
         ).order_by("-submissiondate")[: self._RUMOUR_LIMIT]
         log = []
         for record in records:
@@ -3263,15 +3268,8 @@ class SocialMobilizationComponentView(
                     "district": record.get("district"),
                     "health_facility": record.get("health_facility"),
                     "village_neighbourhood": record.get("village_neighbourhood"),
-                    "source": record.get("rumor_source_other")
-                    or record.get("rumor_source"),
+                    "source": record.get("rumor_source"),
                     "description": record.get("rumor_description"),
-                    "children_affected": _socmob_to_int(
-                        record.get("children_affected")
-                    ),
-                    "refusals_from_rumor": _socmob_to_int(
-                        record.get("refusals_from_rumor")
-                    ),
                 }
             )
         return log

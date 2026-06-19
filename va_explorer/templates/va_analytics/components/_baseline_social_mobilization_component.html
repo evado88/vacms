@@ -32,18 +32,16 @@
             <td>{{ row.district|title|default:"&mdash;" }}</td>
             <td>{{ row.health_facility|title|default:"&mdash;" }}</td>
             <td>{{ row.village_neighbourhood|title|default:"&mdash;" }}</td>
-            <td class="numeric">{{ row.households_visited }}</td>
+            <td class="numeric">{{ row.event_count }}</td>
             <td class="numeric">{{ row.people_reached }}</td>
-            <td class="numeric">{{ row.schools_reached }}</td>
-            <td class="numeric">{{ row.religious_leaders_reached }}</td>
-            <td class="numeric">{{ row.refusal_identified }}</td>
-            <td class="numeric">{{ row.refusal_managed }}</td>
+            <td class="numeric">{{ row.refusal_reluctance_identified }}</td>
+            <td class="numeric">{{ row.refusal_reluctance_managed }}</td>
             <td class="numeric">{% if row.refusal_managed_rate is not None %}{{ row.refusal_managed_rate }}%{% else %}&mdash;{% endif %}</td>
             <td class="numeric">{{ row.rumours_reported }}</td>
           </tr>
         {% empty %}
           <tr>
-            <td colspan="12" class="text-center text-muted py-3">No social mobilization data found for the selected filters.</td>
+            <td colspan="10" class="text-center text-muted py-3">No social mobilization data found for the selected filters.</td>
           </tr>
         {% endfor %}
       </tbody>
@@ -51,12 +49,10 @@
         <tfoot>
           <tr class="bc-district-total-row">
             <td colspan="4">Total{% if sm_page_district %}: {{ sm_page_district|title }}{% endif %}</td>
-            <td class="numeric">{{ sm_page_totals.households_visited }}</td>
+            <td class="numeric">{{ sm_page_totals.event_count }}</td>
             <td class="numeric">{{ sm_page_totals.people_reached }}</td>
-            <td class="numeric">{{ sm_page_totals.schools_reached }}</td>
-            <td class="numeric">{{ sm_page_totals.religious_leaders_reached }}</td>
-            <td class="numeric">{{ sm_page_totals.refusal_identified }}</td>
-            <td class="numeric">{{ sm_page_totals.refusal_managed }}</td>
+            <td class="numeric">{{ sm_page_totals.refusal_reluctance_identified }}</td>
+            <td class="numeric">{{ sm_page_totals.refusal_reluctance_managed }}</td>
             <td class="numeric">{% if sm_page_totals.refusal_managed_rate is not None %}{{ sm_page_totals.refusal_managed_rate }}%{% else %}&mdash;{% endif %}</td>
             <td class="numeric">{{ sm_page_totals.rumours_reported }}</td>
           </tr>
@@ -74,12 +70,10 @@
       <tbody>
         <tr class="bc-grand-total-row">
           <td colspan="4">Grand Total</td>
-          <td class="numeric">{{ sm_grand_totals.households_visited }}</td>
+          <td class="numeric">{{ sm_grand_totals.event_count }}</td>
           <td class="numeric">{{ sm_grand_totals.people_reached }}</td>
-          <td class="numeric">{{ sm_grand_totals.schools_reached }}</td>
-          <td class="numeric">{{ sm_grand_totals.religious_leaders_reached }}</td>
-          <td class="numeric">{{ sm_grand_totals.refusal_identified }}</td>
-          <td class="numeric">{{ sm_grand_totals.refusal_managed }}</td>
+          <td class="numeric">{{ sm_grand_totals.refusal_reluctance_identified }}</td>
+          <td class="numeric">{{ sm_grand_totals.refusal_reluctance_managed }}</td>
           <td class="numeric">{% if sm_grand_totals.refusal_managed_rate is not None %}{{ sm_grand_totals.refusal_managed_rate }}%{% else %}&mdash;{% endif %}</td>
           <td class="numeric">{{ sm_grand_totals.rumours_reported }}</td>
         </tr>
@@ -98,15 +92,13 @@
     <table class="baseline-census-table sm-rumour-table">
       <thead>
         <tr>
-          <th style="width: 9%;">Date</th>
-          <th style="width: 9%;">Province</th>
-          <th style="width: 9%;">District</th>
-          <th style="width: 12%;">Health Facility</th>
-          <th style="width: 11%;">Village</th>
-          <th style="width: 10%;">Source</th>
+          <th style="width: 10%;">Date</th>
+          <th style="width: 10%;">Province</th>
+          <th style="width: 10%;">District</th>
+          <th style="width: 14%;">Health Facility</th>
+          <th style="width: 12%;">Village</th>
+          <th style="width: 12%;">Source</th>
           <th>Description</th>
-          <th class="numeric" style="width: 8%;">Children Affected</th>
-          <th class="numeric" style="width: 8%;">Refusals</th>
         </tr>
       </thead>
       <tbody>
@@ -119,12 +111,10 @@
             <td>{{ row.village_neighbourhood|default:"&mdash;" }}</td>
             <td>{{ row.source|default:"&mdash;" }}</td>
             <td>{{ row.description }}</td>
-            <td class="numeric">{{ row.children_affected }}</td>
-            <td class="numeric">{{ row.refusals_from_rumor }}</td>
           </tr>
         {% empty %}
           <tr>
-            <td colspan="9" class="text-center text-muted py-3">No rumours reported for the selected filters.</td>
+            <td colspan="7" class="text-center text-muted py-3">No rumours reported for the selected filters.</td>
           </tr>
         {% endfor %}
       </tbody>

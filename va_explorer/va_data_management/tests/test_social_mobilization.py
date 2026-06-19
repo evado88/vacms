@@ -7,23 +7,27 @@ from va_explorer.va_data_management.odk.service import import_dataframe_records
 
 pytestmark = pytest.mark.django_db
 
-# Header + one row mirroring the ODK Central export (SOCIAL_MOBILIZATION_SRS_TALLY.csv)
+# Header + one row mirroring the updated ODK Central export (SRS Social Mobilization form v1.1.0)
 SAMPLE_HEADER = (
-    "SubmissionDate,deviceid,today,start,end,province,district,health_facility,"
-    "village_neighbourhood,day_number,households_visited,people_over_15,children_5_14,"
-    "children_12_59months,refusal_identified,refusal_managed,schools_reached,"
-    "religious_leaders_reached,rumor_description,rumor_source,rumor_source_other,"
-    "children_affected,refusals_from_rumor,instanceID,instanceName,KEY,SubmitterID,"
-    "SubmitterName,AttachmentsPresent,AttachmentsExpected,Status,ReviewState,DeviceID,"
-    "Edits,FormVersion"
+    "SubmissionDate,deviceid,today,start,end,event_date,province,district,constituency,"
+    "ward,ea,health_facility,village_neighbourhood,event_gps-Latitude,event_gps-Longitude,"
+    "event_gps-Altitude,event_gps-Accuracy,mobilizer_name,mobilizer_role,event_type,"
+    "event_description,household_identifier,refusal_reluctance_identified,day_number,"
+    "people_over_15,children_5_14,children_12_59months,rumor_description,rumor_source,"
+    "community_group_name,person_name,offline_channel_name,online_page_group_name,"
+    "refusal_reluctance_managed,instanceID,instanceName,KEY,SubmitterID,SubmitterName,"
+    "AttachmentsPresent,AttachmentsExpected,Status,ReviewState,DeviceID,Edits,FormVersion"
 )
 SAMPLE_ROW = (
-    "2026-05-23T12:23:57.494Z,collect:MoO7bLEw6rs4OhmA,23/05/2026,"
-    "2026-05-23T13:07:55.660+02:00,2026-05-23T14:23:56.926+02:00,copperbelt,mpongwe,"
-    "mpongwe_lyobeka_health_post,David village,1,2,10,7,3,2,1,5,4,,,,,,"
-    "uuid:f2733da5-626c-472a-b861-d087ee4fccd2,SM_2026-05-23_mpongwe,"
-    "uuid:f2733da5-626c-472a-b861-d087ee4fccd2,30,App test,0,0,,,"
-    "collect:MoO7bLEw6rs4OhmA,0,1.1.0"
+    "2026-06-16T19:56:14.813Z,collect:MoO7bLEw6rs4OhmA,16/06/2026,"
+    "2026-06-16T11:04:03.969+02:00,2026-06-16T21:56:01.793+02:00,16/06/2026,"
+    "copperbelt,ndola,2103,210307,2103072018,nkhwazi_urban_hcentre,Yengwe,"
+    "-12.9439033,28.641365,1319.8,5,Nathan mwandia,csa,household,Census,Yengwe,"
+    "no,2,4,0,1,,,,,,,no,"
+    "uuid:77279d66-8069-47c1-b6c4-f31c3cab1c93,"
+    "SM_copperbelt_ndola_Nathan mwandia_2026-06-16,"
+    "uuid:77279d66-8069-47c1-b6c4-f31c3cab1c93,"
+    "7,SRS,0,0,,,collect:MoO7bLEw6rs4OhmA,0,1.1.0"
 )
 
 
@@ -38,34 +42,64 @@ def test_load_command_creates_record(tmp_path):
 
     assert SocialMobilization.objects.count() == 1
     record = SocialMobilization.objects.get(
-        key="uuid:f2733da5-626c-472a-b861-d087ee4fccd2"
+        key="uuid:77279d66-8069-47c1-b6c4-f31c3cab1c93"
     )
     assert record.province == "copperbelt"
-    assert record.health_facility == "mpongwe_lyobeka_health_post"
-    assert record.village_neighbourhood == "David village"
-    assert record.households_visited == "2"
-    assert record.instanceid == "uuid:f2733da5-626c-472a-b861-d087ee4fccd2"
+    assert record.district == "ndola"
+    assert record.health_facility == "nkhwazi_urban_hcentre"
+    assert record.village_neighbourhood == "Yengwe"
+    assert record.constituency == "2103"
+    assert record.ward == "210307"
+    assert record.ea == "2103072018"
+    assert record.mobilizer_name == "Nathan mwandia"
+    assert record.mobilizer_role == "csa"
+    assert record.event_type == "household"
+    assert record.event_date == "16/06/2026"
+    assert record.people_over_15 == "4"
+    assert record.children_5_14 == "0"
+    assert record.children_12_59months == "1"
+    assert record.refusal_reluctance_identified == "no"
+    assert record.refusal_reluctance_managed == "no"
+    assert record.instanceid == "uuid:77279d66-8069-47c1-b6c4-f31c3cab1c93"
     assert record.formversion == "1.1.0"
 
 
 def test_load_command_upserts_by_key(tmp_path):
     call_command("load_social_mobilization", _write_csv(tmp_path))
 
-    updated_row = SAMPLE_ROW.replace("David village", "Updated village")
+    updated_row = SAMPLE_ROW.replace("Yengwe,", "Kwacha,", 1)
     call_command("load_social_mobilization", _write_csv(tmp_path, row=updated_row))
 
     # Same key -> no duplicate row, fields updated in place.
     assert SocialMobilization.objects.count() == 1
     record = SocialMobilization.objects.get(
-        key="uuid:f2733da5-626c-472a-b861-d087ee4fccd2"
+        key="uuid:77279d66-8069-47c1-b6c4-f31c3cab1c93"
     )
-    assert record.village_neighbourhood == "Updated village"
+    assert record.village_neighbourhood == "Kwacha"
+
+
+def test_gps_columns_loaded(tmp_path):
+    call_command("load_social_mobilization", _write_csv(tmp_path))
+
+    record = SocialMobilization.objects.get(
+        key="uuid:77279d66-8069-47c1-b6c4-f31c3cab1c93"
+    )
+    assert record.event_gps_latitude == "-12.9439033"
+    assert record.event_gps_longitude == "28.641365"
+    assert record.event_gps_altitude == "1319.8"
+    assert record.event_gps_accuracy == "5"
 
 
 def test_import_dataframe_records_routes_to_social_mobilization():
     df = pd.DataFrame(
         [
-            {"KEY": "sm-1", "today": "2026-01-01", "households_visited": "4"},
+            {
+                "KEY": "sm-1",
+                "today": "2026-06-16",
+                "people_over_15": "4",
+                "refusal_reluctance_identified": "no",
+                "event_type": "household",
+            },
         ]
     )
 
@@ -73,5 +107,7 @@ def test_import_dataframe_records_routes_to_social_mobilization():
 
     assert counts == {"created": 1, "updated": 0, "ignored": 0, "duplicate_rows": 0}
     created = SocialMobilization.objects.get(key="sm-1")
-    assert created.today == "2026-01-01"
-    assert created.households_visited == "4"
+    assert created.today == "2026-06-16"
+    assert created.people_over_15 == "4"
+    assert created.refusal_reluctance_identified == "no"
+    assert created.event_type == "household"

@@ -42,6 +42,18 @@ FORM_UNIQUE_FIELD_MAP = {
     "social_mobilization": "key",
 }
 
+# After list_submissions strips group-name prefixes (e.g. "event_gps-Latitude" →
+# "Latitude"), these per-form renames restore the full model field name before
+# normalize_dataframe_columns runs.
+FORM_PRE_NORMALIZE_RENAMES = {
+    "social_mobilization": {
+        "Latitude": "event_gps_latitude",
+        "Longitude": "event_gps_longitude",
+        "Altitude": "event_gps_altitude",
+        "Accuracy": "event_gps_accuracy",
+    }
+}
+
 # Maps form_name → (ODK split-column prefix, single target model field).
 # The four ODK component columns (e.g. PE-25-Latitude/Longitude/Altitude/Accuracy)
 # are composed into the existing single GPS TextField before column normalisation.
@@ -126,6 +138,12 @@ def import_dataframe_records(form_name: str, df: pd.DataFrame) -> Dict[str, int]
             df[field] = df[field].map(
                 lambda value, _map=mapping: _map.get(normalize_value(value), value)
             )
+
+    pre_renames = FORM_PRE_NORMALIZE_RENAMES.get(form_name, {})
+    if pre_renames:
+        df = df.rename(
+            columns={k: v for k, v in pre_renames.items() if k in df.columns}
+        )
 
     geopoint_cfg = FORM_GEOPOINT_MAP.get(form_name)
     if geopoint_cfg:

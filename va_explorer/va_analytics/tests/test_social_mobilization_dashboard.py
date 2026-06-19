@@ -53,7 +53,24 @@ def _row(province, district, facility, village, submissiondate, **metrics):
 
 def _build_fixture():
     """Two provinces. Copperbelt has Mpongwe (one village, two same-day rows) and
-    Kitwe; Central has Kabwe. One old Copperbelt row exercises the time filter."""
+    Kitwe; Central has Kabwe. One old Copperbelt row exercises the time filter.
+
+    Fixture reflects the updated SRS form: refusal fields are yes/no strings,
+    people counts are numeric text, households_visited / schools are not used.
+
+    Totals:
+      event_count=5, people_reached=54, rumours_reported=2,
+      refusal_reluctance_identified=3 (yes), refusal_reluctance_managed=2 (yes),
+      refusal_managed_rate=66.7%
+
+    Copperbelt (rows 1-3, 5):
+      event_count=4, people_reached=41,
+      refusal_reluctance_identified=2, refusal_reluctance_managed=1, rate=50.0%,
+      rumours_reported=1
+
+    Mpongwe V1 (rows 1, 2, 5):
+      event_count=3, people_reached=37
+    """
     now = timezone.now()
     recent = _iso(now - timedelta(days=5))
     old = _iso(now - timedelta(days=200))
@@ -66,16 +83,11 @@ def _build_fixture():
                 "HP1",
                 "V1",
                 recent,
-                households_visited=2,
                 people_over_15=10,
                 children_5_14=7,
                 children_12_59months=3,
-                refusal_identified=2,
-                refusal_managed=1,
-                schools_reached=5,
-                religious_leaders_reached=4,
-                children_affected=0,
-                refusals_from_rumor=0,
+                refusal_reluctance_identified="yes",
+                refusal_reluctance_managed="yes",
                 rumor_description="",
             ),
             _row(
@@ -84,16 +96,11 @@ def _build_fixture():
                 "HP1",
                 "V1",
                 recent + "-b",
-                households_visited=3,
                 people_over_15=5,
                 children_5_14=2,
                 children_12_59months=1,
-                refusal_identified=4,
-                refusal_managed=2,
-                schools_reached=1,
-                religious_leaders_reached=0,
-                children_affected=6,
-                refusals_from_rumor=1,
+                refusal_reluctance_identified="yes",
+                refusal_reluctance_managed="no",
                 rumor_description="Salt prevents disease",
                 rumor_source="community",
             ),
@@ -103,16 +110,11 @@ def _build_fixture():
                 "HP2",
                 "V2",
                 recent,
-                households_visited=1,
                 people_over_15=4,
                 children_5_14=0,
                 children_12_59months=0,
-                refusal_identified=0,
-                refusal_managed=0,
-                schools_reached=2,
-                religious_leaders_reached=1,
-                children_affected=0,
-                refusals_from_rumor=0,
+                refusal_reluctance_identified="no",
+                refusal_reluctance_managed="no",
                 rumor_description="",
             ),
             _row(
@@ -121,16 +123,11 @@ def _build_fixture():
                 "HP3",
                 "V3",
                 recent,
-                households_visited=4,
                 people_over_15=8,
                 children_5_14=3,
                 children_12_59months=2,
-                refusal_identified=1,
-                refusal_managed=1,
-                schools_reached=0,
-                religious_leaders_reached=0,
-                children_affected=2,
-                refusals_from_rumor=0,
+                refusal_reluctance_identified="yes",
+                refusal_reluctance_managed="yes",
                 rumor_description="Water is unsafe",
                 rumor_source="market",
             ),
@@ -140,16 +137,11 @@ def _build_fixture():
                 "HP1",
                 "V1",
                 old,
-                households_visited=9,
                 people_over_15=9,
                 children_5_14=0,
                 children_12_59months=0,
-                refusal_identified=0,
-                refusal_managed=0,
-                schools_reached=0,
-                religious_leaders_reached=0,
-                children_affected=0,
-                refusals_from_rumor=0,
+                refusal_reluctance_identified="no",
+                refusal_reluctance_managed="no",
                 rumor_description="",
             ),
         ]
@@ -253,10 +245,10 @@ class TestSocialMobilizationComponent:
 
         assert response.status_code == 200
         body = response.content.decode()
-        assert "Households &amp; Outreach" in body
+        assert "Events" in body
         assert "People Reached" in body
         # Totals are computed the same way as the table component.
-        assert response.context["sm_totals"]["households_visited"] == 19
+        assert response.context["sm_totals"]["event_count"] == 5
 
     def test_kpis_component_requires_permission(self):
         client = Client()
@@ -271,14 +263,13 @@ class TestSocialMobilizationComponent:
 
         assert response.status_code == 200
         assert response.context["sm_wrapping_metric_columns"] == (
-            "households_visited",
+            "event_count",
             "people_reached",
-            "religious_leaders_reached",
-            "refusal_identified",
-            "refusal_managed",
+            "refusal_reluctance_identified",
+            "refusal_reluctance_managed",
             "refusal_managed_rate",
         )
-        assert response.content.decode().count('class="numeric sm-wrap-header"') == 6
+        assert response.content.decode().count('class="numeric sm-wrap-header"') == 5
 
     def test_kpi_totals_sum_all_records(self):
         _build_fixture()
@@ -286,17 +277,16 @@ class TestSocialMobilizationComponent:
 
         assert response.status_code == 200
         totals = response.context["sm_totals"]
-        # Households: 2 + 3 + 1 + 4 + 9 (old included by default all-time view).
-        assert totals["households_visited"] == 19
+        # 5 rows total (all-time view).
+        assert totals["event_count"] == 5
         # People reached = 15+ plus both child bands across every row
-        # (20 + 8 + 4 + 13 + 9).
+        # (20 + 8 + 4 + 13 + 9) = 54.
         assert totals["people_reached"] == 54
-        assert totals["schools_reached"] == 8
         assert totals["rumours_reported"] == 2
-        # Refusals identified 7, managed 4 -> 57.1%.
-        assert totals["refusal_identified"] == 7
-        assert totals["refusal_managed"] == 4
-        assert totals["refusal_managed_rate"] == 57.1
+        # yes counts: rows 1,2,4 identified; rows 1,4 managed -> 66.7%.
+        assert totals["refusal_reluctance_identified"] == 3
+        assert totals["refusal_reluctance_managed"] == 2
+        assert totals["refusal_managed_rate"] == 66.7
 
     def test_table_has_one_row_per_location_tuple(self):
         _build_fixture()
@@ -307,8 +297,8 @@ class TestSocialMobilizationComponent:
             (r["province"], r["district"], r["village_neighbourhood"]): r for r in rows
         }
         assert set(keyed) == {("copperbelt", "mpongwe", "V1")}
-        # Mpongwe V1 merges its two same-day rows and the old row: 2 + 3 + 9.
-        assert keyed[("copperbelt", "mpongwe", "V1")]["households_visited"] == 14
+        # Mpongwe V1 merges its two same-day rows and the old row: 3 events.
+        assert keyed[("copperbelt", "mpongwe", "V1")]["event_count"] == 3
         # Activity table renders location names title-cased.
         assert "Copperbelt" in response.content.decode()
         assert "Mpongwe" in response.content.decode()
@@ -321,9 +311,10 @@ class TestSocialMobilizationComponent:
         assert {row["district"] for row in rows} == {"mpongwe"}
         assert response.context["sm_total_pages"] == 3
         assert response.context["sm_visible_count"] == 1
-        assert response.context["sm_page_totals"]["households_visited"] == 14
+        assert response.context["sm_page_totals"]["event_count"] == 3
+        # Mpongwe V1 people reached: (10+5+9)+(7+2+0)+(3+1+0) = 37.
         assert response.context["sm_page_totals"]["people_reached"] == 37
-        assert response.context["sm_grand_totals"]["households_visited"] == 19
+        assert response.context["sm_grand_totals"]["event_count"] == 5
         assert response.context["sm_grand_totals"]["people_reached"] == 54
 
         body = response.content.decode()
@@ -337,7 +328,7 @@ class TestSocialMobilizationComponent:
             "Ndola_Kanfinsa_Health_Post",
             "V1",
             _iso(timezone.now()),
-            households_visited=1,
+            people_over_15=1,
         ).save()
 
         response = _client().get(reverse(COMPONENT_URL))
@@ -379,7 +370,7 @@ class TestSocialMobilizationComponent:
             _client().get(reverse(COMPONENT_URL), {"preset": "24"}).context["sm_totals"]
         )
 
-        assert totals["households_visited"] == 0
+        assert totals["event_count"] == 0
 
 
 # --- Chart-data endpoint ------------------------------------------------------
@@ -416,16 +407,16 @@ class TestSocialMobilizationChartData:
             "central",
         }
         copperbelt = _chart_row(payload, "copperbelt")
-        assert copperbelt["households_visited"] == 15  # 2 + 3 + 1 + 9
+        assert copperbelt["event_count"] == 4  # rows 1, 2, 3, 5
         assert copperbelt["has_children"] is True
 
     def test_refusal_rate_and_rumours_rolled_up(self):
         _build_fixture()
         copperbelt = _chart_row(_chart(_client()), "copperbelt")
 
-        # Identified 6, managed 3 across Copperbelt -> 50%.
-        assert copperbelt["refusal_identified"] == 6
-        assert copperbelt["refusal_managed"] == 3
+        # Yes-counts: rows 1,2 identified (2); row 1 managed (1) -> 50%.
+        assert copperbelt["refusal_reluctance_identified"] == 2
+        assert copperbelt["refusal_reluctance_managed"] == 1
         assert copperbelt["refusal_managed_rate"] == 50.0
         assert copperbelt["rumours_reported"] == 1
 
@@ -468,7 +459,7 @@ class TestSocialMobilizationChartData:
 
         # Recent rows share one day; the old row adds a second bucket.
         assert len(payload["trend"]) == 2
-        assert all("households_visited" in row for row in payload["trend"])
+        assert all("people_reached" in row for row in payload["trend"])
 
     def test_location_filter_narrows_results(self):
         _build_fixture()

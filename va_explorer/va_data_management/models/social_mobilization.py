@@ -53,6 +53,27 @@ class SocialMobilization(models.Model):
         "Village / Neighbourhood", blank=True, null=True
     )
 
+    # Extended location fields (new form)
+    event_date = models.TextField("Event Date", blank=True, null=True)
+    constituency = models.TextField("Constituency", blank=True, null=True)
+    ward = models.TextField("Ward", blank=True, null=True)
+    ea = models.TextField("Enumeration Area", blank=True, null=True)
+
+    # GPS (split columns from ODK geopoint, new form)
+    event_gps_latitude = models.TextField("GPS Latitude", blank=True, null=True)
+    event_gps_longitude = models.TextField("GPS Longitude", blank=True, null=True)
+    event_gps_altitude = models.TextField("GPS Altitude", blank=True, null=True)
+    event_gps_accuracy = models.TextField("GPS Accuracy", blank=True, null=True)
+
+    # Mobilizer / event metadata (new form)
+    mobilizer_name = models.TextField("Mobilizer Name", blank=True, null=True)
+    mobilizer_role = models.TextField("Mobilizer Role", blank=True, null=True)
+    event_type = models.TextField("Event Type", blank=True, null=True)
+    event_description = models.TextField("Event Description", blank=True, null=True)
+    household_identifier = models.TextField(
+        "Household Identifier", blank=True, null=True
+    )
+
     # Daily tally fields
     day_number = models.TextField("Day Number", blank=True, null=True)
     households_visited = models.TextField("Households Visited", blank=True, null=True)
@@ -68,6 +89,14 @@ class SocialMobilization(models.Model):
         "Religious Leaders Reached", blank=True, null=True
     )
 
+    # Refusal / reluctance flags (yes/no, new form replaces numeric counts above)
+    refusal_reluctance_identified = models.TextField(
+        "Refusal / Reluctance Identified", blank=True, null=True
+    )
+    refusal_reluctance_managed = models.TextField(
+        "Refusal / Reluctance Managed", blank=True, null=True
+    )
+
     # Rumour tracking
     rumor_description = models.TextField("Rumour Description", blank=True, null=True)
     rumor_source = models.TextField("Rumour Source", blank=True, null=True)
@@ -79,6 +108,18 @@ class SocialMobilization(models.Model):
     )
     refusals_from_rumor = models.TextField(
         "Refusals From Rumour", blank=True, null=True
+    )
+
+    # Community outreach channel fields (new form)
+    community_group_name = models.TextField(
+        "Community Group Name", blank=True, null=True
+    )
+    person_name = models.TextField("Person Name", blank=True, null=True)
+    offline_channel_name = models.TextField(
+        "Offline Channel Name", blank=True, null=True
+    )
+    online_page_group_name = models.TextField(
+        "Online Page / Group Name", blank=True, null=True
     )
 
     history = HistoricalRecords()
