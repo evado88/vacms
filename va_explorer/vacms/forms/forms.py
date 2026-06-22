@@ -56,6 +56,20 @@ class ScheduleDeathForm(forms.Form):
             raise forms.ValidationError("Please choose a date to schedule a VA for")
 
 
+class ReassignVAStaffForm(forms.ModelForm):
+    class Meta:
+        model = Event
+        fields = ["va_interview_staff"]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["va_interview_staff"].label = "Reassign to MSO"
+        self.fields["va_interview_staff"].required = True
+        self.fields["va_interview_staff"].queryset = User.objects.filter(
+            groups__name="Mortality Surveillance Officer"
+        ).order_by("name")
+
+
 class VAInterviewStatusForm(forms.ModelForm):
     class Meta:
         model = Event

@@ -426,7 +426,20 @@ const clearBaselinePresetSelection = () => {
 const NOV_LOCATION_OPTIONS = {
   national: [],
   province: ["Central", "Copperbelt", "Eastern", "Southern", "Lusaka", "Western"],
-  district: ["Chirundu", "Chongwe", "Kazungula", "Lusaka", "Namwala"],
+  district: [
+    "Chirundu",
+    "Chisamba",
+    "Chongwe",
+    "Kalulushi",
+    "Kapiri Mposhi",
+    "Kazungula",
+    "Luanshya",
+    "Lusaka",
+    "Mpongwe",
+    "Mumbwa",
+    "Namwala",
+    "Ndola",
+  ],
   constituency: [
     "Chirundu Constituency",
     "Chongwe Constituency",
@@ -521,6 +534,9 @@ const updateNationalOperationalKpis = (kpis) => {
   const pregnancies = kpis.pregnancies || {};
   const pregOutcomes = kpis.preg_outcomes || {};
   const deaths = kpis.deaths || {};
+  const pregnanciesDetected = kpis.pregnancies_detected || {};
+  const pregOutcomesDetected = kpis.preg_outcomes_detected || {};
+  const deathsDetected = kpis.deaths_detected || {};
 
   setElementTextById("nov-kpi-today-eas", eas.today);
   setElementTextById("nov-kpi-week-eas", eas.week);
@@ -541,16 +557,28 @@ const updateNationalOperationalKpis = (kpis) => {
   setElementTextById("nov-kpi-week-pregnancies", pregnancies.week);
   setElementTextById("nov-kpi-30d-pregnancies", pregnancies.last_30_days);
   setElementTextById("nov-kpi-total-pregnancies", pregnancies.total);
+  setElementTextById("nov-kpi-24h-pregnancies-detected", pregnanciesDetected.today);
+  setElementTextById("nov-kpi-week-pregnancies-detected", pregnanciesDetected.week);
+  setElementTextById("nov-kpi-30d-pregnancies-detected", pregnanciesDetected.last_30_days);
+  setElementTextById("nov-kpi-total-pregnancies-detected", pregnanciesDetected.total);
 
   setElementTextById("nov-kpi-today-preg-outcomes", pregOutcomes.today);
   setElementTextById("nov-kpi-week-preg-outcomes", pregOutcomes.week);
   setElementTextById("nov-kpi-30d-preg-outcomes", pregOutcomes.last_30_days);
   setElementTextById("nov-kpi-total-preg-outcomes", pregOutcomes.total);
+  setElementTextById("nov-kpi-24h-preg-outcomes-detected", pregOutcomesDetected.today);
+  setElementTextById("nov-kpi-week-preg-outcomes-detected", pregOutcomesDetected.week);
+  setElementTextById("nov-kpi-30d-preg-outcomes-detected", pregOutcomesDetected.last_30_days);
+  setElementTextById("nov-kpi-total-preg-outcomes-detected", pregOutcomesDetected.total);
 
   setElementTextById("nov-kpi-today-deaths", deaths.today);
   setElementTextById("nov-kpi-week-deaths", deaths.week);
   setElementTextById("nov-kpi-30d-deaths", deaths.last_30_days);
   setElementTextById("nov-kpi-total-deaths", deaths.total);
+  setElementTextById("nov-kpi-24h-deaths-detected", deathsDetected.today);
+  setElementTextById("nov-kpi-week-deaths-detected", deathsDetected.week);
+  setElementTextById("nov-kpi-30d-deaths-detected", deathsDetected.last_30_days);
+  setElementTextById("nov-kpi-total-deaths-detected", deathsDetected.total);
 
   renderOverviewCoverageCharts(kpis);
   scheduleOverviewChartResize();

@@ -1,11 +1,12 @@
 <aside class="kpi-cards-container sm-kpi-cards" data-component="social-mob-kpis">
   <div class="nov-kpi-cards nov-kpi-cards-census">
     <article class="nov-kpi-card">
-      <h6>Households &amp; Outreach</h6>
+      <h6>Events</h6>
       <div class="nov-kpi-metrics">
-        <div><span>Households visited</span><strong>{{ sm_totals.households_visited }}</strong></div>
-        <div><span>Schools reached</span><strong>{{ sm_totals.schools_reached }}</strong></div>
-        <div><span>Religious leaders reached</span><strong>{{ sm_totals.religious_leaders_reached }}</strong></div>
+        <div><span>Total Events</span><strong>{{ sm_totals.event_count }}</strong></div>
+        <div><span>Households</span><strong>{{ sm_totals.households_count }}</strong></div>
+        <div><span>Schools</span><strong>{{ sm_totals.schools_count }}</strong></div>
+        <div><span>Religious Orgs</span><strong>{{ sm_totals.religious_org_count }}</strong></div>
       </div>
     </article>
     <article class="nov-kpi-card">
@@ -18,19 +19,12 @@
       </div>
     </article>
     <article class="nov-kpi-card">
-      <h6>Refusals</h6>
+      <h6>Rumours and Refusals</h6>
       <div class="nov-kpi-metrics">
-        <div><span>Identified</span><strong>{{ sm_totals.refusal_identified }}</strong></div>
-        <div><span>Managed</span><strong>{{ sm_totals.refusal_managed }}</strong></div>
-        <div><span>Managed rate</span><strong>{% if sm_totals.refusal_managed_rate is not None %}{{ sm_totals.refusal_managed_rate }}%{% else %}&mdash;{% endif %}</strong></div>
-      </div>
-    </article>
-    <article class="nov-kpi-card">
-      <h6>Rumours</h6>
-      <div class="nov-kpi-metrics">
-        <div><span>Reported</span><strong>{{ sm_totals.rumours_reported }}</strong></div>
-        <div><span>Children affected</span><strong>{{ sm_totals.children_affected }}</strong></div>
-        <div><span>Refusals from rumour</span><strong>{{ sm_totals.refusals_from_rumor }}</strong></div>
+        <div><span>Total Rumours</span><strong>{{ sm_totals.rumours_reported }}</strong></div>
+        <div><span>Refusal Identified</span><strong>{{ sm_totals.refusal_reluctance_identified }}</strong></div>
+        <div><span>Refusal Managed</span><strong>{{ sm_totals.refusal_reluctance_managed }}</strong></div>
+        <div><span>Refusal Managed Rate</span><strong>{% if sm_totals.refusal_managed_rate is not None %}{{ sm_totals.refusal_managed_rate }}%{% else %}&mdash;{% endif %}</strong></div>
       </div>
     </article>
   </div>

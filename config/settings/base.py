@@ -120,6 +120,13 @@ ODK_PULL_FORMS = [
         "enabled": env.bool("ODK_SOCIAL_MOBILIZATION_FORM_ENABLED", default=True),
         "schedule_key": "operational",
     },
+    {
+        "form_id": env("ODK_SOCIAL_MOBILIZATION_FORM_ID", default=""),
+        "form_name": "social_mobilization_rumor_log",
+        "project_id": ODK_DEFAULT_PROJECT_ID,
+        "enabled": env.bool("ODK_SOCIAL_MOBILIZATION_FORM_ENABLED", default=True),
+        "schedule_key": "operational",
+    },
 ]
 
 DEFAULT_AUTO_FIELD = "django.db.models.AutoField"

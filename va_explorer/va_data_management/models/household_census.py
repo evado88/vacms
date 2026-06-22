@@ -6,6 +6,21 @@ from treebeard.mp_tree import MP_Node
 from va_explorer.va_data_management.models.data_quality import DataQualityIssueMember
 
 
+class RepeatGroupQuerySet(models.QuerySet):
+    """Shared queryset for ODK repeat-group child records (members, deaths, babies).
+
+    The default ``objects`` manager still returns every row so loading and
+    duplicate detection see all records; ``.canonical()`` is the explicit
+    opt-in used at count/display sites so each duplicate set counts once.
+    """
+
+    def canonical(self):
+        return self.filter(is_duplicate=False)
+
+    def duplicates(self):
+        return self.filter(is_duplicate=True)
+
+
 class SRSClusterLocation(MP_Node):
     name = models.TextField()
     location_type = models.TextField()  # e.g., "province", "district", etc.
@@ -318,6 +333,31 @@ class Household(models.Model):
     HH_44 = models.TextField(
         "HH-44. From whom is this housing unit rented? ", blank=True, null=True
     )
+    HH_45 = models.TextField(
+        "HH-45. How long does your household intend to stay in this area?",
+        blank=True,
+        null=True,
+    )
+    HH_46 = models.TextField(
+        "HH-46. Has there been a pregnancy in this household from January 2025 to date?",
+        blank=True,
+        null=True,
+    )
+    HH_46A = models.TextField("HH-46A. How many pregnancies?", blank=True, null=True)
+    HH_47 = models.TextField(
+        "HH-47. Has there been a live birth or still birth in this household from January 2025 to date?",
+        blank=True,
+        null=True,
+    )
+    HH_47A = models.TextField("HH-47A. How many births?", blank=True, null=True)
+    HH_48 = models.TextField(
+        "HH-48. Has there been a death in this household from January 2025 to date?",
+        blank=True,
+        null=True,
+    )
+    death_size = models.TextField(
+        "HH-48A. Total number of deaths?", blank=True, null=True
+    )
     HH_15 = models.TextField(
         "HH-15. How how long do you intend to stay in this area? Or at this householouhsehold?",
         blank=True,
@@ -339,6 +379,9 @@ class HouseholdMember(models.Model):
         related_name="members",
     )
 
+    key = models.CharField(
+        max_length=200, unique=True, db_index=True, null=True, blank=True
+    )
     HH_03 = models.TextField("HH-03. Household Member Details", blank=True, null=True)
     first_name = models.TextField("First name", blank=True, null=True)
     last_name = models.TextField("Last name", blank=True, null=True)
@@ -358,6 +401,7 @@ class HouseholdMember(models.Model):
     HH_08 = models.TextField(
         "HH_08. How old was he/she at the last birthday?", blank=True
     )
+    age_check = models.TextField("Calculated age (from DOB)", blank=True, null=True)
     HH_09 = models.TextField(
         "HH_09. What is his/her current marital status?", blank=True
     )
@@ -379,8 +423,69 @@ class HouseholdMember(models.Model):
         "HH-14. Is he/she currently pregnant?", blank=True, null=True
     )
 
+    is_duplicate = models.BooleanField(default=False, db_index=True)
+    duplicate_of = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="duplicates",
+    )
+    dq_members = GenericRelation(
+        DataQualityIssueMember,
+        content_type_field="content_type",
+        object_id_field="object_id",
+        related_query_name="household_member",
+    )
+
+    objects = RepeatGroupQuerySet.as_manager()
+
     def __str__(self):
         return f"({self.household.hhn}){self.first_name} {self.last_name}"
+
+
+class HouseholdDeath(models.Model):
+    household = models.ForeignKey(
+        Household,
+        to_field="key",
+        db_column="parent_key",
+        on_delete=models.CASCADE,
+        related_name="deaths",
+    )
+    key = models.CharField(
+        max_length=200, unique=True, db_index=True, null=True, blank=True
+    )
+    deathname = models.TextField("First name of deceased", blank=True, null=True)
+    sirname = models.TextField("Surname of deceased", blank=True, null=True)
+    nickdeath = models.TextField(
+        "Other known name (nickname) of deceased", blank=True, null=True
+    )
+    HH_48E = models.TextField(
+        "HH-48E. Date of birth of deceased", blank=True, null=True
+    )
+    age = models.TextField("Age of deceased (calculated)", blank=True, null=True)
+    HH_48F = models.TextField("HH-48F. Sex of deceased", blank=True, null=True)
+    HH_48G = models.TextField("HH-48G. Date of death", blank=True, null=True)
+
+    is_duplicate = models.BooleanField(default=False, db_index=True)
+    duplicate_of = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="duplicates",
+    )
+    dq_members = GenericRelation(
+        DataQualityIssueMember,
+        content_type_field="content_type",
+        object_id_field="object_id",
+        related_query_name="household_death",
+    )
+
+    objects = RepeatGroupQuerySet.as_manager()
+
+    def __str__(self):
+        return f"({self.household.hhn}) {self.deathname} {self.sirname}"
 
 
 class HouseholdDuplicate(models.Model):

@@ -20,7 +20,7 @@ from va_explorer.va_data_management.utils.loading import (
 class Command(BaseCommand):
     help = (
         "Load pregnancy outcome baby-details CSV and link each row to an existing "
-        "PregnancyOutcome via PARENT_KEY -> PregnancyOutcome.key."
+        "PregnancyOutcome via PARENT_KEY → PregnancyOutcome.key."
     )
 
     def add_arguments(self, parser):
@@ -46,35 +46,37 @@ class Command(BaseCommand):
 
         df = pd.read_csv(csv_file, dtype=str)
 
-        # Normalize parent-child linkage columns from ODK exports.
+        # Standardise KEY and PARENT_KEY column names
         if "PARENT_KEY" in df.columns:
             df = df.rename(columns={"PARENT_KEY": "parent_key"})
         if "KEY" in df.columns:
-            df = df.rename(columns={"KEY": "row_key"})
+            df = df.rename(columns={"KEY": "key"})
 
         if "parent_key" not in df.columns:
             raise CommandError(
-                "CSV must contain 'PARENT_KEY' (or normalized 'parent_key') to link baby rows."
+                "CSV must contain 'PARENT_KEY' to link baby rows to a PregnancyOutcome."
             )
 
-        # Standardize parent keys and drop blank links.
+        # Drop rows with blank parent links up-front
         df["parent_key"] = df["parent_key"].astype(str).str.strip()
         before_blank_parent = len(df)
-        df = df[df["parent_key"].notna() & (df["parent_key"] != "")]
+        df = df[
+            df["parent_key"].notna()
+            & (df["parent_key"] != "")
+            & (df["parent_key"] != "nan")
+        ]
         dropped_blank_parent = before_blank_parent - len(df)
 
-        # Intra-file de-duplication by row KEY if present.
+        # Intra-file de-duplication by KEY
         intrafile_dupes = 0
-        if "row_key" in df.columns:
+        if "key" in df.columns:
+            df["key"] = df["key"].astype(str).str.strip()
             before_dupes = len(df)
-            df["row_key"] = df["row_key"].astype(str).str.strip()
-            df = df[df["row_key"].notna() & (df["row_key"] != "")]
-            df = df.sort_values("row_key").drop_duplicates(
-                subset=["row_key"], keep="last"
-            )
+            df = df[df["key"].notna() & (df["key"] != "") & (df["key"] != "nan")]
+            df = df.sort_values("key").drop_duplicates(subset=["key"], keep="last")
             intrafile_dupes = before_dupes - len(df)
 
-        # Map ODK choice values to labels for baby fields.
+        # Map ODK choice values to human-readable labels
         odk_map = {}
         for choice in odk_choices:
             field = normalize_string(choice.field_name)
@@ -91,12 +93,35 @@ class Command(BaseCommand):
             if col in df.columns:
                 df[col] = df[col].apply(lambda v, c=col: apply_odk_map(c, v))
 
+        # Preserve link columns before normalization strips them
         parent_keys = df["parent_key"].copy()
+        baby_keys = (
+            df["key"].copy()
+            if "key" in df.columns
+            else pd.Series([None] * len(df), index=df.index)
+        )
 
-        # Keep only model fields; restore parent_key for relation handling.
         df = normalize_dataframe_columns(df, PregnancyOutcomeBaby)
-        df["parent_key"] = parent_keys
 
+        # Restore link columns
+        df["parent_key"] = parent_keys
+        df["key"] = baby_keys
+
+        # DB-level deduplication: skip babies already imported
+        existing_keys: set = set()
+        csv_keys = [
+            str(k).strip()
+            for k in baby_keys
+            if not pd.isnull(k) and str(k).strip() not in ("", "nan")
+        ]
+        if csv_keys:
+            existing_keys = set(
+                PregnancyOutcomeBaby.objects.filter(key__in=csv_keys).values_list(
+                    "key", flat=True
+                )
+            )
+
+        # Build parent outcome lookup
         outcome_map = {
             outcome.key: outcome
             for outcome in PregnancyOutcome.objects.exclude(key__isnull=True).only(
@@ -106,33 +131,50 @@ class Command(BaseCommand):
 
         objects = []
         skipped_rows = []
+        skip_reasons = {
+            "blank parent_key": dropped_blank_parent,
+            "parent key not found": 0,
+            "baby key already exists": 0,
+        }
 
-        for idx, row in df.iterrows():
+        for _, row in df.iterrows():
+            # DB-level dedup by key
+            baby_key = row.get("key")
+            baby_key_str = str(baby_key).strip()
+            if (
+                not pd.isnull(baby_key)
+                and baby_key_str not in ("", "nan")
+                and baby_key_str in existing_keys
+            ):
+                skip_reasons["baby key already exists"] += 1
+                skipped_rows.append(row)
+                continue
+
             parent_key = (row.get("parent_key") or "").strip()
             pregnancy_outcome = outcome_map.get(parent_key)
             if not pregnancy_outcome:
-                row_data = row.to_dict()
-                row_data["skip_reason"] = f"parent key '{parent_key}' not found"
-                row_data["csv_row_index"] = idx
-                skipped_rows.append(row_data)
+                skip_reasons["parent key not found"] += 1
+                skipped_rows.append(row)
                 continue
 
-            data = row.drop("parent_key").to_dict()
+            data = row.drop(["parent_key"]).to_dict()
+            if "key" in data and not pd.isnull(data.get("key")):
+                data["key"] = str(data["key"]).strip() or None
+            else:
+                data.pop("key", None)
+
             obj = PregnancyOutcomeBaby(**data)
             obj.pregnancy_outcome = pregnancy_outcome
             objects.append(obj)
 
-        created = 0
         if objects:
-            PregnancyOutcomeBaby.objects.bulk_create(objects)
-            created = len(objects)
+            PregnancyOutcomeBaby.objects.bulk_create(objects, batch_size=2000)
 
-        self.stdout.write(
-            f"Imported {created} pregnancy outcome baby detail records "
-            f"(skipped {len(skipped_rows)} missing-parent rows, dropped {dropped_blank_parent} blank-parent rows, "
-            f"{intrafile_dupes} intra-file duplicates by KEY)."
-        )
+        imported = len(objects)
+        skipped = len(skipped_rows)
+        total_rows = len(df) + dropped_blank_parent
 
+        log_file = None
         if skipped_rows:
             os.makedirs(log_dir, exist_ok=True)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -140,4 +182,36 @@ class Command(BaseCommand):
                 log_dir, f"skipped_pregnancy_outcome_baby_details_{timestamp}.csv"
             )
             pd.DataFrame(skipped_rows).to_csv(log_file, index=False)
-            self.stdout.write(self.style.WARNING(f"Logged skipped rows to {log_file}"))
+
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"Imported {imported} of {total_rows} baby detail record(s) "
+                f"({intrafile_dupes} intra-file duplicate(s) removed)."
+            )
+        )
+        if dropped_blank_parent or skipped:
+            self.stdout.write(self.style.WARNING("Skipped:"))
+            for reason, count in skip_reasons.items():
+                if count:
+                    self.stdout.write(self.style.WARNING(f"  - {reason}: {count}"))
+            if log_file:
+                self.stdout.write(
+                    self.style.WARNING(f"Logged skipped rows to {log_file}")
+                )
+
+        if imported == 0:
+            self.stderr.write(
+                self.style.ERROR(
+                    "No baby detail records were imported — every row was skipped. "
+                    "Check that the matching PregnancyOutcome records are loaded and that "
+                    "the CSV's PARENT_KEY values match PregnancyOutcome.key."
+                )
+            )
+        elif total_rows and (skipped + dropped_blank_parent) / total_rows > 0.5:
+            self.stderr.write(
+                self.style.ERROR(
+                    f"More than half the rows were skipped ({skipped + dropped_blank_parent}/{total_rows}). "
+                    "This usually means the CSV's PARENT_KEY values do not match "
+                    "the loaded PregnancyOutcome records — review the skipped-rows log."
+                )
+            )

@@ -15,7 +15,7 @@
     </div>
   </div>
   {% if request.user.can_download_csv_exports %}
-  <a class="btn btn-sm btn-outline-secondary csa-download-button" href="{% url 'home:regional_operations_csa_csv_export' %}" aria-label="Download CSV" title="Download CSV">
+  <a class="btn btn-sm btn-outline-secondary csa-download-button" href="{% url 'home:regional_operations_csa_csv_export' %}?{{ request.GET.urlencode }}" aria-label="Download CSV" title="Download CSV">
     <i class="fas fa-download" aria-hidden="true"></i>
   </a>
   {% endif %}

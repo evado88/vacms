@@ -131,6 +131,12 @@ def process_user_data(user, cleaned_data):
             denied_permissions.add(perm_name)
             user.user_permissions.remove(perm)
 
+    # Role-guaranteed PII visibility: never persist a PII denial for a role that
+    # grants it (mirrors User.can_view_pii's role guarantee), so an unchecked
+    # "View PII" box can't leave a misleading, ineffective denial behind.
+    if "va_analytics.view_pii" in group_permissions:
+        denied_permissions.discard("va_analytics.view_pii")
+
     user.denied_permissions = sorted(denied_permissions)
 
     user.save()

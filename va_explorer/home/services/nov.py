@@ -140,6 +140,66 @@ def _db_windowed_counts(queryset, key_field, date_fields, start_dt, end_dt):
     }
 
 
+def _safe_int(value):
+    """Parse a household self-reported count from a free-text field.
+
+    Household census counts (HH_46A / HH_47A / death_size) are stored as
+    ``TextField``s, so values are parsed in Python rather than DB-cast. Mirrors
+    the tolerant parsing in ``home.dashboard_metrics._safe_int``.
+    """
+    if value in (None, ""):
+        return 0
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
+    text = str(value).strip().replace(",", "")
+    if not text:
+        return 0
+    try:
+        return int(float(text))
+    except (TypeError, ValueError):
+        digits = "".join(ch for ch in text if (ch.isdigit() or ch == "-"))
+        try:
+            return int(digits)
+        except (TypeError, ValueError):
+            return 0
+
+
+def _household_detected_windowed_sums(households_qs, field, start_dt, end_dt):
+    """Sum a parsed household self-reported count field across time windows.
+
+    Mirrors :func:`_db_windowed_counts` but sums parsed text values instead of
+    counting rows. Each household is timestamped via the latest of
+    ``CORE_EVENT_DATE_FIELDS`` and bucketed into the today/week/last_30_days/
+    total windows in a single Python pass.
+    """
+    latest_expr = _latest_text_expr(households_qs.model, CORE_EVENT_DATE_FIELDS)
+    rows = (
+        households_qs.annotate(_latest_ts=latest_expr)
+        .exclude(_latest_ts__isnull=True)
+        .values_list("_latest_ts", field)
+    )
+    windows, effective_end = _window_bounds(start_dt, end_dt)
+    totals = dict.fromkeys(windows, 0)
+    for raw_ts, raw_value in rows.iterator():
+        ts = parse_submission_timestamp(raw_ts)
+        if ts is None:
+            continue
+        if effective_end is not None and ts > effective_end:
+            continue
+        value = _safe_int(raw_value)
+        if not value:
+            continue
+        for name, window_start in windows.items():
+            if window_start is None or ts >= window_start:
+                totals[name] += value
+    return totals
+
+
 def _people_counts_for_households(households_qs, start_dt, end_dt):
     windows, effective_end = _window_bounds(start_dt, end_dt)
 
@@ -393,6 +453,16 @@ def get_national_operational_view_data(
         vas_totals = _db_windowed_counts(
             va_qs, "instanceid", VA_DATE_FIELDS, start_dt, end_dt
         )
+    with timed_block("home.nov.kpi_counts.detected", request=request):
+        pregnancies_detected = _household_detected_windowed_sums(
+            households_qs, "HH_46A", start_dt, end_dt
+        )
+        preg_outcomes_detected = _household_detected_windowed_sums(
+            households_qs, "HH_47A", start_dt, end_dt
+        )
+        deaths_detected = _household_detected_windowed_sums(
+            households_qs, "death_size", start_dt, end_dt
+        )
 
     if include_chart_series:
         with timed_block("home.nov.latest_timestamps.events", request=request):
@@ -442,6 +512,9 @@ def get_national_operational_view_data(
         "preg_outcomes": pregnancy_outcomes_totals,
         "deaths": deaths_totals,
         "vas": vas_totals,
+        "pregnancies_detected": pregnancies_detected,
+        "preg_outcomes_detected": preg_outcomes_detected,
+        "deaths_detected": deaths_detected,
     }
 
     return {

@@ -71,7 +71,6 @@ class Households(
         "district",
         "ward",
         "locality_name",
-        "respondent",
     )
 
     def get_queryset(self):
@@ -104,6 +103,9 @@ class HouseholdDetail(
         history = self.object.history.all().reverse()
         context["history"] = history
         context["form"] = HouseholdForm(instance=self.object)
+        # Show one row per duplicate set; flagged duplicates are excluded.
+        context["members"] = self.object.members.filter(is_duplicate=False)
+        context["deaths"] = self.object.deaths.filter(is_duplicate=False)
 
         # Fetch issues via reverse relation through members
         ct = ContentType.objects.get_for_model(Household)

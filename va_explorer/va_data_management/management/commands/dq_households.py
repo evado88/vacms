@@ -2,8 +2,15 @@
 
 from django.core.management.base import BaseCommand
 
+from va_explorer.va_data_management.management.commands.dedupe_child_records import (
+    print_dedup_summary,
+)
 from va_explorer.va_data_management.models import Household
 from va_explorer.va_data_management.utils.dq_specs import DQ_SPECS, run_dq_for_model
+from va_explorer.va_data_management.utils.repeat_group_dedup import (
+    CHILD_DEDUP_SPECS,
+    run_dedup_for_model,
+)
 
 
 class Command(BaseCommand):
@@ -22,6 +29,11 @@ class Command(BaseCommand):
     def handle(self, *args, **opts):
         summary = run_dq_for_model(DQ_SPECS[Household])
         _print_summary(self, summary)
+
+        # Content-based duplicate detection for the household repeat-group rows.
+        for target in ("members", "deaths"):
+            child_summary = run_dedup_for_model(CHILD_DEDUP_SPECS[target])
+            print_dedup_summary(self, child_summary)
 
 
 def _print_summary(command, summary):

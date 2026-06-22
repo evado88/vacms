@@ -40,7 +40,11 @@ from va_explorer.vacms.admin_panel import (
 
 # Create your views here.
 from va_explorer.vacms.cmsmodels.events import Event
-from va_explorer.vacms.forms.forms import ScheduleDeathForm, VAInterviewStatusForm
+from va_explorer.vacms.forms.forms import (
+    ReassignVAStaffForm,
+    ScheduleDeathForm,
+    VAInterviewStatusForm,
+)
 from va_explorer.vacms.notifications import (
     ensure_va_schedule_message,
     remove_va_schedule_message,
@@ -331,7 +335,7 @@ def EventCreateDeathView(request, death):
             deathDetail.eventid = newEvent.id
             deathDetail.save()
 
-            return redirect(reverse("cms-event-list"))
+            return redirect(reverse("va_data_management:deaths"))
 
             """
               return HttpResponse(
@@ -398,14 +402,25 @@ class EventDetailView(DetailView):
 
     def dispatch(self, request, *args, **kwargs):
         self.object = self.get_object()
-        if request.method.lower() == "post" and not self._can_update_status(
-            self.object
-        ):
-            return HttpResponseForbidden("You are not allowed to update this event.")
+        if request.method.lower() == "post":
+            action = request.POST.get("action")
+            if action == "reassign":
+                if not user_can_manage_va_schedule(request.user):
+                    return HttpResponseForbidden(
+                        "You are not allowed to reassign this VA."
+                    )
+            elif not self._can_update_status(self.object):
+                return HttpResponseForbidden(
+                    "You are not allowed to update this event."
+                )
         return super().dispatch(request, *args, **kwargs)
 
     def post(self, request, *args, **kwargs):
         self.object = getattr(self, "object", self.get_object())
+
+        if request.POST.get("action") == "reassign":
+            return self._handle_reassign(request)
+
         form = VAInterviewStatusForm(request.POST, instance=self.object)
         if form.is_valid():
             updated_event = form.save()
@@ -418,6 +433,15 @@ class EventDetailView(DetailView):
             return redirect("cms-event-detail", pk=self.object.pk)
 
         context = self.get_context_data(status_form=form)
+        return self.render_to_response(context)
+
+    def _handle_reassign(self, request):
+        form = ReassignVAStaffForm(request.POST, instance=self.object)
+        if form.is_valid():
+            form.save()
+            messages.success(request, "VA interview re-assigned successfully.")
+            return redirect("cms-event-detail", pk=self.object.pk)
+        context = self.get_context_data(reassign_form=form)
         return self.render_to_response(context)
 
     def get_context_data(self, **kwargs):
@@ -449,6 +473,15 @@ class EventDetailView(DetailView):
             "status_form", VAInterviewStatusForm(instance=event)
         )
         context["can_update_va_status"] = self._can_update_status(event)
+        can_reassign = (
+            user_can_manage_va_schedule(self.request.user)
+            and event.event_status == Event.EventStatus.VA_INTERVIEW_SCHEDULED
+        )
+        context["can_reassign"] = can_reassign
+        context["reassign_form"] = kwargs.get(
+            "reassign_form",
+            ReassignVAStaffForm(instance=event) if can_reassign else None,
+        )
         context["user_can_manage_schedule"] = user_can_manage_va_schedule(
             self.request.user
         )

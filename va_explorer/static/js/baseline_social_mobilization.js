@@ -41,31 +41,43 @@
     village_neighbourhood: { singular: "village", children: null },
   };
 
-  // Sub-tabs. "results" sub-tabs chart per-location bars (and drill on click);
-  // the "trend" sub-tab charts the daily time series and does not drill.
+  // Palette used for the multicolor people-reached chart (one colour per bar).
+  const CHART_PALETTE = [
+    "#2563eb", "#16a34a", "#dc2626", "#d97706", "#7c3aed",
+    "#0891b2", "#be185d", "#15803d", "#b45309", "#1d4ed8",
+    "#ea580c", "#0e7490", "#7e22ce", "#166534", "#9f1239",
+    "#0369a1", "#92400e", "#065f46", "#1e1b4b", "#4a044e",
+  ];
+
+  // Sub-tabs. "results" sub-tabs chart per-location grouped bars (drill on
+  // click); "multicolor" charts a single series with one colour per bar;
+  // "trend" charts the daily time series and does not drill.
   const SUBTABS = [
     {
-      key: "reach",
-      canvasId: "smReachChart",
+      key: "event_types",
+      canvasId: "smEventTypesChart",
       kind: "results",
       series: [
-        { key: "households_visited", label: "Households visited", color: "#2563eb" },
-        { key: "people_reached", label: "People reached", color: "#16a34a" },
-        { key: "schools_reached", label: "Schools", color: "#7c3aed" },
-        {
-          key: "religious_leaders_reached",
-          label: "Religious leaders",
-          color: "#0891b2",
-        },
+        { key: "households_count", label: "Households", color: "#2563eb" },
+        { key: "schools_count", label: "Schools", color: "#7c3aed" },
+        { key: "religious_org_count", label: "Religious orgs", color: "#0891b2" },
+        { key: "other_count", label: "Other", color: "#94a3b8" },
       ],
+    },
+    {
+      key: "people_reached",
+      canvasId: "smPeopleReachedChart",
+      kind: "multicolor",
+      seriesKey: "people_reached",
+      seriesLabel: "People reached",
     },
     {
       key: "refusals",
       canvasId: "smRefusalsChart",
       kind: "results",
       bars: [
-        { key: "refusal_identified", label: "Identified", color: "#dc2626" },
-        { key: "refusal_managed", label: "Managed", color: "#16a34a" },
+        { key: "refusal_reluctance_identified", label: "Identified", color: "#dc2626" },
+        { key: "refusal_reluctance_managed", label: "Managed", color: "#16a34a" },
       ],
       rate: { key: "refusal_managed_rate", label: "Managed rate" },
     },
@@ -75,12 +87,6 @@
       kind: "results",
       series: [
         { key: "rumours_reported", label: "Rumours reported", color: "#7c3aed" },
-        { key: "children_affected", label: "Children affected", color: "#dc2626" },
-        {
-          key: "refusals_from_rumor",
-          label: "Refusals from rumour",
-          color: "#f59e0b",
-        },
       ],
     },
     {
@@ -92,7 +98,7 @@
   const subtabByKey = (key) => SUBTABS.find((s) => s.key === key) || SUBTABS[0];
 
   let initialized = false;
-  let activeSubtab = "reach";
+  let activeSubtab = "event_types";
   let fetchRequestId = 0;
   let lastPayload = null;
   // Drill-down position: the level currently shown plus accumulated parents.
@@ -383,8 +389,17 @@
     const labels = trend.map((row) => row.date);
     const datasets = [
       {
-        label: "Households visited",
-        data: trend.map((row) => row.households_visited),
+        label: "People reached",
+        data: trend.map((row) => row.people_reached),
+        borderColor: "#16a34a",
+        backgroundColor: "#16a34a",
+        borderWidth: 2,
+        pointRadius: 3,
+        tension: 0.25,
+      },
+      {
+        label: "Households",
+        data: trend.map((row) => row.households_count),
         borderColor: "#2563eb",
         backgroundColor: "#2563eb",
         borderWidth: 2,
@@ -392,10 +407,28 @@
         tension: 0.25,
       },
       {
-        label: "People reached",
-        data: trend.map((row) => row.people_reached),
-        borderColor: "#16a34a",
-        backgroundColor: "#16a34a",
+        label: "Schools",
+        data: trend.map((row) => row.schools_count),
+        borderColor: "#7c3aed",
+        backgroundColor: "#7c3aed",
+        borderWidth: 2,
+        pointRadius: 3,
+        tension: 0.25,
+      },
+      {
+        label: "Religious orgs",
+        data: trend.map((row) => row.religious_org_count),
+        borderColor: "#0891b2",
+        backgroundColor: "#0891b2",
+        borderWidth: 2,
+        pointRadius: 3,
+        tension: 0.25,
+      },
+      {
+        label: "Other",
+        data: trend.map((row) => row.other_count),
+        borderColor: "#94a3b8",
+        backgroundColor: "#94a3b8",
         borderWidth: 2,
         pointRadius: 3,
         tension: 0.25,
@@ -436,6 +469,77 @@
     chartInstances.set(canvas, chart);
   };
 
+  const renderMulticolorChart = (subtab) => {
+    const canvas = byId(subtab.canvasId);
+    if (!canvas || typeof Chart === "undefined" || !lastPayload) return;
+    destroyChartForCanvas(canvas);
+
+    const results = lastPayload.results || [];
+    const labels = results.map((row) => row.label || "—");
+    const colors = results.map((_, i) => CHART_PALETTE[i % CHART_PALETTE.length]);
+
+    sizeCanvasBox(canvas.closest(".baseline-chart-canvas-box"), results.length);
+
+    const chart = new Chart(canvas.getContext("2d"), {
+      type: "bar",
+      data: {
+        labels,
+        datasets: [
+          {
+            label: subtab.seriesLabel,
+            data: results.map((row) => row[subtab.seriesKey]),
+            backgroundColor: colors,
+            borderRadius: 4,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { intersect: false, mode: "index" },
+        layout: { padding: { top: 22 } },
+        onClick: (evt, elements) => {
+          if (!elements || !elements.length) return;
+          drillInto(results[elements[0].index]);
+        },
+        onHover: (evt, elements) => {
+          const target = evt && evt.native && evt.native.target;
+          if (!target) return;
+          const row = elements && elements.length ? results[elements[0].index] : null;
+          target.style.cursor = row && row.has_children ? "pointer" : "default";
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              title(items) {
+                return items.length ? (results[items[0].dataIndex] || {}).label || "—" : "";
+              },
+              label(context) {
+                const value = context.raw;
+                if (value === null || value === undefined) return "";
+                return `${subtab.seriesLabel}: ${formatCount(value)}`;
+              },
+            },
+          },
+        },
+        scales: {
+          x: {
+            grid: { display: false },
+            ticks: { autoSkip: false, maxRotation: 45, minRotation: 0 },
+          },
+          y: {
+            beginAtZero: true,
+            title: { display: true, text: "People reached" },
+            ticks: { callback: (value) => formatCount(value) },
+          },
+        },
+      },
+      plugins: labelsPlugin ? [labelsPlugin] : [],
+    });
+    chartInstances.set(canvas, chart);
+  };
+
   const renderActiveSubtab = () => {
     if (!lastPayload) return;
     const subtab = subtabByKey(activeSubtab);
@@ -444,6 +548,10 @@
       return;
     }
     if (!lastPayload.results || lastPayload.results.length === 0) return;
+    if (subtab.kind === "multicolor") {
+      renderMulticolorChart(subtab);
+      return;
+    }
     renderResultsChart(subtab);
   };
 

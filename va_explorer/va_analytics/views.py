@@ -15,12 +15,15 @@ from django.db.models import (
     Count,
     DateField,
     F,
+    IntegerField,
     Max,
+    OuterRef,
     Q,
+    Subquery,
     Value,
     When,
 )
-from django.db.models.functions import Cast, Lower, Substr, Trim
+from django.db.models.functions import Cast, Coalesce, Lower, Substr, Trim
 from django.http import HttpResponse, JsonResponse
 from django.urls import reverse
 from django.utils import timezone
@@ -1675,6 +1678,67 @@ def _household_counts_by_geoid(start_iso, end_iso, date_filter, target_rows):
     return counts
 
 
+def _safe_household_count(value):
+    """Parse a household self-reported count from a free-text census field.
+
+    HH_46A / HH_47A / death_size are ``TextField``s, so values are parsed in
+    Python rather than DB-cast. Tolerates commas, decimals, and stray text.
+    """
+    if value in (None, ""):
+        return 0
+    text = str(value).strip().replace(",", "")
+    if not text:
+        return 0
+    try:
+        return int(float(text))
+    except (TypeError, ValueError):
+        digits = "".join(ch for ch in text if (ch.isdigit() or ch == "-"))
+        try:
+            return int(digits)
+        except (TypeError, ValueError):
+            return 0
+
+
+def _household_detected_counts_by_geoid(start_iso, end_iso, date_filter, target_rows):
+    """Per-geoid sums of household self-reported (detected) event counts.
+
+    Mirrors :func:`_household_counts_by_geoid` but sums the parsed text fields
+    HH_46A (pregnancies), HH_47A (pregnancy outcomes) and death_size (deaths)
+    rather than counting rows.
+    """
+    target_by_geoid = _baseline_target_by_geoid(target_rows)
+    if not target_by_geoid:
+        return {}
+
+    from va_explorer.va_data_management.models import Household
+
+    counts = {}
+    rows = date_filter(
+        Household.objects.all(), "submissiondate", start_iso, end_iso
+    ).values("cluster__name", "ea", "HH_46A", "HH_47A", "death_size")
+    for row in rows.iterator():
+        geoid = _resolve_household_geoid(
+            row,
+            cluster_key="cluster__name",
+            ea_key="ea",
+            target_by_geoid=target_by_geoid,
+        )
+        if not geoid:
+            continue
+        acc = counts.setdefault(
+            geoid,
+            {
+                "detected_deaths": 0,
+                "detected_pregnancies": 0,
+                "detected_preg_outcomes": 0,
+            },
+        )
+        acc["detected_pregnancies"] += _safe_household_count(row["HH_46A"])
+        acc["detected_preg_outcomes"] += _safe_household_count(row["HH_47A"])
+        acc["detected_deaths"] += _safe_household_count(row["death_size"])
+    return counts
+
+
 def _household_member_counts_by_geoid(start_iso, end_iso, date_filter, target_rows):
     target_by_geoid = _baseline_target_by_geoid(target_rows)
     if not target_by_geoid:
@@ -1685,7 +1749,7 @@ def _household_member_counts_by_geoid(start_iso, end_iso, date_filter, target_ro
     counts = {}
     rows = (
         date_filter(
-            HouseholdMember.objects.exclude(household__isnull=True),
+            HouseholdMember.objects.canonical().exclude(household__isnull=True),
             "household__submissiondate",
             start_iso,
             end_iso,
@@ -1720,7 +1784,7 @@ def _unmatched_household_member_counts(start_iso, end_iso, date_filter, target_r
 
     rows = (
         date_filter(
-            HouseholdMember.objects.exclude(household__isnull=True),
+            HouseholdMember.objects.canonical().exclude(household__isnull=True),
             "household__submissiondate",
             start_iso,
             end_iso,
@@ -1812,9 +1876,12 @@ class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
         "pop_coverage",
         "refusals",
         "non_contact",
-        "total_deaths",
-        "total_pregnancies",
-        "total_preg_outcomes",
+        "detected_deaths",
+        "captured_deaths",
+        "detected_pregnancies",
+        "captured_pregnancies",
+        "detected_preg_outcomes",
+        "captured_preg_outcomes",
     }
     _LOCATION_FIELD_MAP = {
         "province": "province_name",
@@ -1832,9 +1899,12 @@ class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
         "pop_enumerated",
         "refusals",
         "non_contact",
-        "total_deaths",
-        "total_pregnancies",
-        "total_preg_outcomes",
+        "detected_deaths",
+        "captured_deaths",
+        "detected_pregnancies",
+        "captured_pregnancies",
+        "detected_preg_outcomes",
+        "captured_preg_outcomes",
     )
 
     def _build_census_rows(
@@ -1901,6 +1971,12 @@ class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
             self._date_filter,
             all_target_rows_for_geo,
         )
+        detected_by_geoid = _household_detected_counts_by_geoid(
+            start_iso,
+            end_iso,
+            self._date_filter,
+            all_target_rows_for_geo,
+        )
 
         # --- Base rows: every EA in the target table (all 10 provinces) ---
         targets = SRSEAPopulationTarget.objects.all()
@@ -1933,6 +2009,7 @@ class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
         for target in targets:
             geoid = target["geoid"]
             hh = hh_by_geoid.get(geoid, {})
+            detected = detected_by_geoid.get(geoid, {})
             hh_enumerated = hh.get("hh_enumerated", 0)
             pop_enumerated = pop_by_geoid.get(geoid, 0)
             hh_estimate = target["household_target"]
@@ -1955,9 +2032,12 @@ class BaselineCensusProvinceTableComponent(CustomAuthMixin, TemplateView):
                     "pop_coverage_band": coverage_band(pop_coverage),
                     "refusals": hh.get("refusals", 0),
                     "non_contact": hh.get("non_contact", 0),
-                    "total_deaths": death_by_geoid.get(geoid, 0),
-                    "total_pregnancies": preg_by_geoid.get(geoid, 0),
-                    "total_preg_outcomes": po_by_geoid.get(geoid, 0),
+                    "detected_deaths": detected.get("detected_deaths", 0),
+                    "captured_deaths": death_by_geoid.get(geoid, 0),
+                    "detected_pregnancies": detected.get("detected_pregnancies", 0),
+                    "captured_pregnancies": preg_by_geoid.get(geoid, 0),
+                    "detected_preg_outcomes": detected.get("detected_preg_outcomes", 0),
+                    "captured_preg_outcomes": po_by_geoid.get(geoid, 0),
                 }
             )
         return rows
@@ -2212,9 +2292,12 @@ class BaselineCensusTableCsvExport(
         ("pop_coverage", "Pop. Coverage %"),
         ("refusals", "Refusals"),
         ("non_contact", "Non-Contact"),
-        ("total_deaths", "Total Deaths"),
-        ("total_pregnancies", "Total Pregnancies"),
-        ("total_preg_outcomes", "Total Preg. Outcomes"),
+        ("detected_deaths", "Detected Deaths"),
+        ("captured_deaths", "Captured Deaths"),
+        ("detected_pregnancies", "Detected Pregnancies"),
+        ("captured_pregnancies", "Captured Pregnancies"),
+        ("detected_preg_outcomes", "Detected Preg. Outcomes"),
+        ("captured_preg_outcomes", "Captured Preg. Outcomes"),
     )
 
     def get(self, request, *args, **kwargs):
@@ -2246,25 +2329,16 @@ class BaselineCensusTableCsvExport(
                 [self._csv_value(row.get(key)) for key, _ in self._CSV_COLUMNS]
             )
         if total:
-            writer.writerow(
-                [
-                    "Grand Total / Average",
-                    "",
-                    "",
-                    "",
-                    self._csv_value(total.get("hh_estimate")),
-                    self._csv_value(total.get("hh_enumerated")),
-                    self._csv_value(total.get("hh_coverage")),
-                    self._csv_value(total.get("pop_estimate")),
-                    self._csv_value(total.get("pop_enumerated")),
-                    self._csv_value(total.get("pop_coverage")),
-                    self._csv_value(total.get("refusals")),
-                    self._csv_value(total.get("non_contact")),
-                    self._csv_value(total.get("total_deaths")),
-                    self._csv_value(total.get("total_pregnancies")),
-                    self._csv_value(total.get("total_preg_outcomes")),
-                ]
-            )
+            # First column carries the label; ward/ea are blank; the rest are
+            # the summarized values keyed by column, so the row stays aligned
+            # with _CSV_COLUMNS automatically.
+            grand_total_row = ["Grand Total / Average"]
+            for key, _ in self._CSV_COLUMNS[1:]:
+                if key in {"district", "ward", "ea"}:
+                    grand_total_row.append("")
+                else:
+                    grand_total_row.append(self._csv_value(total.get(key)))
+            writer.writerow(grand_total_row)
         return response
 
     @staticmethod
@@ -2722,18 +2796,16 @@ _SOCMOB_CHILD_OF = {
     "district": "health_facility",
     "health_facility": "village_neighbourhood",
 }
-# Numeric tally fields summed during roll-up.
+# Numeric tally fields summed during roll-up (new form; people counts remain numeric).
 _SOCMOB_SUM_FIELDS = (
-    "households_visited",
     "people_over_15",
     "children_5_14",
     "children_12_59months",
-    "schools_reached",
-    "religious_leaders_reached",
-    "refusal_identified",
-    "refusal_managed",
-    "children_affected",
-    "refusals_from_rumor",
+)
+# Yes/no refusal flag fields (new form) — accumulated by counting "yes" responses.
+_SOCMOB_REFUSAL_FIELDS = (
+    "refusal_reluctance_identified",
+    "refusal_reluctance_managed",
 )
 # Location columns shown on the aggregated table (one row per village).
 _SOCMOB_TABLE_GROUP_FIELDS = (
@@ -2746,7 +2818,14 @@ _SOCMOB_TABLE_GROUP_FIELDS = (
 _SOCMOB_SORT_FIELDS = frozenset(
     _SOCMOB_TABLE_GROUP_FIELDS
     + _SOCMOB_SUM_FIELDS
-    + ("people_reached", "refusal_managed_rate", "rumours_reported")
+    + (
+        "event_count",
+        "people_reached",
+        "refusal_reluctance_identified",
+        "refusal_reluctance_managed",
+        "refusal_managed_rate",
+        "rumours_reported",
+    )
 )
 
 
@@ -2815,20 +2894,54 @@ def _socmob_base_queryset(
         field = _SOCMOB_LEVEL_FIELD.get(parent_level)
         if parent_value and field:
             qs = qs.filter(**{field: parent_value})
+
+    from va_explorer.va_data_management.models import RumorLog as _RumorLog
+
+    rumor_count_subq = (
+        _RumorLog.objects.filter(
+            social_mobilization_id=OuterRef("key"),
+            is_duplicate=False,
+        )
+        .values("social_mobilization_id")
+        .annotate(_n=Count("id"))
+        .values("_n")[:1]
+    )
+    qs = qs.annotate(
+        rumor_log_count=Coalesce(
+            Subquery(rumor_count_subq, output_field=IntegerField()), 0
+        )
+    )
     return qs
 
 
 def _socmob_new_group():
     acc = dict.fromkeys(_SOCMOB_SUM_FIELDS, 0)
+    acc["event_count"] = 0
+    acc["refusal_reluctance_identified_count"] = 0
+    acc["refusal_reluctance_managed_count"] = 0
     acc["rumours_reported"] = 0
+    acc["households_count"] = 0
+    acc["schools_count"] = 0
+    acc["religious_org_count"] = 0
     return acc
 
 
 def _socmob_accumulate(acc, row):
     for field in _SOCMOB_SUM_FIELDS:
         acc[field] += _socmob_to_int(row.get(field))
-    if (row.get("rumor_description") or "").strip():
-        acc["rumours_reported"] += 1
+    acc["event_count"] += 1
+    if str(row.get("refusal_reluctance_identified") or "").strip().lower() == "yes":
+        acc["refusal_reluctance_identified_count"] += 1
+    if str(row.get("refusal_reluctance_managed") or "").strip().lower() == "yes":
+        acc["refusal_reluctance_managed_count"] += 1
+    acc["rumours_reported"] += row.get("rumor_log_count") or 0
+    et = (row.get("event_type") or "").strip().lower()
+    if et == "household":
+        acc["households_count"] += 1
+    elif et == "school":
+        acc["schools_count"] += 1
+    elif et == "religious_org":
+        acc["religious_org_count"] += 1
 
 
 def _socmob_metrics_from_group(acc):
@@ -2837,21 +2950,27 @@ def _socmob_metrics_from_group(acc):
         acc["people_over_15"] + acc["children_5_14"] + acc["children_12_59months"]
     )
     return {
-        "households_visited": acc["households_visited"],
+        "event_count": acc["event_count"],
         "people_over_15": acc["people_over_15"],
         "children_5_14": acc["children_5_14"],
         "children_12_59months": acc["children_12_59months"],
         "people_reached": people_reached,
-        "schools_reached": acc["schools_reached"],
-        "religious_leaders_reached": acc["religious_leaders_reached"],
-        "refusal_identified": acc["refusal_identified"],
-        "refusal_managed": acc["refusal_managed"],
+        "refusal_reluctance_identified": acc["refusal_reluctance_identified_count"],
+        "refusal_reluctance_managed": acc["refusal_reluctance_managed_count"],
         "refusal_managed_rate": _socmob_rate(
-            acc["refusal_managed"], acc["refusal_identified"]
+            acc["refusal_reluctance_managed_count"],
+            acc["refusal_reluctance_identified_count"],
         ),
         "rumours_reported": acc["rumours_reported"],
-        "children_affected": acc["children_affected"],
-        "refusals_from_rumor": acc["refusals_from_rumor"],
+        "households_count": acc["households_count"],
+        "schools_count": acc["schools_count"],
+        "religious_org_count": acc["religious_org_count"],
+        "other_count": (
+            acc["event_count"]
+            - acc["households_count"]
+            - acc["schools_count"]
+            - acc["religious_org_count"]
+        ),
     }
 
 
@@ -2866,7 +2985,13 @@ def aggregate_social_mobilization_by_level(
     qs = _socmob_base_queryset(
         request, location_level, location_value, start_iso, end_iso, parent_filters
     )
-    rows = qs.values(group_field, *_SOCMOB_SUM_FIELDS, "rumor_description")
+    rows = qs.values(
+        group_field,
+        *_SOCMOB_SUM_FIELDS,
+        *_SOCMOB_REFUSAL_FIELDS,
+        "event_type",
+        "rumor_log_count",
+    )
 
     groups = {}
     order = []
@@ -2910,12 +3035,11 @@ def aggregate_social_mobilization_trend(
     )
     rows = qs.values(
         "submissiondate",
+        "event_type",
         "people_over_15",
         "children_5_14",
         "children_12_59months",
-        "households_visited",
-        "refusal_identified",
-        "refusal_managed",
+        *_SOCMOB_REFUSAL_FIELDS,
     )
     buckets = {}
     for row in rows:
@@ -2926,20 +3050,33 @@ def aggregate_social_mobilization_trend(
         acc = buckets.setdefault(
             day,
             {
-                "households_visited": 0,
                 "people_reached": 0,
                 "refusals_identified": 0,
                 "refusals_managed": 0,
+                "households_count": 0,
+                "schools_count": 0,
+                "religious_org_count": 0,
+                "other_count": 0,
             },
         )
-        acc["households_visited"] += _socmob_to_int(row.get("households_visited"))
         acc["people_reached"] += (
             _socmob_to_int(row.get("people_over_15"))
             + _socmob_to_int(row.get("children_5_14"))
             + _socmob_to_int(row.get("children_12_59months"))
         )
-        acc["refusals_identified"] += _socmob_to_int(row.get("refusal_identified"))
-        acc["refusals_managed"] += _socmob_to_int(row.get("refusal_managed"))
+        if str(row.get("refusal_reluctance_identified") or "").strip().lower() == "yes":
+            acc["refusals_identified"] += 1
+        if str(row.get("refusal_reluctance_managed") or "").strip().lower() == "yes":
+            acc["refusals_managed"] += 1
+        et = (row.get("event_type") or "").strip().lower()
+        if et == "household":
+            acc["households_count"] += 1
+        elif et == "school":
+            acc["schools_count"] += 1
+        elif et == "religious_org":
+            acc["religious_org_count"] += 1
+        else:
+            acc["other_count"] += 1
     return [{"date": day, **buckets[day]} for day in sorted(buckets)]
 
 
@@ -2952,7 +3089,11 @@ def aggregate_social_mobilization_table(
         request, location_level, location_value, start_iso, end_iso
     )
     raw_rows = qs.values(
-        *_SOCMOB_TABLE_GROUP_FIELDS, *_SOCMOB_SUM_FIELDS, "rumor_description"
+        *_SOCMOB_TABLE_GROUP_FIELDS,
+        *_SOCMOB_SUM_FIELDS,
+        *_SOCMOB_REFUSAL_FIELDS,
+        "event_type",
+        "rumor_log_count",
     )
 
     groups = {}
@@ -3001,19 +3142,20 @@ def _socmob_sort_rows(rows, sort_key, sort_dir):
 
 def _socmob_totals_from_rows(rows):
     totals = {
-        "households_visited": 0,
+        "event_count": 0,
         "people_reached": 0,
-        "schools_reached": 0,
-        "religious_leaders_reached": 0,
-        "refusal_identified": 0,
-        "refusal_managed": 0,
+        "refusal_reluctance_identified": 0,
+        "refusal_reluctance_managed": 0,
         "rumours_reported": 0,
+        "households_count": 0,
+        "schools_count": 0,
+        "religious_org_count": 0,
     }
     for row in rows:
         for field in totals:
             totals[field] += _socmob_to_int(row.get(field))
     totals["refusal_managed_rate"] = _socmob_rate(
-        totals["refusal_managed"], totals["refusal_identified"]
+        totals["refusal_reluctance_managed"], totals["refusal_reluctance_identified"]
     )
     return totals
 
@@ -3059,21 +3201,18 @@ class SocialMobilizationComponentView(
         ("village_neighbourhood", "Village"),
     )
     _METRIC_COLUMNS = (
-        ("households_visited", "Households Visited"),
+        ("event_count", "Events"),
         ("people_reached", "People Reached"),
-        ("schools_reached", "Schools"),
-        ("religious_leaders_reached", "Religious Leaders"),
-        ("refusal_identified", "Refusals Identified"),
-        ("refusal_managed", "Refusals Managed"),
+        ("refusal_reluctance_identified", "Refusals Identified"),
+        ("refusal_reluctance_managed", "Refusals Managed"),
         ("refusal_managed_rate", "Managed Rate"),
         ("rumours_reported", "Rumours"),
     )
     _WRAPPING_METRIC_COLUMNS = (
-        "households_visited",
+        "event_count",
         "people_reached",
-        "religious_leaders_reached",
-        "refusal_identified",
-        "refusal_managed",
+        "refusal_reluctance_identified",
+        "refusal_reluctance_managed",
         "refusal_managed_rate",
     )
 
@@ -3165,42 +3304,58 @@ class SocialMobilizationComponentView(
         return BaselineCensusProvinceTableComponent._iso_bounds(start_dt, end_dt)
 
     def _rumour_log(self, request, location_level, location_value, start_iso, end_iso):
-        qs = _socmob_base_queryset(
-            request, location_level, location_value, start_iso, end_iso
+        from va_explorer.va_data_management.models import RumorLog
+
+        qs = RumorLog.objects.filter(is_duplicate=False)
+        qs = (
+            qs.exclude(rumor_description__isnull=True)
+            .exclude(rumor_description="")
+            .exclude(rumor_description__iexact="nil")
         )
-        qs = qs.exclude(rumor_description__isnull=True).exclude(rumor_description="")
+        qs = restrict_queryset_to_user_locations(
+            qs,
+            getattr(request, "user", None),
+            field_mapping={
+                "province": "social_mobilization__province",
+                "district": "social_mobilization__district",
+            },
+        )
+        qs = BaselineCensusProvinceTableComponent._date_filter(
+            qs, "social_mobilization__submissiondate", start_iso, end_iso
+        )
+        level_field = _SOCMOB_LEVEL_FIELD.get((location_level or "").lower())
+        if location_value and level_field:
+            qs = qs.filter(
+                **{f"social_mobilization__{level_field}__icontains": location_value}
+            )
         records = qs.values(
-            "submissiondate",
-            "today",
-            "province",
-            "district",
-            "health_facility",
-            "village_neighbourhood",
+            "social_mobilization__submissiondate",
+            "social_mobilization__today",
+            "social_mobilization__province",
+            "social_mobilization__district",
+            "social_mobilization__health_facility",
+            "social_mobilization__village_neighbourhood",
             "rumor_source",
-            "rumor_source_other",
             "rumor_description",
-            "children_affected",
-            "refusals_from_rumor",
-        ).order_by("-submissiondate")[: self._RUMOUR_LIMIT]
+        ).order_by("-social_mobilization__submissiondate")[: self._RUMOUR_LIMIT]
         log = []
         for record in records:
             log.append(
                 {
-                    "date": (record.get("submissiondate") or "")[:10]
-                    or (record.get("today") or ""),
-                    "province": record.get("province"),
-                    "district": record.get("district"),
-                    "health_facility": record.get("health_facility"),
-                    "village_neighbourhood": record.get("village_neighbourhood"),
-                    "source": record.get("rumor_source_other")
-                    or record.get("rumor_source"),
+                    "date": (record.get("social_mobilization__submissiondate") or "")[
+                        :10
+                    ]
+                    or (record.get("social_mobilization__today") or ""),
+                    "province": record.get("social_mobilization__province"),
+                    "district": record.get("social_mobilization__district"),
+                    "health_facility": record.get(
+                        "social_mobilization__health_facility"
+                    ),
+                    "village_neighbourhood": record.get(
+                        "social_mobilization__village_neighbourhood"
+                    ),
+                    "source": record.get("rumor_source"),
                     "description": record.get("rumor_description"),
-                    "children_affected": _socmob_to_int(
-                        record.get("children_affected")
-                    ),
-                    "refusals_from_rumor": _socmob_to_int(
-                        record.get("refusals_from_rumor")
-                    ),
                 }
             )
         return log

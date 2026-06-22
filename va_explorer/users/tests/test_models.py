@@ -1,6 +1,8 @@
 import pytest
+from django.contrib.auth.models import Group, Permission
 
 from va_explorer.tests.factories import (
+    GroupFactory,
     LocationFactory,
     UserFactory,
     VerbalAutopsyFactory,
@@ -9,6 +11,38 @@ from va_explorer.users.models import User, UserPasswordHistory
 from va_explorer.va_data_management.models import SRSClusterLocation
 
 pytestmark = pytest.mark.django_db
+
+
+def _view_pii_permission():
+    return Permission.objects.get(
+        content_type__app_label="va_analytics", codename="view_pii"
+    )
+
+
+def test_role_granted_pii_cannot_be_revoked_by_per_user_denial():
+    # A role (group) that grants view_pii guarantees PII visibility even if the
+    # permission is listed in the user's per-user denials.
+    group, _ = Group.objects.get_or_create(name="Data Managers")
+    group.permissions.add(_view_pii_permission())
+    user = UserFactory.create(groups=[group])
+    user.denied_permissions = ["va_analytics.view_pii"]
+    user.save()
+
+    assert user.can_view_pii is True
+
+
+def test_direct_pii_grant_still_works_without_role():
+    # A user whose role doesn't grant view_pii can still be granted it directly.
+    user = UserFactory.create(groups=[GroupFactory.create()])
+    user.user_permissions.add(_view_pii_permission())
+
+    assert User.objects.get(pk=user.pk).can_view_pii is True
+
+
+def test_no_role_and_no_grant_cannot_view_pii():
+    user = UserFactory.create(groups=[GroupFactory.create()])
+
+    assert user.can_view_pii is False
 
 
 def test_user_get_absolute_url(user: User):

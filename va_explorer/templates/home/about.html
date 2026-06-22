@@ -2,102 +2,137 @@
 
 {% block content %}
 
-<div class="row mt-4" style="margin-left: 30px;">
-  <div>
-    <h3>
-      About VACMS
-    </h3>
-    <p>
-      Verbal Autopsy & Case Management System (VACMS) is a web application built to support the Sample Registration
-      System (SRS) project at the Zambia National Public Health Institute (ZNPHI). This project is a fork of the <a
-        href="https://github.com/VA-Explorer/">VA Explorer</a> (VAE) project, licensed by The MITRE Corporation under
-      Apache 2.0.
-    </p>
-  </div>
+<div class="row mt-4" style="margin-left: 30px; margin-right: 30px;">
+  <div class="col-12">
+    <h3 class="mb-4">About System</h3>
 
-  <div>
-    <h3>
-      Key Functionality
-    </h3>
-
-
-    <ul>
-      <li>User account management, including:</li>
-      <ul>
-        <li>Creation/disabling of user accounts by administrators</li>
-        <li>Password management for individual users</li>
-      </ul>
-      <li>User access controls, including:</li>
-      <ul>
-        <li>Role-based access with the following roles: administrators, data managers, data viewers, and field workers
-        </li>
-        <li>Assignment to one or more geographic areas for geographical-level scoping of data</li>
-      </ul>
-      <li>Case management and follow-up, including event tracking and VA scheduling</li>
-      <li>Loading of event and verbal autopsy questionnaire data</li>
-      <li>Assignment of cause of death using InterVA5 algorithm (Note: relies on external pyCrossVA and InterVA5
-        services)
+    <!-- Tab navigation -->
+    <ul class="nav nav-tabs" id="aboutTabs" role="tablist">
+      <li class="nav-item">
+        <a class="nav-link active" id="about-tab" data-toggle="tab" href="#about" role="tab"
+           aria-controls="about" aria-selected="true">About VACMS</a>
       </li>
-      <li>Exploration of cause of death data via a dynamic, visualization-based dashboard that includes:</li>
-      <ul>
-        <li>A dynamic heatmap showing geographical trends, with zoom capabilities to hone in on regions of interest</li>
-        <li>Cause of death plots for chosen regions</li>
-        <li>Death distributions by age, gender, and place of death for chosen regions</li>
-        <li>Trends over time for chosen regions</li>
-      </ul>
+      <li class="nav-item">
+        <a class="nav-link" id="functionality-tab" data-toggle="tab" href="#functionality" role="tab"
+           aria-controls="functionality" aria-selected="false">Key Functionality</a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link" id="license-tab" data-toggle="tab" href="#license" role="tab"
+           aria-controls="license" aria-selected="false">Copyright &amp; License</a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link" id="security-tab" data-toggle="tab" href="#security" role="tab"
+           aria-controls="security" aria-selected="false">Security &amp; Privacy</a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link" id="acknowledgments-tab" data-toggle="tab" href="#acknowledgments" role="tab"
+           aria-controls="acknowledgments" aria-selected="false">Acknowledgments</a>
+      </li>
     </ul>
-  </div>
 
-  <div>
-    <h3>
-      Copyright & License
-    </h3>
+    <!-- Tab content -->
+    <div class="tab-content pt-4" id="aboutTabsContent">
 
-    <p>
-      Copyright &copy; 2025 Zambia National Public Health Institute.
-    </p>
+      <!-- About VACMS -->
+      <div class="tab-pane fade show active" id="about" role="tabpanel" aria-labelledby="about-tab">
+        <p class="text-muted mb-1"><small>Version v1.4.1</small></p>
+        <p>
+          Verbal Autopsy &amp; Case Management System (VACMS) is a web application built to support the Sample
+          Registration System (SRS) project at the Zambia National Public Health Institute (ZNPHI). This project
+          is a fork of the <a href="https://github.com/VA-Explorer/">VA Explorer</a> (VAE) project, licensed by
+          The MITRE Corporation under Apache 2.0.
+        </p>
+      </div>
 
-    <p>
-      Available publicly via <a href="https://opensource.org/license/apache-2-0">Apache License, Version 2.0</a>. VACMS
-      also includes external software that is available under a variety of licenses. See <a
-        href="https://github.com/VA-Explorer/va_explorer/blob/main/LICENSE">LICENSE</a> for full license text(s).
-    </p>
+      <!-- Key Functionality -->
+      <div class="tab-pane fade" id="functionality" role="tabpanel" aria-labelledby="functionality-tab">
+        <ul>
+          <li>User account management, including:
+            <ul>
+              <li>Creation/disabling of user accounts by administrators</li>
+              <li>Password management for individual users</li>
+            </ul>
+          </li>
+          <li>User access controls, including:
+            <ul>
+              <li>Role-based access with the following roles: administrators, data managers, data viewers, and
+                field workers</li>
+              <li>Assignment to one or more geographic areas for geographical-level scoping of data</li>
+            </ul>
+          </li>
+          <li>Case management and follow-up, including event tracking and VA scheduling</li>
+          <li>Loading of event and verbal autopsy questionnaire data</li>
+          <li>Assignment of cause of death using InterVA5 algorithm (Note: relies on external pyCrossVA and
+            InterVA5 services)</li>
+          <li>Exploration of cause of death data via a dynamic, visualization-based dashboard that includes:
+            <ul>
+              <li>A dynamic heatmap showing geographical trends, with zoom capabilities to hone in on regions of
+                interest</li>
+              <li>Cause of death plots for chosen regions</li>
+              <li>Death distributions by age, gender, and place of death for chosen regions</li>
+              <li>Trends over time for chosen regions</li>
+            </ul>
+          </li>
+        </ul>
+      </div>
 
-    <p>
-      Unless required by applicable law or agreed to in writing, software distributed under the License is distributed
-      on
-      an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
-      specific language governing permissions and limitations under the License.
-    </p>
-  </div>
+      <!-- Copyright & License -->
+      <div class="tab-pane fade" id="license" role="tabpanel" aria-labelledby="license-tab">
+        <p>
+          Copyright &copy; 2025 Zambia National Public Health Institute.
+        </p>
+        <p>
+          Available publicly via <a href="https://opensource.org/license/apache-2-0">Apache License, Version
+          2.0</a>. VACMS also includes external software that is available under a variety of licenses. See
+          <a href="https://github.com/VA-Explorer/va_explorer/blob/main/LICENSE">LICENSE</a> for full license
+          text(s).
+        </p>
+        <p>
+          Unless required by applicable law or agreed to in writing, software distributed under the License is
+          distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+          implied. See the License for the specific language governing permissions and limitations under the
+          License.
+        </p>
+      </div>
 
-  <div>
-    <h3>
-      Security & Privacy
-    </h3>
-    <p>
-      VACMS uses open-source third-party libraries from well-known and/or reputable sources. ZNPHI does not vet the
-      security of those software libraries. If security concerns you, you or your organization may want to review the
-      third-party libraries and their source code on GitHub.
-    </p>
+      <!-- Security & Privacy -->
+      <div class="tab-pane fade" id="security" role="tabpanel" aria-labelledby="security-tab">
+        <p>
+          VACMS uses open-source third-party libraries from well-known and/or reputable sources. ZNPHI does not
+          vet the security of those software libraries. If security concerns you, you or your organization may
+          want to review the third-party libraries and their source code on GitHub.
+        </p>
+      </div>
 
-  </div>
+      <!-- Acknowledgments -->
+      <div class="tab-pane fade" id="acknowledgments" role="tabpanel" aria-labelledby="acknowledgments-tab">
+        <p>
+          This project relies on contributions from the community, in addition to other existing open source
+          libraries, without which VACMS would not be possible. Portions of this code, therefore, are copyright
+          and licensed by the respective developers, which include, but may not be limited to:
+        </p>
+        <ul>
+          <li>The MITRE Corporation for initial development on <a href="https://github.com/VA-Explorer/">VA
+            Explorer</a></li>
+          <li>Samuel Clark and the <a href="https://openva.net/">openVA team</a> for cause of death algorithm
+            development</li>
+          <li>CDC Foundation for development of DHIS-2 integration</li>
+        </ul>
 
-  <div>
-    <h3>
-      Acknowledgments
-    </h3>
-    <p>
-      This project relies on contributions from the community, in addition to other existing open source libraries,
-      without which VACMS would not be possible. Portions of this code, therefore, are copyright and licensed by the
-      respective developers, which include, but may not be limited to:
-    <ul>
-      <li>The MITRE Corporation for initial development on <a href="https://github.com/VA-Explorer/">VA Explorer</a>
-      </li>
-      <li>Samuel Clark and the <a href="https://openva.net/">openVA team</a> for cause of death algorithm development
-      </li>
-      <li>CDC Foundation for development of DHIS-2 integration</li>
-      </p>
+        <h5 class="mt-4">Contributors</h5>
+        <p>The following individuals have contributed to the development of VACMS:</p>
+        <ul>
+          <li>Muya Mwansa</li>
+          <li>Reuben Kaponde</li>
+          <li>Kondwani Mwale</li>
+          <li>Evans Nkole</li>
+          <li>James Sakala</li>
+          <li>Matt Boyas</li>
+          <li>The Mitre Team</li>
+        </ul>
+      </div>
+
+    </div><!-- /.tab-content -->
   </div>
 </div>
 

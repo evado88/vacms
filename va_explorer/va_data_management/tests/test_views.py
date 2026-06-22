@@ -83,6 +83,23 @@ def test_index_with_valid_permission(user: User):
     assert b'name="deceased"' in response.content
 
 
+# A role that grants PII keeps it legible even with a stale per-user denial
+def test_index_role_pii_beats_stale_denial(user: User):
+    group = seeded_group("Data Managers")
+    user = UserFactory.create(groups=[group])
+    # Simulate a Data Manager who was once saved with "View PII" unchecked.
+    user.denied_permissions = ["va_analytics.view_pii"]
+    user.save()
+
+    client = Client()
+    client.force_login(user=user)
+    va = VerbalAutopsyFactory.create(Id10017="Victim name", Id10010="Interviewer name")
+    response = client.get("/va_data_management/")
+    assert response.status_code == 200
+    assert bytes(va.Id10010, "utf-8") in response.content
+    assert bytes(REDACTED_STRING, "utf-8") not in response.content
+
+
 # Get the index and make sure the VA in the system is listed
 def test_index_redacted(user: User):
     can_view_record = Permission.objects.filter(codename="view_verbalautopsy").first()
