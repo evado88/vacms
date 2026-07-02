@@ -203,11 +203,14 @@ class Command(BaseCommand):
         not_covered = sorted(who_form_ids - covered_who)
         in_vasa_not_who = sorted(covered_who - who_form_ids)
 
+        value_crosswalk = _build_value_crosswalk(xlsform, who_xlsform, pseudo_to_who)
+
         field_map = {
             "PSEUDO_TO_WHO": pseudo_to_who,
             "COMBINED_WHO": combined_who,
             "INSTRUMENT_SECTION": instrument_section,
             "REPEAT_GROUPS": repeat_groups,
+            "VALUE_CROSSWALK": value_crosswalk,
         }
         model_fields = {
             "SA_FIELD_DEFS": sa_defs,
@@ -297,6 +300,80 @@ def _who_ids_in(who_name: str) -> list:
         right = "Id" + (prefix[: -len(num)] + num if len(num) < len(prefix) else num)
         return [f"Id{prefix}", right]
     return []
+
+
+def _norm_label(text: str) -> str:
+    """Normalise a choice label for cross-form matching (case/punct/alias)."""
+    norm = str(text or "").lower().replace("'", "")
+    norm = re.sub(r"[^a-z0-9]+", " ", norm).strip()
+    # Reconcile common wording differences between the two forms' labels.
+    norm = norm.replace("doesnt", "dont")  # "doesn't know" vs "don't know"
+    norm = norm.replace("ambigous", "ambiguous")  # VASA typo vs WHO spelling
+    return norm
+
+
+def _choice_maps(xlsform: Path):
+    """Return (field -> list_name, list_name -> {code: label}) for an XLSForm."""
+    xl = pd.ExcelFile(xlsform)
+    survey = xl.parse("survey", dtype=str).fillna("")
+    choices = xl.parse("choices", dtype=str).fillna("")
+    sc = {str(c).strip().lower(): c for c in survey.columns}
+    cc = {str(c).strip().lower(): c for c in choices.columns}
+    label_col = next((cc[k] for k in cc if k.startswith("label")), None)
+
+    field_list: dict = {}
+    for _, row in survey.iterrows():
+        raw_type = str(row[sc["type"]]).strip()
+        parts = raw_type.split()
+        name = str(row[sc["name"]]).strip()
+        if len(parts) >= 2 and parts[0].startswith("select"):
+            field_list[name] = parts[1]
+
+    list_choices: dict = {}
+    for _, row in choices.iterrows():
+        list_name = str(row[cc["list_name"]]).strip()
+        code = str(row[cc["name"]]).strip()
+        label = str(row[label_col]).strip() if label_col else ""
+        if list_name:
+            list_choices.setdefault(list_name, {})[code] = label
+    return field_list, list_choices
+
+
+def _build_value_crosswalk(
+    xlsform: Path, who_xlsform: Path, pseudo_to_who: dict
+) -> dict:
+    """Map each VASA select code to the WHO value the coding pipeline expects.
+
+    VASA select choices are numeric codes with human labels (1 -> "Yes"); the VA
+    value-space is WHO choice *names* ("yes"). For every VASA select field mapped
+    to a WHO field, match the VASA label to the WHO field's choice label and emit
+    ``{code: who_value}``. Where no WHO label matches, fall back to the
+    normalised VASA label so nothing is silently lost.
+    """
+    vasa_field_list, vasa_list_choices = _choice_maps(xlsform)
+    who_field_list, who_list_choices = _choice_maps(who_xlsform)
+
+    who_value_by_label: dict = {}
+    for who_field, list_name in who_field_list.items():
+        who_value_by_label[who_field] = {
+            _norm_label(label): code
+            for code, label in who_list_choices.get(list_name, {}).items()
+        }
+
+    crosswalk: dict = {}
+    for pseudo, who in pseudo_to_who.items():
+        list_name = vasa_field_list.get(pseudo)
+        if not list_name:
+            continue
+        codes = vasa_list_choices.get(list_name, {})
+        who_values = who_value_by_label.get(who, {})
+        mapped = {}
+        for code, vasa_label in codes.items():
+            who_value = who_values.get(_norm_label(vasa_label))
+            mapped[code] = who_value or _norm_label(vasa_label).replace(" ", "_")
+        if mapped:
+            crosswalk[pseudo] = mapped
+    return crosswalk
 
 
 def _who_form_ids(who_xlsform: Path) -> set:

@@ -127,6 +127,37 @@ ODK_PULL_FORMS = [
         "enabled": env.bool("ODK_SOCIAL_MOBILIZATION_FORM_ENABLED", default=True),
         "schedule_key": "operational",
     },
+    # VASA (Verbal + Social Autopsy) main form + its three care-seeking repeats.
+    # The repeats share the VASA form_id but are served from separate OData tables
+    # (see FORM_REPEAT_TABLE_MAP in odk/service.py).
+    {
+        "form_id": env("ODK_VASA_FORM_ID", default=""),
+        "form_name": "vasa",
+        "project_id": ODK_DEFAULT_PROJECT_ID,
+        "enabled": env.bool("ODK_VASA_FORM_ENABLED", default=True),
+        "schedule_key": "va_hourly",
+    },
+    {
+        "form_id": env("ODK_VASA_FORM_ID", default=""),
+        "form_name": "vasa_care_seeking_neonate",
+        "project_id": ODK_DEFAULT_PROJECT_ID,
+        "enabled": env.bool("ODK_VASA_FORM_ENABLED", default=True),
+        "schedule_key": "va_hourly",
+    },
+    {
+        "form_id": env("ODK_VASA_FORM_ID", default=""),
+        "form_name": "vasa_care_seeking_child",
+        "project_id": ODK_DEFAULT_PROJECT_ID,
+        "enabled": env.bool("ODK_VASA_FORM_ENABLED", default=True),
+        "schedule_key": "va_hourly",
+    },
+    {
+        "form_id": env("ODK_VASA_FORM_ID", default=""),
+        "form_name": "vasa_care_seeking_adult",
+        "project_id": ODK_DEFAULT_PROJECT_ID,
+        "enabled": env.bool("ODK_VASA_FORM_ENABLED", default=True),
+        "schedule_key": "va_hourly",
+    },
 ]
 
 DEFAULT_AUTO_FIELD = "django.db.models.AutoField"
