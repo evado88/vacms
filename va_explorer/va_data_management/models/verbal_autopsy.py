@@ -5,7 +5,7 @@ import hashlib
 from django.conf import settings
 from django.core.exceptions import FieldDoesNotExist
 from django.db import models
-from django.db.models import Count, JSONField
+from django.db.models import Count, JSONField, Q
 from simple_history.models import HistoricalRecords
 from treebeard.mp_tree import MP_Node
 
@@ -1895,24 +1895,63 @@ class CODCodesDHIS(models.Model):
 # Add a manager for each of the models where on_delete=models.CASCADE
 # Adding an individual manager works if we only have a small number of related models, but is a brittle solution
 # TODO: Determine a way to handle cascading soft deletes globally/generically
+# A coding row (cause / issue / DHIS status) is parented by exactly one of a
+# VerbalAutopsy or a VASA record. Enforced at the DB level on each model.
+_EXACTLY_ONE_PARENT = (Q(verbalautopsy__isnull=False) & Q(vasa__isnull=True)) | (
+    Q(verbalautopsy__isnull=True) & Q(vasa__isnull=False)
+)
+
+
+def _alive_parent_filter():
+    """Coding rows are alive when their (single) parent record is not soft-deleted.
+
+    A row is parented by *either* a VerbalAutopsy *or* a VASA (never both — see
+    the CheckConstraint on each model). The per-clause ``__isnull=False`` guards
+    keep a soft-deleted parent from leaking in via the NULL side of the other
+    relation's outer join.
+    """
+    return Q(verbalautopsy__isnull=False, verbalautopsy__deleted_at__isnull=True) | Q(
+        vasa__isnull=False, vasa__deleted_at__isnull=True
+    )
+
+
 class DhisStatusManager(models.Manager):
     def get_queryset(self):
-        return super().get_queryset().filter(verbalautopsy__deleted_at__isnull=True)
+        return super().get_queryset().filter(_alive_parent_filter())
 
 
 class CauseOfDeathManager(models.Manager):
     def get_queryset(self):
-        return super().get_queryset().filter(verbalautopsy__deleted_at__isnull=True)
+        return super().get_queryset().filter(_alive_parent_filter())
 
 
 class CauseCodingIssueManager(models.Manager):
     def get_queryset(self):
-        return super().get_queryset().filter(verbalautopsy__deleted_at__isnull=True)
+        return super().get_queryset().filter(_alive_parent_filter())
 
 
 class DhisStatus(models.Model):
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                check=_EXACTLY_ONE_PARENT, name="dhisstatus_exactly_one_parent"
+            )
+        ]
+
+    # Exactly one of verbalautopsy / vasa is set (see the CheckConstraint).
     verbalautopsy = models.ForeignKey(
-        VerbalAutopsy, related_name="dhisva", on_delete=models.CASCADE
+        VerbalAutopsy,
+        related_name="dhisva",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+    )
+    vasa = models.ForeignKey(
+        "VASA",
+        related_name="dhisva",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
     )
     vaid = models.TextField(blank=False)
     edate = models.DateTimeField(auto_now_add=True)
@@ -1924,9 +1963,28 @@ class DhisStatus(models.Model):
 
 
 class CauseOfDeath(models.Model):
-    # One VerbalAutopsy can have multiple causes of death (through different algorithms)
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                check=_EXACTLY_ONE_PARENT, name="cod_exactly_one_parent"
+            )
+        ]
+
+    # A cause of death belongs to exactly one VerbalAutopsy or VASA record.
+    # One record can have multiple causes (through different algorithms).
     verbalautopsy = models.ForeignKey(
-        VerbalAutopsy, related_name="causes", on_delete=models.CASCADE
+        VerbalAutopsy,
+        related_name="causes",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+    )
+    vasa = models.ForeignKey(
+        "VASA",
+        related_name="causes",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
     )
     # Track the cause and the algorithm that provided the cause
     cause = models.TextField()
@@ -1956,10 +2014,26 @@ class CauseCodingIssue(models.Model):
                 name="coding_issue_va_severity_idx",
             ),
         ]
+        constraints = [
+            models.CheckConstraint(
+                check=_EXACTLY_ONE_PARENT, name="codingissue_exactly_one_parent"
+            )
+        ]
 
-    # One VerbalAutopsy can have multiple coding issues
+    # A coding issue belongs to exactly one VerbalAutopsy or VASA record.
     verbalautopsy = models.ForeignKey(
-        VerbalAutopsy, related_name="coding_issues", on_delete=models.CASCADE
+        VerbalAutopsy,
+        related_name="coding_issues",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+    )
+    vasa = models.ForeignKey(
+        "VASA",
+        related_name="coding_issues",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
     )
     text = models.TextField()
     SEVERITY_OPTIONS = ["error", "warning"]
