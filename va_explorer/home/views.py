@@ -61,6 +61,7 @@ from va_explorer.home.services.map import (
 from va_explorer.utils.mixins import CsvDownloadPermissionMixin, CustomAuthMixin
 from va_explorer.utils.profiling import timed_block
 from va_explorer.va_data_management.models import (
+    VASA,
     CauseCodingIssue,
     CauseOfDeath,
     CSADailyTracker,
@@ -1701,6 +1702,7 @@ class RegionalOperationsComponentContextMixin:
     mso_source_options = (
         {"value": "community", "label": "Community"},
         {"value": "facility", "label": "Facility"},
+        {"value": "vasa", "label": "VASA"},
     )
     csa_column_map = (
         ("name", "CSA Name"),
@@ -2594,12 +2596,17 @@ class RegionalOperationsComponentContextMixin:
     def _build_mso_rows(
         self,
         selected_geo,
-        selected_mso_source,
-        va_queryset,
+        sources,
         province_scope,
         start_date_str="",
         end_date_str="",
+        roster_models=(VerbalAutopsy,),
     ):
+        # ``sources`` is a list of {"queryset", "cod_fk"} dicts so the MSO table
+        # can fold in VerbalAutopsy and VASA together (or either alone). Each
+        # source keeps its own record ids + CauseOfDeath FK, so VA/VASA id
+        # collisions never cross-contaminate the coding metrics. Everything else
+        # aggregates by MSO name and is record-type agnostic.
         stats_by_mso = defaultdict(
             lambda: {
                 "name": "",
@@ -2622,51 +2629,56 @@ class RegionalOperationsComponentContextMixin:
         # norm_variants maps a normalized name -> Counter of observed display
         # casings, used to pick one canonical display name per person so casing
         # duplicates ("Lweendo Namitondo" vs "LWEENDO NAMITONDO") collapse.
-        va_to_mso_name = {}
+        # One id->mso_name map per source (paired with its CauseOfDeath FK) so
+        # the coding-metric pass can query the right table without id collisions.
+        source_id_name_maps = []
         base_va_records = []
         duration_records = []
         norm_variants = defaultdict(Counter)
-        for va_row in va_queryset.values(
-            "id",
-            "Id10010",
-            "location__name",
-            "province_name",
-            "province",
-            "Id10012",  # interview_date (for duration outliers)
-            "Id10011",  # start_time
-            "Id10481",  # end_datetime
-        ):
-            mso_name = self._mso_name_from_va_row(va_row)
-            mso_name_norm = self.normalize_person_name(mso_name)
-            if self._is_junk_mso_norm(mso_name_norm):
-                continue
-            norm_variants[mso_name_norm][mso_name] += 1
-            province_value = (
-                va_row.get("province")
-                if va_row.get("province") not in (None, "")
-                else va_row.get("province_name")
-            )
-            province_label = self._resolve_choice_label("province", province_value)
-            va_to_mso_name[va_row["id"]] = mso_name
-            base_va_records.append(
-                {
-                    "name": mso_name,
-                    "province": province_label,
-                    "mso_name_norm": mso_name_norm,
-                    "va_id": va_row["id"],
-                    "location_name": va_row.get("location__name"),
-                    "province_name": va_row.get("province_name"),
-                }
-            )
-            duration_records.append(
-                {
-                    "name": mso_name,
-                    "mso_name_norm": mso_name_norm,
-                    "interview_date": va_row.get("Id10012"),
-                    "start_time": va_row.get("Id10011"),
-                    "end_datetime": va_row.get("Id10481"),
-                }
-            )
+        for source in sources:
+            id_to_mso_name = {}
+            for va_row in source["queryset"].values(
+                "id",
+                "Id10010",
+                "location__name",
+                "province_name",
+                "province",
+                "Id10012",  # interview_date (for duration outliers)
+                "Id10011",  # start_time
+                "Id10481",  # end_datetime
+            ):
+                mso_name = self._mso_name_from_va_row(va_row)
+                mso_name_norm = self.normalize_person_name(mso_name)
+                if self._is_junk_mso_norm(mso_name_norm):
+                    continue
+                norm_variants[mso_name_norm][mso_name] += 1
+                province_value = (
+                    va_row.get("province")
+                    if va_row.get("province") not in (None, "")
+                    else va_row.get("province_name")
+                )
+                province_label = self._resolve_choice_label("province", province_value)
+                id_to_mso_name[va_row["id"]] = mso_name
+                base_va_records.append(
+                    {
+                        "name": mso_name,
+                        "province": province_label,
+                        "mso_name_norm": mso_name_norm,
+                        "va_id": va_row["id"],
+                        "location_name": va_row.get("location__name"),
+                        "province_name": va_row.get("province_name"),
+                    }
+                )
+                duration_records.append(
+                    {
+                        "name": mso_name,
+                        "mso_name_norm": mso_name_norm,
+                        "interview_date": va_row.get("Id10012"),
+                        "start_time": va_row.get("Id10011"),
+                        "end_datetime": va_row.get("Id10481"),
+                    }
+                )
+            source_id_name_maps.append((source["cod_fk"], id_to_mso_name))
 
         # Collect the all-time MSO roster (VAs + case-management assignments) so
         # workers with zero VAs in the selected period still appear. Accumulate
@@ -2680,24 +2692,27 @@ class RegionalOperationsComponentContextMixin:
             if current is None or (current == "—" and province != "—"):
                 roster_province_by_norm[norm] = province
 
-        for row in (
-            VerbalAutopsy.objects.filter(
-                self._province_access_q("province", province_scope)
-            )
-            .filter(self._province_filter_q("province", selected_geo))
-            .exclude(Id10010__isnull=True)
-            .exclude(Id10010__exact="")
-            .order_by("Id10010", "-Id10012", "-id")
-            .distinct("Id10010")
-            .values("Id10010", "province")
-        ):
-            name = self._format_mso_display_name(row.get("Id10010"))
-            norm = self.normalize_person_name(name)
-            if self._is_junk_mso_norm(norm):
-                continue
-            _record_roster(
-                norm, name, self._resolve_choice_label("province", row.get("province"))
-            )
+        for roster_model in roster_models:
+            for row in (
+                roster_model.objects.filter(
+                    self._province_access_q("province", province_scope)
+                )
+                .filter(self._province_filter_q("province", selected_geo))
+                .exclude(Id10010__isnull=True)
+                .exclude(Id10010__exact="")
+                .order_by("Id10010", "-Id10012", "-id")
+                .distinct("Id10010")
+                .values("Id10010", "province")
+            ):
+                name = self._format_mso_display_name(row.get("Id10010"))
+                norm = self.normalize_person_name(name)
+                if self._is_junk_mso_norm(norm):
+                    continue
+                _record_roster(
+                    norm,
+                    name,
+                    self._resolve_choice_label("province", row.get("province")),
+                )
 
         for raw_name, province_value in (
             Event.objects.filter(
@@ -2731,10 +2746,16 @@ class RegionalOperationsComponentContextMixin:
             rec["name"] = _canon(rec["mso_name_norm"])
         for rec in duration_records:
             rec["name"] = _canon(rec["mso_name_norm"])
-        va_to_mso_name = {
-            vid: _canon(self.normalize_person_name(name))
-            for vid, name in va_to_mso_name.items()
-        }
+        source_id_name_maps = [
+            (
+                cod_fk,
+                {
+                    vid: _canon(self.normalize_person_name(name))
+                    for vid, name in id_to_mso_name.items()
+                },
+            )
+            for cod_fk, id_to_mso_name in source_id_name_maps
+        ]
 
         if base_va_records:
             df_base_va = pd.DataFrame.from_records(base_va_records)
@@ -2803,46 +2824,49 @@ class RegionalOperationsComponentContextMixin:
             entry["va_total"] = int(row.get("va_total", 0))
         unmatched_agg_logs = []
 
-        # Build per-VA cause/error metrics via two focused queries instead of
+        # Build per-record cause/error metrics via focused queries instead of
         # loading full ORM objects with prefetch_related (much faster at scale).
-        # va_to_mso_name was already populated in the single VA pass above.
-        va_ids = list(va_to_mso_name.keys())
-
-        causes_by_va = defaultdict(list)
-        for row in CauseOfDeath.objects.filter(verbalautopsy_id__in=va_ids).values(
-            "verbalautopsy_id", "cause"
-        ):
-            causes_by_va[row["verbalautopsy_id"]].append(row["cause"])
-
-        va_ids_with_error = set(
-            CauseCodingIssue.objects.filter(
-                verbalautopsy_id__in=va_ids, severity="error"
-            ).values_list("verbalautopsy_id", flat=True)
-        )
-
+        # Each source uses its own CauseOfDeath / CauseCodingIssue FK so VA and
+        # VASA metrics stay correctly attributed.
         va_metric_records = []
-        for va_id in va_ids:
-            mso_name = va_to_mso_name.get(va_id, "Unassigned MSO")
-            causes = causes_by_va.get(va_id, [])
-            valid_cod = int(
-                any(
-                    (cause or "").strip() and cause != self.INDETERMINATE_LABEL
-                    for cause in causes
+        for cod_fk, id_to_mso_name in source_id_name_maps:
+            fk_id = f"{cod_fk}_id"
+            record_ids = list(id_to_mso_name.keys())
+
+            causes_by_record = defaultdict(list)
+            for row in CauseOfDeath.objects.filter(
+                **{f"{fk_id}__in": record_ids}
+            ).values(fk_id, "cause"):
+                causes_by_record[row[fk_id]].append(row["cause"])
+
+            ids_with_error = set(
+                CauseCodingIssue.objects.filter(
+                    **{f"{fk_id}__in": record_ids}, severity="error"
+                ).values_list(fk_id, flat=True)
+            )
+
+            for record_id in record_ids:
+                mso_name = id_to_mso_name.get(record_id, "Unassigned MSO")
+                causes = causes_by_record.get(record_id, [])
+                valid_cod = int(
+                    any(
+                        (cause or "").strip() and cause != self.INDETERMINATE_LABEL
+                        for cause in causes
+                    )
                 )
-            )
-            indeterminate = int(
-                any(cause == self.INDETERMINATE_LABEL for cause in causes)
-            )
-            error = int(va_id in va_ids_with_error)
-            va_metric_records.append(
-                {
-                    "name": mso_name,
-                    "mso_name_norm": self.normalize_person_name(mso_name),
-                    "valid_cod": valid_cod,
-                    "indeterminate": indeterminate,
-                    "error": error,
-                }
-            )
+                indeterminate = int(
+                    any(cause == self.INDETERMINATE_LABEL for cause in causes)
+                )
+                error = int(record_id in ids_with_error)
+                va_metric_records.append(
+                    {
+                        "name": mso_name,
+                        "mso_name_norm": self.normalize_person_name(mso_name),
+                        "valid_cod": valid_cod,
+                        "indeterminate": indeterminate,
+                        "error": error,
+                    }
+                )
 
         if va_metric_records:
             df_va_metrics = (
@@ -3504,27 +3528,52 @@ class RegionalOperationsComponentContextMixin:
         mso_province_search = self.request.GET.get("mso_province_search", "").strip()
         mso_page = max(1, self._to_int(self.request.GET.get("mso_page", "1")))
 
+        province_name_annotation = Subquery(
+            Location.objects.values("name").filter(
+                Q(path=Substr(OuterRef("location__path"), 1, 8)),
+                Q(depth=2),
+            )[:1]
+        )
         va_queryset = self.request.user.verbal_autopsies().annotate(
-            province_name=Subquery(
-                Location.objects.values("name").filter(
-                    Q(path=Substr(OuterRef("location__path"), 1, 8)),
-                    Q(depth=2),
-                )[:1]
-            )
+            province_name=province_name_annotation
+        )
+        vasa_queryset = self.request.user.vasa_records().annotate(
+            province_name=province_name_annotation
         )
         if time_window["start_date_str"] and time_window["end_date_str"]:
-            va_queryset = va_queryset.filter(
-                Id10012__gte=time_window["start_date_str"],
-                Id10012__lte=time_window["end_date_str"],
-            )
+            date_filter = {
+                "Id10012__gte": time_window["start_date_str"],
+                "Id10012__lte": time_window["end_date_str"],
+            }
+            va_queryset = va_queryset.filter(**date_filter)
+            vasa_queryset = vasa_queryset.filter(**date_filter)
+
+        # Translate the source filter into the record sources + rosters to fold in.
+        # community/facility filter both VA and VASA by their community_va tag;
+        # "vasa" restricts to VASA only; blank ("All") folds VA + VASA together.
+        if selected_mso_source == "vasa":
+            sources = [{"queryset": vasa_queryset, "cod_fk": "vasa"}]
+            roster_models = (VASA,)
+        else:
+            if selected_mso_source == "community":
+                va_queryset = va_queryset.filter(community_va__iexact="yes")
+                vasa_queryset = vasa_queryset.filter(community_va__iexact="yes")
+            elif selected_mso_source == "facility":
+                va_queryset = va_queryset.filter(community_va__iexact="no")
+                vasa_queryset = vasa_queryset.filter(community_va__iexact="no")
+            sources = [
+                {"queryset": va_queryset, "cod_fk": "verbalautopsy"},
+                {"queryset": vasa_queryset, "cod_fk": "vasa"},
+            ]
+            roster_models = (VerbalAutopsy, VASA)
 
         mso_rows = self._build_mso_rows(
             selected_geo,
-            selected_mso_source,
-            va_queryset,
+            sources,
             province_scope,
             time_window["start_date_str"],
             time_window["end_date_str"],
+            roster_models=roster_models,
         )
         if selected_geo and selected_geo != "national":
             mso_rows = [
