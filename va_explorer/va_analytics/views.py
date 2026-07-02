@@ -58,7 +58,12 @@ from va_explorer.va_data_management.utils.location_access import (
     restrict_queryset_to_user_locations,
 )
 
-from .utils.loading import _resolve_geo_name, get_filtered_va_queryset, load_va_data
+from .utils.loading import (
+    _resolve_geo_name,
+    get_filtered_va_queryset,
+    get_filtered_vasa_queryset,
+    load_va_data,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -732,8 +737,15 @@ def _qs_cache_signature(filtered_qs):
         return None
 
 
-def _attach_gps_payload(payload, request, filtered_qs, *, gps_field, event_type):
-    """Attach GPS-related fields to a map API payload, applying PII gating."""
+def _attach_gps_payload(
+    payload, request, filtered_qs, *, gps_field, event_type, extra_sources=None
+):
+    """Attach GPS-related fields to a map API payload, applying PII gating.
+
+    ``extra_sources`` is an optional list of ``(queryset, gps_field, event_type)``
+    tuples whose points are combined with the primary queryset's — used to fold
+    VASA GPS points onto the verbal-autopsy layer.
+    """
     include, limit, offset = _gps_request_params(request)
     if not include:
         return payload
@@ -752,17 +764,27 @@ def _attach_gps_payload(payload, request, filtered_qs, *, gps_field, event_type)
         payload["gps_truncated"] = False
         payload["gps_pii_denied"] = True
         return payload
-    points, total, truncated = _build_gps_points(
-        filtered_qs,
-        gps_field=gps_field,
-        event_type=event_type,
-        limit=limit,
-        offset=offset,
-        cache_signature=_qs_cache_signature(filtered_qs),
-    )
-    payload["gps_points"] = points
-    payload["gps_total"] = total
-    payload["gps_truncated"] = truncated
+    sources = [(filtered_qs, gps_field, event_type)]
+    if extra_sources:
+        sources.extend(extra_sources)
+    combined_points = []
+    combined_total = 0
+    truncated_any = False
+    for qs, source_field, source_event_type in sources:
+        points, total, truncated = _build_gps_points(
+            qs,
+            gps_field=source_field,
+            event_type=source_event_type,
+            limit=limit,
+            offset=offset,
+            cache_signature=_qs_cache_signature(qs),
+        )
+        combined_points.extend(points)
+        combined_total += total
+        truncated_any = truncated_any or truncated
+    payload["gps_points"] = combined_points
+    payload["gps_total"] = combined_total
+    payload["gps_truncated"] = truncated_any
     payload["gps_pii_denied"] = False
     return payload
 
@@ -1313,7 +1335,10 @@ class DashboardAPIView(APIView):
         sex = request.query_params.get("sex") or None
         source = request.query_params.get("source") or None
         compare_by = request.query_params.get("compare_by") or "province"
+        # VASA is folded into the verbal-autopsy analytics; build both querysets
+        # (the source filter selects between them / by community/facility).
         filtered_qs = get_filtered_va_queryset(request)
+        filtered_vasa_qs = get_filtered_vasa_queryset(request)
 
         data = load_va_data(
             request.user,
@@ -1326,6 +1351,7 @@ class DashboardAPIView(APIView):
             source=source,
             compare_by=compare_by,
             filtered_qs=filtered_qs,
+            filtered_vasa_qs=filtered_vasa_qs,
         )
         _attach_gps_payload(
             data,
@@ -1333,6 +1359,7 @@ class DashboardAPIView(APIView):
             filtered_qs,
             gps_field="geopoint",
             event_type="verbal_autopsy",
+            extra_sources=[(filtered_vasa_qs, "geopoint", "verbal_autopsy")],
         )
         return Response(data)
 

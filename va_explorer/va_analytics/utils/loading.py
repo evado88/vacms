@@ -4,7 +4,6 @@ import json
 import os
 from datetime import date, datetime
 from functools import lru_cache
-from operator import itemgetter
 from pathlib import Path
 
 from django.db.models import (
@@ -428,9 +427,9 @@ def _month_starts_between(start_month, end_month):
     return months
 
 
-def _build_va_cause_trend_payload(filtered_qs, top_causes):
+def _va_cause_trend_rows(filtered_qs):
     start_key = COD_TREND_START_MONTH.strftime("%Y-%m")
-    rows = (
+    return list(
         filtered_qs.exclude(final_cause__isnull=True)
         .exclude(final_cause="")
         .exclude(Id10023__isnull=True)
@@ -448,6 +447,14 @@ def _build_va_cause_trend_payload(filtered_qs, top_causes):
         .annotate(count=Count("pk"))
         .order_by("month_key")
     )
+
+
+def _build_va_cause_trend_payload(querysets, top_causes):
+    # Chain the coded rows from every queryset (VA + VASA); the per-month/cause
+    # accumulation below sums duplicate (month, cause) keys across models.
+    rows = []
+    for filtered_qs in querysets:
+        rows.extend(_va_cause_trend_rows(filtered_qs))
 
     row_month_keys = sorted({row["month_key"] for row in rows if row.get("month_key")})
     if row_month_keys:
@@ -501,7 +508,7 @@ def _build_va_cause_trend_payload(filtered_qs, top_causes):
     }
 
 
-def _build_regional_cod_comparison(filtered_qs, region_of_interest, top_causes):
+def _build_regional_cod_comparison(querysets, region_of_interest, top_causes):
     def _is_truthy_age_flag(value):
         return _compact_spaces(value) in {"1", "1.0"}
 
@@ -537,12 +544,13 @@ def _build_regional_cod_comparison(filtered_qs, region_of_interest, top_causes):
         return _empty_regional_cod_comparison(compare_key)
 
     grouped_counts = {}
-    coded_qs = (
+    coded_records = itertools.chain.from_iterable(
         filtered_qs.exclude(final_cause__isnull=True)
         .exclude(final_cause="")
         .select_related("location", "cluster")
+        for filtered_qs in querysets
     )
-    for va in coded_qs:
+    for va in coded_records:
         if compare_key == "age":
             group_name = _age_group_label(va)
         elif compare_key == "source":
@@ -641,13 +649,25 @@ def _meaningful_text_q(field_name):
     )
 
 
-def _apply_source_filter(queryset, source):
+def _apply_source_filter(queryset, source, is_vasa=False):
+    """Apply the VA-source filter to a VA *or* VASA queryset.
+
+    ``community``/``facility`` filter by the persisted ``community_va`` tag
+    (applies to both record types). ``vasa`` / ``va`` select by record type:
+    when ``vasa`` is requested the VA queryset is emptied and vice versa, so the
+    combined VA+VASA result contains only the requested type.
+    """
     if not source:
         return queryset
 
     source_key = _compact_spaces(source).lower()
     if source_key in {"all", "any", "*"}:
         return queryset
+
+    if source_key in {"vasa", "vasa_va", "verbal social autopsy"}:
+        return queryset if is_vasa else queryset.none()
+    if source_key in {"va", "verbal_autopsy", "verbal autopsy"}:
+        return queryset.none() if is_vasa else queryset
 
     if source_key in {
         "community",
@@ -732,18 +752,13 @@ def _apply_region_filter(queryset, region_of_interest):
     return queryset.filter(pk__in=matching_ids)
 
 
-def _get_filtered_va_queryset(
-    user,
-    start_date,
-    end_date,
-    cause_of_death=None,
-    region_of_interest=None,
-    age=None,
-    sex=None,
-    source=None,
-):
-    user_vas = user.verbal_autopsies(date_cutoff=start_date, end_date=end_date)
-    queryset = user_vas.exclude(Id10023__in=["dk", "DK"]).annotate(
+def _annotate_va_queryset(queryset, cod_fk_field):
+    """Annotate a VA/VASA queryset with derived location + final-cause columns.
+
+    ``cod_fk_field`` is ``"verbalautopsy"`` for VerbalAutopsy and ``"vasa"`` for
+    VASA — the shared CauseOfDeath table accepts either parent.
+    """
+    return queryset.exclude(Id10023__in=["dk", "DK"]).annotate(
         province_name_from_location=Subquery(
             Location.objects.values("name").filter(
                 Q(path=Substr(OuterRef("location__path"), 1, 8)), Q(depth=2)
@@ -756,12 +771,22 @@ def _get_filtered_va_queryset(
             )[:1]
         ),
         final_cause=Subquery(
-            CauseOfDeath.objects.filter(verbalautopsy=OuterRef("pk"))
+            CauseOfDeath.objects.filter(**{cod_fk_field: OuterRef("pk")})
             .order_by("-created")
             .values("cause")[:1]
         ),
     )
 
+
+def _filter_va_queryset(
+    queryset,
+    cause_of_death=None,
+    region_of_interest=None,
+    age=None,
+    sex=None,
+    source=None,
+    is_vasa=False,
+):
     if cause_of_death:
         causes = load_cod_groupings(cause_of_death=cause_of_death)["filter_causes"]
         if causes:
@@ -773,33 +798,109 @@ def _get_filtered_va_queryset(
     queryset = _apply_age_filter(queryset, age)
     if sex:
         queryset = queryset.filter(Id10019=sex)
-    queryset = _apply_source_filter(queryset, source)
+    queryset = _apply_source_filter(queryset, source, is_vasa=is_vasa)
     return queryset
 
 
-def get_filtered_va_queryset(request):
-    start_date = _request_param(request, "start_date", "1901-01-01") or "1901-01-01"
-    end_date = _request_param(request, "end_date", "") or datetime.today().strftime(
-        "%Y-%m-%d"
-    )
-    cause_of_death = _request_param(request, "cause_of_death", "") or None
-    region_of_interest = _request_param(request, "region_of_interest", "") or None
-    age = _request_param(request, "age", "") or None
-    sex = _request_param(request, "sex", "") or None
-    source = _request_param(request, "source", "") or None
-    return _get_filtered_va_queryset(
-        request.user,
-        start_date=start_date,
-        end_date=end_date,
+def _get_filtered_va_queryset(
+    user,
+    start_date,
+    end_date,
+    cause_of_death=None,
+    region_of_interest=None,
+    age=None,
+    sex=None,
+    source=None,
+):
+    user_vas = user.verbal_autopsies(date_cutoff=start_date, end_date=end_date)
+    queryset = _annotate_va_queryset(user_vas, "verbalautopsy")
+    return _filter_va_queryset(
+        queryset,
         cause_of_death=cause_of_death,
         region_of_interest=region_of_interest,
         age=age,
         sex=sex,
         source=source,
+        is_vasa=False,
+    )
+
+
+def _get_filtered_vasa_queryset(
+    user,
+    start_date,
+    end_date,
+    cause_of_death=None,
+    region_of_interest=None,
+    age=None,
+    sex=None,
+    source=None,
+):
+    user_vasa = user.vasa_records(date_cutoff=start_date, end_date=end_date)
+    queryset = _annotate_va_queryset(user_vasa, "vasa")
+    return _filter_va_queryset(
+        queryset,
+        cause_of_death=cause_of_death,
+        region_of_interest=region_of_interest,
+        age=age,
+        sex=sex,
+        source=source,
+        is_vasa=True,
+    )
+
+
+def _filter_params_from_request(request):
+    return {
+        "start_date": _request_param(request, "start_date", "1901-01-01")
+        or "1901-01-01",
+        "end_date": _request_param(request, "end_date", "")
+        or datetime.today().strftime("%Y-%m-%d"),
+        "cause_of_death": _request_param(request, "cause_of_death", "") or None,
+        "region_of_interest": _request_param(request, "region_of_interest", "") or None,
+        "age": _request_param(request, "age", "") or None,
+        "sex": _request_param(request, "sex", "") or None,
+        "source": _request_param(request, "source", "") or None,
+    }
+
+
+def get_filtered_va_queryset(request):
+    return _get_filtered_va_queryset(
+        request.user, **_filter_params_from_request(request)
+    )
+
+
+def get_filtered_vasa_queryset(request):
+    return _get_filtered_vasa_queryset(
+        request.user, **_filter_params_from_request(request)
     )
 
 
 # ============ VA Data =================
+def _age_group_case():
+    """Case expression bucketing a VA/VASA record into neonate/child/adult."""
+    return Case(
+        When(isNeonatal="1", then=Value("neonate")),
+        When(isNeonatal="1.0", then=Value("neonate")),
+        When(isNeonatal1="1", then=Value("neonate")),
+        When(isNeonatal1="1.0", then=Value("neonate")),
+        When(isNeonatal2="1", then=Value("neonate")),
+        When(isNeonatal2="1.0", then=Value("neonate")),
+        When(isChild="1", then=Value("child")),
+        When(isChild="1.0", then=Value("child")),
+        When(isChild1="1", then=Value("child")),
+        When(isChild1="1.0", then=Value("child")),
+        When(isChild2="1", then=Value("child")),
+        When(isChild2="1.0", then=Value("child")),
+        When(isAdult="1", then=Value("adult")),
+        When(isAdult="1.0", then=Value("adult")),
+        When(isAdult1="1", then=Value("adult")),
+        When(isAdult1="1.0", then=Value("adult")),
+        When(isAdult2="1", then=Value("adult")),
+        When(isAdult2="1.0", then=Value("adult")),
+        default=Value("Unknown"),
+        output_field=CharField(),
+    )
+
+
 def load_va_data(
     user,
     cause_of_death,
@@ -811,7 +912,11 @@ def load_va_data(
     source=None,
     compare_by="province",
     filtered_qs=None,
+    filtered_vasa_qs=None,
 ):
+    # VASA is folded into the verbal-autopsy analytics: aggregations run across
+    # both querysets and are merged, so cards, cause trends, demographics, and
+    # the map count VA + VASA as one unified population.
     user_vas_filtered = filtered_qs or _get_filtered_va_queryset(
         user,
         start_date=start_date,
@@ -822,63 +927,69 @@ def load_va_data(
         sex=sex,
         source=source,
     )
+    if filtered_vasa_qs is None:
+        filtered_vasa_qs = _get_filtered_vasa_queryset(
+            user,
+            start_date=start_date,
+            end_date=end_date,
+            cause_of_death=cause_of_death,
+            region_of_interest=region_of_interest,
+            age=age,
+            sex=sex,
+            source=source,
+        )
+    querysets = [user_vas_filtered, filtered_vasa_qs]
+
     # Cards must reflect the active filter set (including selected map region).
     # Bypass global cached summary to avoid stale unfiltered values.
-    update_stats = get_va_summary_stats(user_vas_filtered, cache_key=None)
+    update_stats = get_va_summary_stats(
+        user_vas_filtered, cache_key=None, extra_qs=filtered_vasa_qs
+    )
     if len(questions_to_autodetect_duplicates()) > 0:
+        # Only VerbalAutopsy carries a duplicate flag; VASA has none.
         update_stats["duplicates"] = user_vas_filtered.filter(duplicate=True).count()
 
-    uncoded_vas = user_vas_filtered.filter(
-        Q(final_cause__isnull=True) | Q(final_cause="")
-    ).count()
-
-    demographics = (
-        user_vas_filtered.filter(causes__isnull=False)
-        .values(
-            gender=F("Id10019"),
-            age_group_named=Case(
-                When(isNeonatal="1", then=Value("neonate")),
-                When(isNeonatal="1.0", then=Value("neonate")),
-                When(isNeonatal1="1", then=Value("neonate")),
-                When(isNeonatal1="1.0", then=Value("neonate")),
-                When(isNeonatal2="1", then=Value("neonate")),
-                When(isNeonatal2="1.0", then=Value("neonate")),
-                When(isChild="1", then=Value("child")),
-                When(isChild="1.0", then=Value("child")),
-                When(isChild1="1", then=Value("child")),
-                When(isChild1="1.0", then=Value("child")),
-                When(isChild2="1", then=Value("child")),
-                When(isChild2="1.0", then=Value("child")),
-                When(isAdult="1", then=Value("adult")),
-                When(isAdult="1.0", then=Value("adult")),
-                When(isAdult1="1", then=Value("adult")),
-                When(isAdult1="1.0", then=Value("adult")),
-                When(isAdult2="1", then=Value("adult")),
-                When(isAdult2="1.0", then=Value("adult")),
-                default=Value("Unknown"),
-                output_field=CharField(),
-            ),
-        )
-        .annotate(count=Count("pk"))
-        .order_by("age_group_named")
+    uncoded_vas = sum(
+        qs.filter(Q(final_cause__isnull=True) | Q(final_cause="")).count()
+        for qs in querysets
     )
 
-    demographics = [
-        {
-            "age_group": key,
-            **{item.get("gender"): item.get("count") for item in list(group)},
-        }
-        for key, group in itertools.groupby(demographics, itemgetter("age_group_named"))
-    ]
+    # Demographics: merge (age_group, gender) counts across VA + VASA.
+    age_case = _age_group_case()
+    demo_counts = {}
+    for qs in querysets:
+        for item in (
+            qs.filter(causes__isnull=False)
+            .values(gender=F("Id10019"), age_group_named=age_case)
+            .annotate(count=Count("pk"))
+        ):
+            key = (item.get("age_group_named"), item.get("gender"))
+            demo_counts[key] = demo_counts.get(key, 0) + (item.get("count") or 0)
 
-    cod_sums_qs = (
-        user_vas_filtered.exclude(final_cause__isnull=True)
-        .exclude(final_cause="")
-        .values(cause=F("final_cause"))
-        .annotate(count=Count("pk"))
-        .order_by("-count")
+    demographics = []
+    for age_group in sorted({group for group, _gender in demo_counts}):
+        entry = {"age_group": age_group}
+        for (group, gender), count in demo_counts.items():
+            if group == age_group:
+                entry[gender] = count
+        demographics.append(entry)
+
+    # Cause-of-death totals: merge by cause across VA + VASA.
+    cod_counts = {}
+    for qs in querysets:
+        for row in (
+            qs.exclude(final_cause__isnull=True)
+            .exclude(final_cause="")
+            .values(cause=F("final_cause"))
+            .annotate(count=Count("pk"))
+        ):
+            cause = row.get("cause")
+            cod_counts[cause] = cod_counts.get(cause, 0) + (row.get("count") or 0)
+    cod_sums_rows = sorted(
+        ({"cause": cause, "count": count} for cause, count in cod_counts.items()),
+        key=lambda row: row["count"],
+        reverse=True,
     )
-    cod_sums_rows = list(cod_sums_qs)
     top_causes_for_trend = [
         row.get("cause") for row in cod_sums_rows[:5] if row.get("cause")
     ]
@@ -891,28 +1002,37 @@ def load_va_data(
     )
     COD_sums = [{**row, "total": cod_total} for row in COD_sums]
 
-    COD_trend = (
-        user_vas_filtered.filter(causes__isnull=False)
-        .exclude(Id10023__isnull=True)
-        .exclude(Id10023="")
-        .exclude(Id10023__iexact="nan")
-        .exclude(Id10023__iexact="nat")
-        .exclude(Id10023__iexact="none")
-        .exclude(Id10023__iexact="null")
-        .exclude(Id10023__iexact="dk")
-        .filter(Id10023__regex=r"^\d{4}-\d{2}-\d{2}")
-        .filter(Id10023__gte=COD_TREND_START_MONTH.strftime("%Y-%m-%d"))
-        .annotate(month_key=Substr("Id10023", 1, 7))
-        .values("month_key")
-        .annotate(count=Count("pk"))
-        .order_by("month_key")
-    )
-    va_cause_trend = _build_va_cause_trend_payload(
-        user_vas_filtered, top_causes_for_trend
-    )
+    # COD trend by month: merge counts across VA + VASA.
+    trend_counts = {}
+    for qs in querysets:
+        for row in (
+            qs.filter(causes__isnull=False)
+            .exclude(Id10023__isnull=True)
+            .exclude(Id10023="")
+            .exclude(Id10023__iexact="nan")
+            .exclude(Id10023__iexact="nat")
+            .exclude(Id10023__iexact="none")
+            .exclude(Id10023__iexact="null")
+            .exclude(Id10023__iexact="dk")
+            .filter(Id10023__regex=r"^\d{4}-\d{2}-\d{2}")
+            .filter(Id10023__gte=COD_TREND_START_MONTH.strftime("%Y-%m-%d"))
+            .annotate(month_key=Substr("Id10023", 1, 7))
+            .values("month_key")
+            .annotate(count=Count("pk"))
+        ):
+            month_key = row.get("month_key")
+            trend_counts[month_key] = trend_counts.get(month_key, 0) + (
+                row.get("count") or 0
+            )
+    COD_trend = [
+        {"month_key": month_key, "count": count}
+        for month_key, count in sorted(trend_counts.items())
+    ]
+
+    va_cause_trend = _build_va_cause_trend_payload(querysets, top_causes_for_trend)
     regional_cod_comparison = (
         _build_regional_cod_comparison(
-            user_vas_filtered,
+            querysets,
             region_of_interest=compare_by,
             top_causes=top_causes_for_trend,
         )
@@ -920,12 +1040,22 @@ def load_va_data(
         else _empty_regional_cod_comparison(compare_by)
     )
 
-    place_of_death = (
-        user_vas_filtered.filter(causes__isnull=False)
-        .values(place=F("Id10058"))
-        .annotate(count=Count("pk"))
-        .order_by("-count")
-    )
+    # Place of death: merge by place across VA + VASA.
+    place_counts = {}
+    for qs in querysets:
+        for row in (
+            qs.filter(causes__isnull=False)
+            .values(place=F("Id10058"))
+            .annotate(count=Count("pk"))
+        ):
+            place = row.get("place")
+            place_counts[place] = place_counts.get(place, 0) + (row.get("count") or 0)
+    place_of_death = [
+        {"place": place, "count": count}
+        for place, count in sorted(
+            place_counts.items(), key=lambda item: item[1], reverse=True
+        )
+    ]
 
     map_counts = {
         "Province": {},
@@ -940,7 +1070,10 @@ def load_va_data(
     }
     total_map_vas = 0
     total_map_coded_vas = 0
-    for va in user_vas_filtered.select_related("location", "cluster").iterator():
+    map_records = itertools.chain.from_iterable(
+        qs.select_related("location", "cluster").iterator() for qs in querysets
+    )
+    for va in map_records:
         total_map_vas += 1
         is_coded = bool(_compact_spaces(getattr(va, "final_cause", "")))
         if is_coded:

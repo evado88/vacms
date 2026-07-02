@@ -4,12 +4,92 @@ from va_explorer.tests.factories import (
     CauseOfDeathFactory,
     LocationFactory,
     UserFactory,
+    VASAFactory,
     VerbalAutopsyFactory,
 )
 from va_explorer.va_analytics.utils.loading import load_va_data
 from va_explorer.va_data_management.models import SRSClusterLocation
 
 pytestmark = pytest.mark.django_db
+
+
+def test_load_va_data_folds_in_vasa_records():
+    facility = LocationFactory.create(name="Facility 1", location_type="facility")
+
+    va = VerbalAutopsyFactory.create(
+        instanceid="analytics-fold-va-1",
+        location=facility,
+        community_va="no",
+        Id10023="2021-03-21",
+    )
+    CauseOfDeathFactory.create(verbalautopsy=va, cause="Cause A")
+
+    vasa = VASAFactory.create(
+        instanceid="analytics-fold-vasa-1",
+        location=facility,
+        community_va="no",
+        Id10023="2021-03-21",
+    )
+    CauseOfDeathFactory.create(verbalautopsy=None, vasa=vasa, cause="Cause A")
+
+    data = load_va_data(
+        user=UserFactory.create(),
+        cause_of_death=None,
+        start_date="1901-01-01",
+        end_date="2100-01-01",
+        region_of_interest=None,
+        age=None,
+        sex=None,
+    )
+
+    # VA + VASA counted as one unified verbal-autopsy population.
+    assert data["update_stats"]["total_vas"] == 2
+    assert data["map_total_vas"] == 2
+    assert data["map_total_coded_vas"] == 2
+    cause_a = next(row for row in data["COD_grouping"] if row["cause"] == "Cause A")
+    assert cause_a["count"] == 2
+
+
+def test_load_va_data_source_vasa_filters_to_vasa_only():
+    facility = LocationFactory.create(name="Facility 1", location_type="facility")
+
+    va = VerbalAutopsyFactory.create(
+        instanceid="analytics-src-va-1",
+        location=facility,
+        community_va="no",
+        Id10023="2021-03-21",
+    )
+    CauseOfDeathFactory.create(verbalautopsy=va, cause="Cause A")
+
+    vasa = VASAFactory.create(
+        instanceid="analytics-src-vasa-1",
+        location=facility,
+        community_va="no",
+        Id10023="2021-03-21",
+    )
+    CauseOfDeathFactory.create(verbalautopsy=None, vasa=vasa, cause="Cause B")
+
+    user = UserFactory.create()
+    common = {
+        "user": user,
+        "cause_of_death": None,
+        "start_date": "1901-01-01",
+        "end_date": "2100-01-01",
+        "region_of_interest": None,
+        "age": None,
+        "sex": None,
+    }
+
+    vasa_only = load_va_data(**common, source="vasa")
+    assert vasa_only["update_stats"]["total_vas"] == 1
+    assert [row["cause"] for row in vasa_only["COD_grouping"]] == ["Cause B"]
+
+    va_only = load_va_data(**common, source="va")
+    assert va_only["update_stats"]["total_vas"] == 1
+    assert [row["cause"] for row in va_only["COD_grouping"]] == ["Cause A"]
+
+    both = load_va_data(**common, source="all")
+    assert both["update_stats"]["total_vas"] == 2
 
 
 def test_load_va_data_counts_coded_community_without_facility_location():
