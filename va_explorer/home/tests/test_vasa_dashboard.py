@@ -48,6 +48,27 @@ def test_national_operational_view_folds_vasa_into_va_kpi_and_chart():
     assert sum(data["va_values"]) == 3
 
 
+def test_baseline_census_exclusion_still_counts_vasa():
+    # The Baseline Census overview reuses the national-operational data with a
+    # province exclusion. VA and VASA pass through that exclusion untouched, so a
+    # VASA record must still be counted in the unified verbal-autopsy KPI even
+    # when its province is on the census-exclusion list.
+    facility = LocationFactory.create(name="Facility 1", location_type="facility")
+    VASAFactory.create(
+        instanceid="census-vasa-1",
+        location=facility,
+        province="Lusaka",
+    )
+
+    user = AdminFactory.create()
+    data = get_national_operational_view_data(
+        request=_request(user),
+        census_province_exclude=["Lusaka"],
+    )
+
+    assert data["kpis"]["vas"]["total"] == 1
+
+
 def test_overview_map_counts_vasa_on_the_verbal_autopsy_layer():
     facility = LocationFactory.create(name="Facility 1", location_type="facility")
     VASAFactory.create(instanceid="map-vasa-1", location=facility)
