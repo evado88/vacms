@@ -201,7 +201,15 @@ def classify_field(
     if who_name:
         return resolve_who_name(who_name, va_field_lookup)
 
-    # Empty WHO_name: admin/machinery vs a real social-autopsy input question.
-    if name.strip().lower() in ADMIN_FIELD_NAMES or base_type in ADMIN_EMPTY_TYPES:
+    # Empty WHO_name, but the VASA field *name* is itself a VerbalAutopsy column
+    # (e.g. the age calculates ``age_group`` / ``ageInDays`` / ``isNeonatal``).
+    # These are the VA helper columns under their own name, so map them to VA;
+    # this also avoids a name collision with an inherited VASA column.
+    lowered = name.strip().lower()
+    if lowered in va_field_lookup and lowered not in ADMIN_FIELD_NAMES:
+        return Resolution("va", "name_is_va_field", [va_field_lookup[lowered]])
+
+    # Otherwise: admin/machinery vs a real social-autopsy input question.
+    if lowered in ADMIN_FIELD_NAMES or base_type in ADMIN_EMPTY_TYPES:
         return Resolution("admin_meta", f"empty_{base_type or 'unknown'}")
     return Resolution("sa", "social_autopsy")

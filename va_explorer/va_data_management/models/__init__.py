@@ -14,7 +14,15 @@ from .pregnancy import Pregnancy
 from .pregnancy_outcome import PregnancyOutcome, PregnancyOutcomeBaby
 from .social_mobilization import RumorLog, SocialMobilization
 from .srs_ea_population_target import BaselineCensusProvince, SRSEAPopulationTarget
+from .vasa import (
+    VASA,
+    VASACareSeekingAdult,
+    VASACareSeekingChild,
+    VASACareSeekingNeonate,
+    VASASocialAutopsy,
+)
 from .verbal_autopsy import (
+    BaseVerbalAutopsy,
     CauseCodingIssue,
     CauseOfDeath,
     CODCodesDHIS,
@@ -35,6 +43,12 @@ __all__ = [
     "PregnancyOutcomeBaby",
     "Death",
     "VerbalAutopsy",
+    "BaseVerbalAutopsy",
+    "VASA",
+    "VASASocialAutopsy",
+    "VASACareSeekingNeonate",
+    "VASACareSeekingChild",
+    "VASACareSeekingAdult",
     "Location",
     "CauseCodingIssue",
     "questions_to_autodetect_duplicates",
