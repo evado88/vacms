@@ -12,7 +12,7 @@ from .constants import (
     PREGNANCY_OUTCOME_PII_FIELDS,
     PREGNANCY_PII_FIELDS,
 )
-from .models import Death, Household, Pregnancy, PregnancyOutcome, VerbalAutopsy
+from .models import VASA, Death, Household, Pregnancy, PregnancyOutcome, VerbalAutopsy
 from .utils.multi_select import MultiSelectFormField
 
 
@@ -75,6 +75,41 @@ class VerbalAutopsyForm(forms.ModelForm):
             validate_date_format(self, cleaned_data["Id10023"])
 
         return cleaned_data
+
+
+class VASAForm(forms.ModelForm):
+    """Read/edit form for the WHO columns of a VASA record.
+
+    VASA shares every WHO ``Idxxxxx`` column with VerbalAutopsy (via
+    BaseVerbalAutopsy), so the same ``HIDDEN_FIELDS`` are excluded; the extra
+    VASA-only administrative fields are hidden too. Social-autopsy data lives on
+    a separate model and is intentionally absent here.
+    """
+
+    class Meta:
+        model = VASA
+        # HIDDEN_FIELDS already covers id/location/cluster/instanceid/etc. plus
+        # VA-only names Django silently ignores when absent from VASA.
+        exclude = list(HIDDEN_FIELDS) + [
+            "instrument",
+            "source",
+            "key",
+            "created",
+            "updated",
+        ]
+
+    def __init__(self, *args, **kwargs):
+        include_pii = kwargs.pop("include_pii", True)
+        super().__init__(*args, **kwargs)
+        for _name, field in self.fields.items():
+            if not field.widget.attrs.get("class"):
+                field.widget.attrs["class"] = "form-control"
+            if isinstance(field.widget, forms.Textarea):
+                field.widget.attrs["rows"] = "3"
+        if not include_pii:
+            for field in PII_FIELDS:
+                if field in self.fields:
+                    del self.fields[field]
 
 
 def validate_date_format(form, Id10023):

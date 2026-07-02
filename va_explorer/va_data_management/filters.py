@@ -5,7 +5,7 @@ from django.forms import TextInput
 from django_filters import CharFilter, DateFilter, FilterSet
 from fuzzywuzzy import fuzz
 
-from .models import Death, Household, Pregnancy, PregnancyOutcome, VerbalAutopsy
+from .models import VASA, Death, Household, Pregnancy, PregnancyOutcome, VerbalAutopsy
 
 
 def validate_integer(value: str):
@@ -177,6 +177,19 @@ class VAFilter(FilterSet):
             ]
             return queryset.filter(id__in=matches)
         return queryset
+
+
+class VASAFilter(VAFilter):
+    """VASA line-list filter.
+
+    Reuses every VAFilter field (interviewer/deceased/district/date/cause) — VASA
+    shares those WHO columns via BaseVerbalAutopsy — so the same GET params filter
+    the VASA leg of the merged verbal-autopsy line list identically.
+    """
+
+    class Meta:
+        model = VASA
+        fields = []
 
 
 # =========================

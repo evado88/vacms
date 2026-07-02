@@ -36,11 +36,13 @@ from .vae_views import (
     RevertLatest,
     RunCodingAlgorithm,
     Show,
+    VASAShow,
 )
 
 __all__ = [
     "Index",
     "Show",
+    "VASAShow",
     "Edit",
     "Reset",
     "RevertLatest",
