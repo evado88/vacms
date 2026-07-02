@@ -137,7 +137,7 @@ class HomeOverviewMapData(CustomAuthMixin, View):
             request,
             extra={
                 "component": "overview_map",
-                "schema_version": 3,
+                "schema_version": 4,
                 "time_preset": request.GET.get("time_preset", ""),
                 "start_datetime": request.GET.get("start_datetime", ""),
                 "end_datetime": request.GET.get("end_datetime", ""),
@@ -1661,7 +1661,15 @@ class HomeVaStatisticsComponent(CustomAuthMixin, TemplateView):
         context = super().get_context_data(**kwargs)
         user = self.request.user
         with timed_block("home.va_statistics.summary_stats", request=self.request):
-            context.update(get_va_summary_stats(user.verbal_autopsies()))
+            # Fold VASA into the unified verbal-autopsy summary. Use a distinct
+            # cache key so the VA+VASA figure never poisons the VA-only cache.
+            context.update(
+                get_va_summary_stats(
+                    user.verbal_autopsies(),
+                    cache_key="va_summary_stats_with_vasa",
+                    extra_qs=user.vasa_records(),
+                )
+            )
         context["locations"] = "All Regions"
         if user.location_restrictions.count() > 0:
             context["locations"] = ", ".join(

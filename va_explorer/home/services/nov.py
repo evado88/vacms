@@ -13,6 +13,7 @@ from va_explorer.home.services.common import (
 )
 from va_explorer.utils.profiling import timed_block
 from va_explorer.va_data_management.models import (
+    VASA,
     Death,
     Household,
     Pregnancy,
@@ -360,15 +361,32 @@ def _build_scoped_querysets(request, location_level, location_value):
     )
     if user:
         va_qs = user.verbal_autopsies().filter(deleted_at__isnull=True, duplicate=False)
+        vasa_qs = user.vasa_records().filter(deleted_at__isnull=True)
     else:
         va_qs = VerbalAutopsy.objects.filter(deleted_at__isnull=True, duplicate=False)
+        vasa_qs = VASA.objects.filter(deleted_at__isnull=True)
     va_qs = apply_text_geography_filter(
         va_qs,
         VerbalAutopsy,
         location_level,
         location_value,
     )
-    return households_qs, pregnancies_qs, pregnancy_outcomes_qs, deaths_qs, va_qs
+    # VASA records are folded into the verbal-autopsy figures (same WHO columns,
+    # same geography). They are scoped and geography-filtered identically to VA.
+    vasa_qs = apply_text_geography_filter(
+        vasa_qs,
+        VASA,
+        location_level,
+        location_value,
+    )
+    return (
+        households_qs,
+        pregnancies_qs,
+        pregnancy_outcomes_qs,
+        deaths_qs,
+        va_qs,
+        vasa_qs,
+    )
 
 
 def _exclude_census_querysets_by_province(querysets, excluded_provinces):
@@ -383,14 +401,22 @@ def _exclude_census_querysets_by_province(querysets, excluded_provinces):
     lowered = {str(p).strip().lower() for p in (excluded_provinces or []) if p}
     if not lowered:
         return querysets
-    households_qs, pregnancies_qs, pregnancy_outcomes_qs, deaths_qs, va_qs = querysets
+    (
+        households_qs,
+        pregnancies_qs,
+        pregnancy_outcomes_qs,
+        deaths_qs,
+        va_qs,
+        vasa_qs,
+    ) = querysets
     filtered = tuple(
         qs.annotate(_province_lower=Lower("province")).exclude(
             _province_lower__in=lowered
         )
         for qs in (households_qs, pregnancies_qs, pregnancy_outcomes_qs, deaths_qs)
     )
-    return (*filtered, va_qs)
+    # VA and VASA querysets pass through untouched (same rationale).
+    return (*filtered, va_qs, vasa_qs)
 
 
 def _prefilter_by_submissiondate(querysets, start_dt):
@@ -429,6 +455,7 @@ def get_national_operational_view_data(
         pregnancy_outcomes_qs,
         deaths_qs,
         va_qs,
+        vasa_qs,
     ) = _prefilter_by_submissiondate(scoped_querysets, start_dt)
 
     with timed_block("home.nov.kpi_counts.households", request=request):
@@ -453,6 +480,15 @@ def get_national_operational_view_data(
         vas_totals = _db_windowed_counts(
             va_qs, "instanceid", VA_DATE_FIELDS, start_dt, end_dt
         )
+        # Fold VASA counts into the unified verbal-autopsy KPI (disjoint
+        # instanceids across the two ODK forms, so the windows add cleanly).
+        vasa_totals = _db_windowed_counts(
+            vasa_qs, "instanceid", VA_DATE_FIELDS, start_dt, end_dt
+        )
+        vas_totals = {
+            window: (vas_totals.get(window, 0) + vasa_totals.get(window, 0))
+            for window in vas_totals
+        }
     with timed_block("home.nov.kpi_counts.detected", request=request):
         pregnancies_detected = _household_detected_windowed_sums(
             households_qs, "HH_46A", start_dt, end_dt
@@ -486,12 +522,18 @@ def get_national_operational_view_data(
                 "instanceid",
                 VA_DATE_FIELDS,
             )
+            vasa_by_key = latest_timestamps_by_identifier(
+                vasa_qs,
+                "instanceid",
+                VA_DATE_FIELDS,
+            )
         with timed_block("home.nov.chart_series", request=request):
             chart_data = _build_chart_series(
                 list(pregnancies_by_key.values()),
                 list(pregnancy_outcomes_by_key.values()),
                 list(deaths_by_key.values()),
-                list(vas_by_key.values()),
+                # Unified VA series: VA + VASA submission timestamps.
+                list(vas_by_key.values()) + list(vasa_by_key.values()),
                 start_dt,
                 end_dt,
             )

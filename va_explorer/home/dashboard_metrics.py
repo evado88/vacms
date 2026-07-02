@@ -10,6 +10,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
 
 from va_explorer.va_data_management.models import (
+    VASA,
     Death,
     Household,
     HouseholdMember,
@@ -167,7 +168,7 @@ def _safe_int(value: object) -> int:
             return 0
 
 
-CACHE_KEY = "homepage_metrics:v2"
+CACHE_KEY = "homepage_metrics:v3"
 CACHE_TIMEOUT_SECONDS = 60 * 60 * 24  # 1 day
 LOCK_TIMEOUT_SECONDS = 60
 LOCK_WAIT_SECONDS = 2
@@ -268,20 +269,34 @@ def _compute_homepage_metrics(user=None) -> dict[str, int]:
 
     # -------------------------
     # Verbal Autopsies (canonical, non-deleted; use submissiondate/Id10012/created)
+    # VASA records are folded in: they are verbal autopsies too, so the KPI is a
+    # single unified count (VA + VASA).
     # -------------------------
     if user and getattr(user, "is_authenticated", False):
         vas_canonical = user.verbal_autopsies().filter(
             deleted_at__isnull=True, duplicate=False
         )
+        vasa_canonical = user.vasa_records().filter(deleted_at__isnull=True)
     else:
         vas_canonical = VerbalAutopsy.objects.filter(
             deleted_at__isnull=True, duplicate=False
         )
+        vasa_canonical = VASA.objects.filter(deleted_at__isnull=True)
     total_vas, today_vas, week_vas = _count_recent_records(
         vas_canonical,
         key_field="instanceid",
         date_fields=("submissiondate", "Id10012", "created"),
     )
+    # VASA instanceids are disjoint from VA (different ODK forms), so the counts
+    # add cleanly.
+    total_vasa, today_vasa, week_vasa = _count_recent_records(
+        vasa_canonical,
+        key_field="instanceid",
+        date_fields=("submissiondate", "Id10012", "created"),
+    )
+    total_vas += total_vasa
+    today_vas += today_vasa
+    week_vas += week_vasa
 
     return {
         "total_eas": total_eas,

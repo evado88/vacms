@@ -109,8 +109,38 @@ def _to_cumulative(values):
 
 # NOTE: using Id10012 (Interview date) to drive stats/views. submissiondate is
 # unreliable or inaccurate due to bulk submissions
+def _va_stats_dataframe(queryset, source):
+    """Build the VA-stats DataFrame for one model, tagged with its source.
+
+    ``uid`` (``source:id``) keeps VA and VASA rows distinct so id collisions
+    across the two tables never cross-contaminate coded/uncoded matching.
+    """
+    frame = pd.DataFrame(
+        queryset.only(*VA_DF_FIELDS)
+        .select_related("location")
+        .values(
+            "id",
+            "Id10023",
+            "created",
+            "Id10011",
+            "Id10012",
+            name=F("Id10010"),
+            facility=F("location__name"),
+        )
+    )
+    if frame.empty:
+        return frame
+    frame["source"] = source
+    frame["uid"] = source + ":" + frame["id"].astype(str)
+    return frame
+
+
 def get_trends_data(user):
+    # VASA records are folded into the verbal-autopsy statistics: they are coded
+    # through the same pipeline, so collected/coded/uncoded counts and graphs
+    # count VA + VASA as one unified population.
     user_vas = user.verbal_autopsies()
+    user_vasa = user.vasa_records()
     va_table = empty_va_table()
     graphs = empty_graph_data()
     issue_list = []
@@ -118,29 +148,30 @@ def get_trends_data(user):
     additional_issues = 0
     additional_indeterminate_cods = 0
 
-    if user_vas.count() > 0:
+    if user_vas.count() + user_vasa.count() > 0:
         # Fetch VA base data WITHOUT joining causes — causes__cause JOIN multiplies
         # rows (one per cause per VA), which inflates the DataFrame by 3–5× and
         # causes runaway memory growth on large datasets.
-        va_df = pd.DataFrame(
-            user_vas.only(*VA_DF_FIELDS)
-            .select_related("location")
-            .values(
-                "id",
-                "Id10023",
-                "created",
-                "Id10011",
-                "Id10012",
-                name=F("Id10010"),
-                facility=F("location__name"),
-            )
+        va_df = pd.concat(
+            [
+                _va_stats_dataframe(user_vas, "VA"),
+                _va_stats_dataframe(user_vasa, "VASA"),
+            ],
+            ignore_index=True,
         )
 
-        # Fetch coded VA IDs separately (cheap single-column query, no JOIN blowup).
-        coded_ids = set(
-            user_vas.filter(causes__isnull=False).values_list("id", flat=True)
-        )
-        va_df["is_coded"] = va_df["id"].isin(coded_ids)
+        # Fetch coded record UIDs separately (cheap single-column queries, no
+        # JOIN blowup), keyed by source so VA/VASA ids never collide.
+        coded_uids = {
+            f"VA:{pk}"
+            for pk in user_vas.filter(causes__isnull=False).values_list("id", flat=True)
+        } | {
+            f"VASA:{pk}"
+            for pk in user_vasa.filter(causes__isnull=False).values_list(
+                "id", flat=True
+            )
+        }
+        va_df["is_coded"] = va_df["uid"].isin(coded_uids)
 
         va_df["date"] = get_interview_dates(va_df)
 
@@ -223,24 +254,25 @@ def get_trends_data(user):
         if user.is_fieldworker():
             user_va_table_fields.remove("Id10007")
 
-        # List the VAs that need attention; requesting certain fields and
-        # refetching makes this more efficient
-        vas_to_address = (
-            user_vas.only(*user_va_table_fields)
-            .filter(causes__isnull=True)[:NUM_TABLE_ROWS]
-            .prefetch_related("causes", "coding_issues", "location")
-        )
+        # List the VAs (and VASA records) that need attention; requesting
+        # certain fields and refetching makes this more efficient.
+        def _attention_list(filter_kwargs):
+            combined = list(
+                user_vas.only(*user_va_table_fields)
+                .filter(**filter_kwargs)[:NUM_TABLE_ROWS]
+                .prefetch_related("causes", "coding_issues", "location")
+            ) + list(
+                user_vasa.only(*user_va_table_fields)
+                .filter(**filter_kwargs)[:NUM_TABLE_ROWS]
+                .prefetch_related("causes", "coding_issues", "location")
+            )
+            return combined[:NUM_TABLE_ROWS]
 
-        # List the VAs with Indeterminate COD
-        vas_with_indeterminate_cod = (
-            user_vas.only(*user_va_table_fields)
-            .filter(causes__cause="Indeterminate")[:NUM_TABLE_ROWS]
-            .prefetch_related("causes", "coding_issues", "location")
+        issue_list = get_context_for_va_table(
+            _attention_list({"causes__isnull": True}), user
         )
-
-        issue_list = get_context_for_va_table(vas_to_address, user)
         indeterminate_cod_list = get_context_for_va_table(
-            vas_with_indeterminate_cod, user
+            _attention_list({"causes__cause": "Indeterminate"}), user
         )
 
         # If there are more than NUM_TABLE_ROWS show a link to where
@@ -248,9 +280,12 @@ def get_trends_data(user):
         additional_issues = max(
             (len(vas_overall) - vas_coded_overall) - NUM_TABLE_ROWS, 0
         )
-        additional_indeterminate_cods = max(
+        indeterminate_total = (
             user_vas.only("id").filter(causes__cause="Indeterminate").count()
-            - NUM_TABLE_ROWS,
+            + user_vasa.only("id").filter(causes__cause="Indeterminate").count()
+        )
+        additional_indeterminate_cods = max(
+            indeterminate_total - NUM_TABLE_ROWS,
             0,
         )
 

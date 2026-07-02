@@ -92,7 +92,7 @@ def get_cached_nov_payload(request):
 
     extra = {
         "component": "nov_bundle",
-        "schema_version": 3,
+        "schema_version": 4,
         "location_level": location_level,
         "location_value": location_value,
     }
@@ -173,7 +173,7 @@ def get_cached_trends_bundle(request, *, include_va=True, include_model=True):
         request,
         extra={
             "component": "trends",
-            "schema_version": 3,
+            "schema_version": 4,
             "include_va": int(include_va),
             "include_model": int(include_model),
         },
