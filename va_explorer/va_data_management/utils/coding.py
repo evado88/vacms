@@ -11,6 +11,7 @@ from django.forms import model_to_dict
 from simple_history.utils import bulk_create_with_history
 
 from va_explorer.va_data_management.models import (
+    VASA,
     CauseCodingIssue,
     CauseOfDeath,
     VerbalAutopsy,
@@ -75,11 +76,23 @@ def validate_algorithm_settings():
     return True
 
 
+def build_pycrossva_records(records):
+    """Build the pyCrossVA input rows for VA *or* VASA records.
+
+    Works on any BaseVerbalAutopsy-derived instance: ``model_to_dict`` yields the
+    WHO ``Idxxxxx`` columns (identical for VA and VASA), while social-autopsy data
+    is structurally excluded because it lives on a separate model, never on the
+    coded record. Keys are prefixed with ``-`` as pyCrossVA expects.
+    """
+    return [
+        {f"-{k}": v for k, v in model_to_dict(record).items()} for record in records
+    ]
+
+
 def _run_pycross_and_interva5(verbal_autopsies):
     # Get into CSV format, also prefixing keys with - as expected by
     # pyCrossVA (e.g. Id10424 becomes -Id10424)
-    va_data = [model_to_dict(va) for va in verbal_autopsies]
-    va_data = [{f"-{k}": v for k, v in d.items()} for d in va_data]
+    va_data = build_pycrossva_records(verbal_autopsies)
     va_data_csv = pd.DataFrame.from_records(va_data).to_csv()
 
     # Transform to algorithm format using the pyCrossVA web service
@@ -106,7 +119,7 @@ def _run_pycross_and_interva5(verbal_autopsies):
 
 
 def run_coding_algorithms():
-    # Load all verbal autopsies that don't have a cause coding
+    # Load all records (VA and VASA) that don't have a cause coding yet.
     # TODO: This should eventually check to see that there's a cause coding for
     # every supported algorithm
 
@@ -114,37 +127,50 @@ def run_coding_algorithms():
 
     causes_list = []
     issues_list = []
-    verbal_autopsies_without_causes_list = []
+    records_without_causes_list = []
 
-    # Determine number of iterations necessary for large lists of verbal autopsies
-    count = VerbalAutopsy.objects.filter(causes__isnull=True).count()
-    batch_size = 500
-    batches = ceil(count / batch_size)
+    # VerbalAutopsy and VASA share the same coding pipeline; each stores its
+    # results through its own FK on the shared CauseOfDeath / CauseCodingIssue.
+    for model, fk_field in ((VerbalAutopsy, "verbalautopsy"), (VASA, "vasa")):
+        count = model.objects.filter(causes__isnull=True).count()
+        batch_size = 500
+        batches = ceil(count / batch_size)
 
-    for i in range(batches):
-        batch_start = i * batch_size
-        batch_end = (i + 1) * batch_size
-        verbal_autopsies_without_causes = list(
-            VerbalAutopsy.objects.filter(causes__isnull=True)[batch_start:batch_end]
-        )
-        causes, issues = run_interva5(verbal_autopsies_without_causes)
+        for i in range(batches):
+            batch_start = i * batch_size
+            batch_end = (i + 1) * batch_size
+            records_without_causes = list(
+                model.objects.filter(causes__isnull=True)[batch_start:batch_end]
+            )
+            causes, issues = run_interva5(records_without_causes, fk_field=fk_field)
 
-        causes_list += causes
-        issues_list += issues
-        verbal_autopsies_without_causes_list += verbal_autopsies_without_causes
+            causes_list += causes
+            issues_list += issues
+            records_without_causes_list += records_without_causes
 
     return {
-        "verbal_autopsies": verbal_autopsies_without_causes_list,
+        # Key kept as "verbal_autopsies" for backwards compatibility; the list
+        # now contains both VA and VASA records (both expose the fields the
+        # caller reads: community_va_normalized, cluster_id, location_id).
+        "verbal_autopsies": records_without_causes_list,
         "causes": causes_list,
         "issues": issues_list,
     }
 
 
-def run_interva5(verbal_autopsies_without_causes):
-    interva_response_data = _run_pycross_and_interva5(verbal_autopsies_without_causes)
+def run_interva5(records_without_causes, *, fk_field="verbalautopsy"):
+    """Code a batch of records and store results via ``fk_field``.
+
+    ``fk_field`` is ``"verbalautopsy"`` for VerbalAutopsy records and ``"vasa"``
+    for VASA records — the shared CauseOfDeath / CauseCodingIssue tables accept
+    either parent.
+    """
+    interva_response_data = _run_pycross_and_interva5(records_without_causes)
+
+    fk_id = f"{fk_field}_id"
 
     # The ID that comes back is the index in the data that was passed in.
-    # Use that to look up the matching VA in the verbal_autopsies_without_causes list.
+    # Use that to look up the matching record in the records_without_causes list.
     causes = []
     for cause_data in interva_response_data["results"]["VA5"]:
         cause = cause_data["CAUSE1"][0].strip()
@@ -158,42 +184,42 @@ def run_interva5(verbal_autopsies_without_causes):
             cause = "Indeterminate"
 
         if cause:
-            va_offset = int(cause_data["ID"][0].strip())
-            va_id = verbal_autopsies_without_causes[va_offset - 1].id
+            record_offset = int(cause_data["ID"][0].strip())
+            record_id = records_without_causes[record_offset - 1].id
             causes.append(
                 CauseOfDeath(
-                    verbalautopsy_id=va_id,
                     cause=cause,
                     algorithm="InterVA5",
                     settings=ALGORITHM_SETTINGS,
+                    **{fk_id: record_id},
                 )
             )
 
     causes = bulk_create_with_history(causes, CauseOfDeath)
 
     # The ID that comes back is the index in the data that was passed in.
-    # Use that to look up the matching VA in the verbal_autopsies_without_causes list.
+    # Use that to look up the matching record in the records_without_causes list.
     issues = []
     for severity in CauseCodingIssue.SEVERITY_OPTIONS:
         for issue in interva_response_data[severity + "s"]:
             if isinstance(issue, list):
                 issue = issue[0]
-            va_offset, issue_text = re.split("  +", issue, maxsplit=1)
-            va_id = verbal_autopsies_without_causes[int(va_offset) - 1].id
+            record_offset, issue_text = re.split("  +", issue, maxsplit=1)
+            record_id = records_without_causes[int(record_offset) - 1].id
             # TODO: For now, clear old issues for records that are newly coded;
             #       if we associate errors w/ runs we may prefer not to do this
             # use exclude to keep errors related to the raw data
             # TODO: build out the issue model to capture non coding errors
-            CauseCodingIssue.objects.filter(verbalautopsy_id=va_id).exclude(
+            CauseCodingIssue.objects.filter(**{fk_id: record_id}).exclude(
                 algorithm=""
             ).delete()
             issues.append(
                 CauseCodingIssue(
-                    verbalautopsy_id=va_id,
                     text=issue_text,
                     severity=severity,
                     algorithm="InterVA5",
                     settings=ALGORITHM_SETTINGS,
+                    **{fk_id: record_id},
                 )
             )
 

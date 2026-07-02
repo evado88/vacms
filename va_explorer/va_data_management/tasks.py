@@ -11,6 +11,7 @@ from va_explorer.va_data_management.management.commands.import_from_kobo import 
     BATCH_SIZE,
 )
 from va_explorer.va_data_management.models import (
+    VASA,
     ClusterLocationCodes,
     Death,
     VerbalAutopsy,
@@ -70,36 +71,42 @@ def run_coding_algorithms():
     Splitting into independent sub-tasks prevents any single Celery call from
     running longer than the worker's soft time limit on large backlogs.
     """
-    va_ids = list(
-        VerbalAutopsy.objects.filter(causes__isnull=True).values_list("id", flat=True)
-    )
-    if not va_ids:
+    num_batches = 0
+    total_uncoded = 0
+    # VA and VASA share the coding pipeline; dispatch batches for each, tagging
+    # the batch with the FK field its results should be stored against.
+    for model, fk_field in ((VerbalAutopsy, "verbalautopsy"), (VASA, "vasa")):
+        record_ids = list(
+            model.objects.filter(causes__isnull=True).values_list("id", flat=True)
+        )
+        for i in range(0, len(record_ids), _CODING_BATCH_SIZE):
+            batch_ids = record_ids[i : i + _CODING_BATCH_SIZE]
+            run_coding_algorithms_batch.delay(batch_ids, fk_field)
+            num_batches += 1
+        total_uncoded += len(record_ids)
+
+    if not total_uncoded:
         return {"num_batches": 0, "total_uncoded": 0}
 
-    num_batches = 0
-    for i in range(0, len(va_ids), _CODING_BATCH_SIZE):
-        batch_ids = va_ids[i : i + _CODING_BATCH_SIZE]
-        run_coding_algorithms_batch.delay(batch_ids)
-        num_batches += 1
-
     logger.info(
-        "Coding orchestrator dispatched %d batch task(s) for %d VAs",
+        "Coding orchestrator dispatched %d batch task(s) for %d records",
         num_batches,
-        len(va_ids),
+        total_uncoded,
     )
-    return {"num_batches": num_batches, "total_uncoded": len(va_ids)}
+    return {"num_batches": num_batches, "total_uncoded": total_uncoded}
 
 
 @app.task()
-def run_coding_algorithms_batch(va_ids):
-    """Code a single batch of up to _CODING_BATCH_SIZE VAs identified by their PKs."""
-    verbal_autopsies = list(
-        VerbalAutopsy.objects.filter(id__in=va_ids, causes__isnull=True).order_by("id")
+def run_coding_algorithms_batch(record_ids, fk_field="verbalautopsy"):
+    """Code a batch of up to _CODING_BATCH_SIZE records (VA or VASA) by their PKs."""
+    model = VASA if fk_field == "vasa" else VerbalAutopsy
+    records = list(
+        model.objects.filter(id__in=record_ids, causes__isnull=True).order_by("id")
     )
-    if not verbal_autopsies:
+    if not records:
         return {"num_coded": 0, "num_issues": 0}
 
-    causes, issues = coding.run_interva5(verbal_autopsies)
+    causes, issues = coding.run_interva5(records, fk_field=fk_field)
     return {"num_coded": len(causes), "num_issues": len(issues)}
 
 
