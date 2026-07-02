@@ -34,6 +34,11 @@ those involved in civil registration and vital statistics) process, manage, and
 analyze their collected data by integrating other VA IT tools and functionalities
 behind a single, scalable, shared interface.
 
+In addition to the WHO VA form, VA Explorer ingests and codes the combined
+**Verbal + Social Autopsy (VASA)** form. See [docs/vasa.md](docs/vasa.md) for the
+VASA data model, the XLSForm mapping pipeline (and how to regenerate it after a
+form revision), and the ingestion/coding commands.
+
 ## Deploy Your Own
 
 VA Explorer instances are easily deployed via docker-compose and web server.

@@ -8,6 +8,7 @@ from collections import Counter
 from pathlib import Path
 
 import pytest
+from django.core.management import call_command
 
 from va_explorer.va_data_management.models import (
     VASA,
@@ -82,6 +83,18 @@ def test_legacy_facility_columns_are_tolerated(loaded):
 def test_geopoint_is_composed_from_gps_columns(loaded):
     # Exactly one sample record carries GPS-* columns.
     assert VASA.objects.exclude(geopoint="").count() == 1
+
+
+@pytest.mark.django_db
+def test_load_vasa_csv_command_loads_main_and_repeats():
+    call_command(
+        "load_vasa_csv",
+        str(MAIN),
+        *[f"--repeat={group}={path}" for group, path in REPEATS.items()],
+    )
+    assert VASA.objects.count() == 6
+    assert VASACareSeekingNeonate.objects.count() == 3
+    assert VASACareSeekingAdult.objects.count() == 4
 
 
 @pytest.mark.django_db
