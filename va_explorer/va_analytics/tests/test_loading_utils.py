@@ -8,7 +8,7 @@ from va_explorer.tests.factories import (
     VerbalAutopsyFactory,
 )
 from va_explorer.va_analytics.utils.loading import load_va_data
-from va_explorer.va_data_management.models import SRSClusterLocation
+from va_explorer.va_data_management.models import Location, SRSClusterLocation
 
 pytestmark = pytest.mark.django_db
 
@@ -93,7 +93,10 @@ def test_load_va_data_source_vasa_filters_to_vasa_only():
 
 
 def test_load_va_data_counts_coded_community_without_facility_location():
-    province = LocationFactory.create(name="Southern", location_type="province")
+    # Root the tree at a country so province/district land at depths 2/3, the
+    # depths the coded-geo subqueries in load_va_data resolve against.
+    country = Location.add_root(name="Zambia", location_type="country")
+    province = country.add_child(name="Southern", location_type="province")
     district = province.add_child(name="District 1", location_type="district")
     facility = district.add_child(name="Facility 1", location_type="facility")
 
