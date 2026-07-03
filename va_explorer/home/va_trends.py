@@ -11,9 +11,6 @@ from va_explorer.va_data_management.utils.date_parsing import (
     to_dt,
 )
 
-TODAY = pd.to_datetime(date.today())
-START_MONTH = pd.to_datetime(date(TODAY.year - 1, TODAY.month, 1))
-
 NUM_TABLE_ROWS = 5
 VA_DF_FIELDS = [
     "id",
@@ -40,9 +37,19 @@ VA_TABLE_ROWS = ["collected", "coded", "uncoded"]
 VA_TABLE_COLUMNS = ["24", "1 week", "1 month", "Overall"]
 VA_GRAPH_TYPES = VA_TABLE_ROWS
 
-MONTHS = [START_MONTH + DateOffset(months=i) for i in range(12)]
-VA_GRAPH_Y_DATA = 12 * [0.0]
-VA_GRAPH_X_DATA = [month.strftime("%Y-%m") for month in MONTHS]
+
+def _trend_window():
+    """Anchor dates for the trends window, computed per call.
+
+    These were previously module-level constants, but ``date.today()`` captured
+    at import time goes stale in long-lived worker processes (the "last 24
+    hours" bucket would forever compare against the process start date) and
+    breaks time-travelling tests whose import order varies.
+    """
+    today = pd.to_datetime(date.today())
+    start_month = pd.to_datetime(date(today.year - 1, today.month, 1))
+    months = [start_month + DateOffset(months=i) for i in range(12)]
+    return today, start_month, months
 
 
 def empty_va_table():
@@ -59,14 +66,13 @@ def empty_va_table():
 
 def empty_graph_data():
     graphs = {}
+    _today, _start_month, months = _trend_window()
+    x_data = [month.strftime("%Y-%m") for month in months]
 
     for graph_type in VA_GRAPH_TYPES:
         graphs[graph_type] = {}
-        graphs[graph_type] = {}
-
-    for graph_type in VA_GRAPH_TYPES:
-        graphs[graph_type]["x"] = VA_GRAPH_X_DATA.copy()
-        graphs[graph_type]["y"] = VA_GRAPH_Y_DATA.copy()
+        graphs[graph_type]["x"] = x_data.copy()
+        graphs[graph_type]["y"] = 12 * [0.0]
 
     return graphs
 
@@ -141,6 +147,7 @@ def get_trends_data(user):
     # count VA + VASA as one unified population.
     user_vas = user.verbal_autopsies()
     user_vasa = user.vasa_records()
+    today, start_month, months = _trend_window()
     va_table = empty_va_table()
     graphs = empty_graph_data()
     issue_list = []
@@ -183,19 +190,20 @@ def get_trends_data(user):
         va_df["yearmonth"] = va_df["date"].dt.strftime("%Y-%m")
 
         # Load the VAs that are collected over various periods of time
-        vas_24_hours = va_df[va_df["date"] == TODAY].index
-        vas_1_week = va_df[va_df["date"] >= (TODAY - timedelta(days=7))].index
-        vas_1_month = va_df[va_df["date"] >= (TODAY - DateOffset(months=1))].index
+        vas_24_hours = va_df[va_df["date"] == today].index
+        vas_1_week = va_df[va_df["date"] >= (today - timedelta(days=7))].index
+        vas_1_month = va_df[va_df["date"] >= (today - DateOffset(months=1))].index
         vas_overall = va_df.sort_values(by="id").index
 
         # Graphs of the past 12 months, not including this month
         # (current month will almost always show month with artificially low numbers)
-        x = [month.strftime("%b") for month in MONTHS]
-        plot_df = pd.DataFrame({"yearmonth": VA_GRAPH_X_DATA, "x": x})
+        x = [month.strftime("%b") for month in months]
+        yearmonths = [month.strftime("%Y-%m") for month in months]
+        plot_df = pd.DataFrame({"yearmonth": yearmonths, "x": x})
 
         # Collected; total VAs by month
         plot_df = plot_df.merge(
-            va_df.query("date >= @START_MONTH")
+            va_df.query("date >= @start_month")
             .groupby("yearmonth")["id"]
             .count()
             .rename("y_collected")
@@ -209,7 +217,7 @@ def get_trends_data(user):
 
         # Coded; same query as above, just filtered by whether the va has been coded
         plot_df = plot_df.merge(
-            va_df.query("date >= @START_MONTH & is_coded")
+            va_df.query("date >= @start_month & is_coded")
             .groupby("yearmonth")["id"]
             .count()
             .rename("y_coded")
