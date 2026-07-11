@@ -5,6 +5,7 @@ from django.core.management import call_command
 from django.core.management.base import BaseCommand, CommandError
 
 from va_explorer.va_data_management.models import Death, ODKFormChoice
+from va_explorer.va_data_management.utils.death_ids import assign_death_ids
 from va_explorer.va_data_management.utils.geopoint import merge_geopoint_into
 from va_explorer.va_data_management.utils.loading import (
     load_odk_csv_to_model,
@@ -142,6 +143,32 @@ class Command(BaseCommand):
             if not dry_run:
                 Death.objects.bulk_create(objects, ignore_conflicts=True)
             created = len(objects)
+
+        # Assign Death IDs to the just-imported records right away (deaths are
+        # registered without one; VACMS mints them). ignore_conflicts means
+        # bulk_create returns no PKs, so scope by the imported keys.
+        if created and not dry_run:
+            new_pks = list(
+                Death.objects.filter(
+                    key__in=[str(obj.key) for obj in objects if obj.key]
+                ).values_list("id", flat=True)
+            )
+            id_summary = assign_death_ids(death_ids=new_pks)
+            if id_summary["assigned"]:
+                self.stdout.write(
+                    self.style.SUCCESS(
+                        f"Assigned death_ids to {id_summary['assigned']} "
+                        "imported death(s)."
+                    )
+                )
+            for ward, info in id_summary["skipped_wards"].items():
+                self.stdout.write(
+                    self.style.WARNING(
+                        f"No death_id for {info['count']} death(s) in ward "
+                        f"'{ward}' ({info['reason']}); the periodic task will "
+                        "retry once resolved."
+                    )
+                )
 
         prefix = "[DRY RUN] " if dry_run else ""
         action = "Would import" if dry_run else "Imported"

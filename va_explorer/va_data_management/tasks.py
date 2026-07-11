@@ -1,21 +1,14 @@
 import logging
-from collections import defaultdict
 
 from celery.schedules import crontab
 from django.conf import settings
-from django.db.models import Q
 
 from config.celery_app import app
 from config.settings.base import env
 from va_explorer.va_data_management.management.commands.import_from_kobo import (
     BATCH_SIZE,
 )
-from va_explorer.va_data_management.models import (
-    VASA,
-    ClusterLocationCodes,
-    Death,
-    VerbalAutopsy,
-)
+from va_explorer.va_data_management.models import VASA, VerbalAutopsy
 from va_explorer.va_data_management.odk.config import get_odk_form_configs
 from va_explorer.va_data_management.odk.service import ODKPullService
 from va_explorer.va_data_management.utils import coding, kobo
@@ -214,124 +207,33 @@ def pull_odk_scheduled(schedule_key=None):
 
 @app.task()
 def assign_death_ids_task():
-    """Periodic task to assign death_ids to Death records without them.
+    """Periodic sweeper that assigns Death IDs to Death records without them.
 
-    Runs every 5 minutes to batch-assign sequential death_ids based on cluster codes.
-    Format: cluster_code + 4-digit sequential number (e.g., 1213SM0001, 1213SM0002).
+    Delegates to the shared service in ``utils/death_ids.py`` (same code path
+    as the ``assign_death_ids`` command and the import hooks); the service
+    serialises concurrent runs via a PostgreSQL advisory lock.
     """
+    from va_explorer.va_data_management.utils.death_ids import assign_death_ids
+
     try:
-        # Query deaths without death_id
-        deaths_qs = Death.objects.filter(Q(death_id__isnull=True) | Q(death_id=""))
-        total_missing = deaths_qs.count()
-
-        if total_missing == 0:
-            logger.debug("No deaths without death_ids found")
-            return {
-                "status": "success",
-                "deaths_assigned": 0,
-                "message": "No deaths to process",
-            }
-
-        logger.info("Found %s deaths without death_ids", total_missing)
-
-        # Group deaths by ward
-        deaths_by_ward = defaultdict(list)
-        for death in deaths_qs:
-            ward = (death.ward or "").strip()
-            if ward:
-                deaths_by_ward[ward].append(death)
-
-        if not deaths_by_ward:
-            logger.warning("No wards found in death records")
-            return {
-                "status": "success",
-                "deaths_assigned": 0,
-                "message": "No wards in death records",
-            }
-
-        # Build mapping: ward_code -> cluster_code
-        ward_to_cluster = {}
-        missing_wards = []
-
-        for ward_name in deaths_by_ward:
-            cluster_loc = ClusterLocationCodes.objects.filter(
-                ward_code__iexact=ward_name
-            ).first()
-
-            if cluster_loc and cluster_loc.cluster_code:
-                ward_to_cluster[ward_name] = cluster_loc.cluster_code
-            else:
-                missing_wards.append(ward_name)
-
-        if missing_wards:
+        summary = assign_death_ids()
+        if summary["assigned"]:
+            logger.info("Assigned death_ids to %s death(s)", summary["assigned"])
+        for ward, info in summary["skipped_wards"].items():
             logger.warning(
-                "No cluster code found for %s ward(s): %s",
-                len(missing_wards),
-                ", ".join(missing_wards[:5]),
+                "Skipped %s death(s) in ward '%s' (%s)",
+                info["count"],
+                ward,
+                info["reason"],
             )
-
-        # Assign death_ids
-        deaths_to_update = []
-        assignments_count = 0
-
-        for ward_name, deaths_in_ward in deaths_by_ward.items():
-            cluster_code = ward_to_cluster.get(ward_name)
-
-            if not cluster_code:
-                logger.warning(
-                    "Skipping %s death(s) in ward '%s' (no cluster code)",
-                    len(deaths_in_ward),
-                    ward_name,
-                )
-                continue
-
-            # Get existing deaths in this ward to find next sequence
-            existing_deaths = Death.objects.filter(ward__iexact=ward_name).exclude(
-                Q(death_id__isnull=True) | Q(death_id="")
-            )
-
-            # Extract sequence numbers from existing death_ids
-            existing_sequences = []
-            for existing_death in existing_deaths:
-                if existing_death.death_id and existing_death.death_id.startswith(
-                    cluster_code
-                ):
-                    suffix = existing_death.death_id[len(cluster_code) :]
-                    try:
-                        seq_num = int(suffix)
-                        existing_sequences.append(seq_num)
-                    except ValueError:
-                        pass
-
-            next_seq = max(existing_sequences) + 1 if existing_sequences else 1
-
-            # Assign sequential death_ids
-            for death in sorted(deaths_in_ward, key=lambda d: d.id):
-                death_id = f"{cluster_code}{next_seq:04d}"
-                death.death_id = death_id
-                deaths_to_update.append(death)
-                assignments_count += 1
-                next_seq += 1
-
-        if not deaths_to_update:
-            logger.info("No deaths to update (all missing cluster codes)")
-            return {
-                "status": "success",
-                "deaths_assigned": 0,
-                "message": "No deaths with valid cluster codes",
-            }
-
-        # Persist changes
-        Death.objects.bulk_update(deaths_to_update, ["death_id"], batch_size=1000)
-
-        logger.info("Successfully assigned death_ids to %s death(s)", assignments_count)
         return {
             "status": "success",
-            "deaths_assigned": assignments_count,
-            "wards_processed": len(ward_to_cluster),
-            "wards_skipped": len(missing_wards),
+            "deaths_assigned": summary["assigned"],
+            "total_missing": summary["total_missing"],
+            "wards_skipped": len(summary["skipped_wards"]),
+            "malformed_existing": len(summary["malformed_existing"]),
+            "overflow_wards": [o["ward"] for o in summary["overflow_wards"]],
         }
-
     except Exception as e:
         logger.exception("Error in assign_death_ids_task: %s", e)
         return {"status": "error", "error": str(e)}

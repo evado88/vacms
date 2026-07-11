@@ -161,6 +161,15 @@ class Death(models.Model):
             # Date of death used for mortality trend grouping/filtering
             models.Index(fields=["DE_06"], name="death_date_idx"),
         ]
+        constraints = [
+            # Death IDs are minted by utils/death_ids.py; the DB backstop
+            # guarantees no two deaths ever share one.
+            models.UniqueConstraint(
+                fields=["death_id"],
+                condition=models.Q(death_id__isnull=False) & ~models.Q(death_id=""),
+                name="unique_death_id_when_set",
+            ),
+        ]
 
     def __str__(self):
         return f"{self.DE_03} - {self.DE_23} - {self.ward}"

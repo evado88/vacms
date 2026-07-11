@@ -1,161 +1,50 @@
 import argparse
-import subprocess
-import sys
 from pathlib import Path
 from typing import List, Set
 
-import numpy as np
 import pandas as pd
 from django.core.management.base import BaseCommand, CommandError
-from django.db import connection
 from django.db.models import Q
 
 from va_explorer.va_data_management.models import ClusterLocationCodes
+from va_explorer.va_data_management.utils.death_ids import checksum_letters
+
+
+def _base_is_acceptable(digits: str) -> bool:
+    """Filter rules for readable/distinct 4-digit cluster bases.
+
+    Rejects zeros, repeated/adjacent-equal digits, mirrored pairs, and strictly
+    ascending runs (same rules as the original R-derived generator).
+    """
+    p1, p2, p3, p4 = digits
+    return not (
+        "0" in digits
+        or p1 == p2
+        or p2 == p3
+        or p3 == p4
+        or (p1 == p4 and p3 == p2)
+        or (p1 == p3 and p2 == p4)
+        or (p1 < p2 < p3 < p4)
+    )
 
 
 def _build_cluster_id_df(n_groups: int) -> pd.DataFrame:
     """Generate human readable cluster IDs for Wards.
 
-    Returns a DataFrame with a single column 'cluster_id'.
+    Returns a DataFrame with a single column 'cluster_id'. Checksum letters
+    come from the shared Death ID helper so ward codes and Death ID validation
+    can never drift.
     """
-    # checksum list
-    checksum_list = pd.DataFrame(
-        {
-            "check_chr": [
-                "A",
-                "B",
-                "C",
-                "D",
-                "E",
-                "F",
-                "G",
-                "H",
-                "J",
-                "K",
-                "L",
-                "M",
-                "N",
-                "P",
-                "R",
-                "S",
-                "T",
-                "Y",
-                "Z",
-            ],
-            "check_num": [
-                2,
-                3,
-                7,
-                12,
-                13,
-                16,
-                1,
-                10,
-                14,
-                4,
-                8,
-                18,
-                6,
-                15,
-                0,
-                9,
-                17,
-                5,
-                11,
-            ],
-        }
-    )
-
-    # initial dataset
-    df = pd.DataFrame({"id": [1], "n_groups": [n_groups]})
-
-    # expand n_groups (replicate rows)
-    df = df.loc[df.index.repeat(df["n_groups"])].reset_index(drop=True)
-
-    # generate idc = row number (1-based)
-    df["idc"] = np.arange(1, len(df) + 1)
-
-    # convert to string
-    df["s"] = df["idc"].astype(str)
-
-    # keep only 4-digit strings
-    df = df[df["s"].str.len() == 4].copy()
-
-    # extract digits
-    df["p1"] = df["s"].str[0]
-    df["p2"] = df["s"].str[1]
-    df["p3"] = df["s"].str[2]
-    df["p4"] = df["s"].str[3]
-
-    # drop numbers that match certain patterns
-    mask = ~(
-        (df["p1"] == df["p2"]) & (df["p2"] == df["p3"]) & (df["p3"] == df["p4"])
-        | (df["p2"] == df["p3"]) & (df["p3"] == df["p4"])
-        | (df["p1"] == df["p4"]) & (df["p3"] == df["p2"])
-        | (df["p2"] == df["p3"])
-        | (df["p3"] == df["p4"])
-        | (df["p1"] < df["p2"]) & (df["p2"] < df["p3"]) & (df["p3"] < df["p4"])
-        | (df["p1"] == df["p3"]) & (df["p2"] == df["p4"])
-        | (df["p1"] == df["p2"])
-        | (df["p3"] == df["p4"])
-        | (df["p1"] == "0")
-        | (df["p2"] == "0")
-        | (df["p3"] == "0")
-        | (df["p4"] == "0")
-    )
-
-    df = df[mask].copy()
-
-    # drop unused columns
-    df = df.drop(columns=["id", "n_groups"])
-
-    # rename s -> idc (string version)
-    df["idc"] = df["s"]
-    df = df.drop(columns=["s"])
-
-    # convert digit columns to numeric
-    for col in ["p1", "p2", "p3", "p4"]:
-        df[col] = df[col].astype(int)
-
-    # checksum calculations
-    df["L11"] = ((df["p1"] * 9) + (df["p2"] * 7) + (df["p3"] * 5) + (df["p4"] * 3)) % 19
-
-    df["L12"] = ((df["p1"] * 3) + (df["p2"] * 5) + (df["p3"] * 7) + (df["p4"] * 9)) % 19
-
-    # keep only where L11 != L12
-    df = df[df["L11"] != df["L12"]].copy()
-
-    # merge for first checksum letter (L11 -> lett1)
-    merged_temp3 = df[["idc", "L11"]].merge(
-        checksum_list, left_on="L11", right_on="check_num", how="left"
-    )
-    temp3 = (
-        merged_temp3[["idc", "check_chr"]]
-        .rename(columns={"check_chr": "lett1"})
-        .drop_duplicates(subset=["idc"])
-    )
-
-    # merge for second checksum letter (L12 -> lett2)
-    merged_temp4 = df[["idc", "L12"]].merge(
-        checksum_list, left_on="L12", right_on="check_num", how="left"
-    )
-    temp4 = (
-        merged_temp4[["idc", "check_chr"]]
-        .rename(columns={"check_chr": "lett2"})
-        .drop_duplicates(subset=["idc"])
-    )
-
-    # combine results
-    cluster_ids = temp3.merge(temp4, on="idc", how="left")
-
-    # create final cluster_id
-    cluster_ids["cluster_id"] = (
-        cluster_ids["idc"].astype(str) + cluster_ids["lett2"] + cluster_ids["lett1"]
-    )
-
-    # keep only cluster_id column
-    cluster_ids = cluster_ids[["cluster_id"]]
-    return cluster_ids
+    ids = []
+    for idc in range(1000, min(n_groups, 9999) + 1):
+        digits = str(idc)
+        if not _base_is_acceptable(digits):
+            continue
+        letters = checksum_letters(digits)
+        if letters[0] == letters[1]:
+            continue
+        ids.append(digits + letters)
+    return pd.DataFrame({"cluster_id": ids})
 
 
 def _generate_unique_codes(n_needed: int, existing: Set[str]) -> List[str]:
@@ -210,48 +99,6 @@ class Command(BaseCommand):
             help="Generate cluster_codes for wards that don't have them",
         )
 
-    def _table_exists(self) -> bool:
-        """Check if ClusterLocationCodes table exists."""
-        table_name = ClusterLocationCodes._meta.db_table
-        with connection.cursor() as cursor:
-            cursor.execute(
-                "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = %s",
-                [table_name],
-            )
-            return cursor.fetchone()[0] > 0
-
-    def _run_migrations(self) -> bool:
-        """Attempt to make and run migrations for ClusterLocationCodes."""
-        try:
-            self.stdout.write("Table not found. Running makemigrations...")
-            result = subprocess.run(
-                [sys.executable, "manage.py", "makemigrations", "va_data_management"],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            self.stdout.write(result.stdout)
-
-            self.stdout.write("Running migrate...")
-            result = subprocess.run(
-                [sys.executable, "manage.py", "migrate"],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            self.stdout.write(result.stdout)
-            return True
-        except subprocess.CalledProcessError as e:
-            self.stdout.write(self.style.ERROR(f"Migration failed: {e.stderr}"))
-            self.stdout.write(
-                self.style.WARNING(
-                    "Please run migrations manually:\n"
-                    f"  {sys.executable} manage.py makemigrations va_data_management\n"
-                    f"  {sys.executable} manage.py migrate"
-                )
-            )
-            return False
-
     def _get_csv_path(self) -> Path:
         """Get path to wards.csv in static/data directory."""
         # Navigate from this file: commands/ -> management/ -> va_data_management/ -> va_explorer/ -> project root
@@ -293,14 +140,6 @@ class Command(BaseCommand):
             )
         if flag_count > 1:
             raise CommandError("Specify only one flag at a time.")
-
-        # Check table existence for --initial
-        if do_initial and not self._table_exists():
-            self.stdout.write(
-                self.style.WARNING("ClusterLocationCodes table does not exist.")
-            )
-            if not self._run_migrations():
-                return
 
         # Load CSV for --initial and --update
         csv_df = None

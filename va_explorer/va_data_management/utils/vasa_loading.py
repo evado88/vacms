@@ -239,6 +239,19 @@ def load_vasa_from_dataframes(main_df, repeat_dfs=None):
             continue
         summary["repeats"][group] = _load_repeat(group, df, vasa_by_key)
 
+    # VASA records arrive with a field-entered DeathID; validate them all
+    # (format/checksum + existence in the death register) and flag problems as
+    # DataQualityIssues. Never blocks or mutates the imported records.
+    from va_explorer.va_data_management.utils.death_ids import (
+        validate_vasa_death_ids,
+    )
+
+    try:
+        summary["death_id_validation"] = validate_vasa_death_ids()
+    except Exception:
+        summary["death_id_validation"] = None
+        logger.exception("VASA DeathID validation failed after load")
+
     return summary
 
 

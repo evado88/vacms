@@ -222,6 +222,173 @@ def test_pregnancy_outcome_babies_dedup():
 
 
 # --------------------------------------------------------------------------- #
+# Parent-scoped runs (ingest-time dedup)
+# --------------------------------------------------------------------------- #
+
+
+def test_scoped_run_only_flags_in_scope_parents():
+    hh1, hh2 = _household("hh-1"), _household("hh-2")
+    _member(hh1, "a1")
+    _member(hh1, "a2")
+    _member(hh2, "b1")
+    _member(hh2, "b2")
+
+    summary = run_dedup_for_model(CHILD_DEDUP_SPECS["members"], parent_ids=["hh-1"])
+
+    assert summary["groups"] == 1
+    assert summary["flagged"] == 1
+    # hh-2's duplicate pair is untouched by the scoped run.
+    assert HouseholdMember.objects.filter(household=hh2, is_duplicate=True).count() == 0
+
+
+def test_scoped_run_does_not_unflag_or_resolve_out_of_scope():
+    hh1, hh2 = _household("hh-1"), _household("hh-2")
+    _member(hh1, "a1")
+    _member(hh1, "a2")
+    _member(hh2, "b1")
+    _member(hh2, "b2")
+
+    run_dedup_for_model(CHILD_DEDUP_SPECS["members"])  # full run flags both sets
+    assert HouseholdMember.objects.duplicates().count() == 2
+    assert _dup_issue_count(HouseholdMember) == 2
+
+    summary = run_dedup_for_model(CHILD_DEDUP_SPECS["members"], parent_ids=["hh-1"])
+
+    # Out-of-scope flags and DQ issues survive; nothing resolved globally.
+    assert summary["unflagged"] == 0
+    assert summary["resolved"] == 0
+    assert HouseholdMember.objects.filter(household=hh2, is_duplicate=True).count() == 1
+    assert _dup_issue_count(HouseholdMember) == 2
+
+
+def test_scoped_run_self_heals_within_scope():
+    hh = _household("hh-1")
+    _member(hh, "a1", HH_04="Daughter")
+    dupe = _member(hh, "a2")
+
+    run_dedup_for_model(CHILD_DEDUP_SPECS["members"], parent_ids=["hh-1"])
+    dupe.refresh_from_db()
+    assert dupe.is_duplicate is True
+
+    # Row is edited so it no longer matches -> scoped re-run unflags it.
+    dupe.first_name = "Mary"
+    dupe.save()
+    summary = run_dedup_for_model(CHILD_DEDUP_SPECS["members"], parent_ids=["hh-1"])
+
+    dupe.refresh_from_db()
+    assert dupe.is_duplicate is False
+    assert summary["unflagged"] == 1
+
+
+def test_scoped_run_with_no_parents_is_a_noop():
+    hh = _household()
+    _member(hh, "k1")
+    _member(hh, "k2")
+    run_dedup_for_model(CHILD_DEDUP_SPECS["members"])  # flag + record issue
+
+    summary = run_dedup_for_model(CHILD_DEDUP_SPECS["members"], parent_ids=[None])
+
+    assert summary == {
+        "label": "Household Member",
+        "total_rows": 0,
+        "groups": 0,
+        "flagged": 0,
+        "unflagged": 0,
+        "resolved": 0,
+    }
+    # Existing flags and issues are untouched.
+    assert HouseholdMember.objects.duplicates().count() == 1
+    assert _dup_issue_count(HouseholdMember) == 1
+
+
+# --------------------------------------------------------------------------- #
+# Ingest-time dedup via load_household_members
+# --------------------------------------------------------------------------- #
+
+
+def _member_csv(tmp_path, rows, name="members.csv"):
+    import pandas as pd
+
+    path = tmp_path / name
+    pd.DataFrame(rows).to_csv(path, index=False)
+    return str(path)
+
+
+def test_load_household_members_flags_duplicates_at_ingest(tmp_path):
+    from va_explorer.va_data_management.models import ODKFormChoice
+
+    ODKFormChoice.objects.create(
+        form_name="household", field_name="HH_05", value="1", label="Male"
+    )
+    _household("hh-1")
+
+    row = {
+        "PARENT_KEY": "hh-1",
+        "first_name": "Jane",
+        "last_name": "Banda",
+        "HH_07": "1990-01-01",
+        "HH_05": "Female",
+    }
+    rich_row = {**row, "HH_04": "Daughter", "HH_06": "Usual"}
+    # Keyless CSV (the common case) containing the same person twice.
+    csv_path = _member_csv(tmp_path, [row, rich_row])
+
+    call_command("load_household_members", csv_path, "--log_dir", str(tmp_path))
+
+    assert HouseholdMember.objects.count() == 2
+    assert HouseholdMember.objects.canonical().count() == 1
+    canonical = HouseholdMember.objects.canonical().get()
+    assert canonical.HH_04 == "Daughter"  # most complete row kept unique
+
+    # Re-importing the same keyless CSV flags the new copies too.
+    call_command(
+        "load_household_members",
+        _member_csv(tmp_path, [row, rich_row], name="members2.csv"),
+        "--log_dir",
+        str(tmp_path),
+    )
+
+    assert HouseholdMember.objects.count() == 4
+    assert HouseholdMember.objects.canonical().count() == 1
+
+
+def test_load_household_members_distinct_people_stay_unique(tmp_path):
+    from va_explorer.va_data_management.models import ODKFormChoice
+
+    ODKFormChoice.objects.create(
+        form_name="household", field_name="HH_05", value="1", label="Male"
+    )
+    _household("hh-1")
+
+    rows = [
+        {
+            "PARENT_KEY": "hh-1",
+            "first_name": "Jane",
+            "last_name": "Banda",
+            "HH_07": "1990-01-01",
+            "HH_05": "Female",
+        },
+        {
+            "PARENT_KEY": "hh-1",
+            "first_name": "John",
+            "last_name": "Banda",
+            "HH_07": "1988-03-02",
+            "HH_05": "Male",
+        },
+    ]
+    call_command(
+        "load_household_members",
+        _member_csv(tmp_path, rows),
+        "--log_dir",
+        str(tmp_path),
+    )
+
+    assert HouseholdMember.objects.count() == 2
+    assert HouseholdMember.objects.canonical().count() == 2
+    assert HouseholdMember.objects.duplicates().count() == 0
+
+
+# --------------------------------------------------------------------------- #
 # Command entry point
 # --------------------------------------------------------------------------- #
 

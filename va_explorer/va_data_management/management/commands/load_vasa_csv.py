@@ -59,3 +59,23 @@ class Command(BaseCommand):
         )
         for group, stats in summary["repeats"].items():
             self.stdout.write(f"  repeat {group}: {stats}")
+
+        validation = summary.get("death_id_validation")
+        if validation is None:
+            self.stdout.write(
+                self.style.WARNING("DeathID validation failed; see logs.")
+            )
+        else:
+            self.stdout.write(
+                f"DeathID validation: checked={validation['checked']}, "
+                f"invalid={validation['invalid']}, "
+                f"unmatched={validation['unmatched']}, "
+                f"resolved={validation['resolved']}"
+            )
+            if validation["invalid"] or validation["unmatched"]:
+                self.stdout.write(
+                    self.style.WARNING(
+                        "Flagged DeathID problems as DataQualityIssues "
+                        "(records were still imported)."
+                    )
+                )
