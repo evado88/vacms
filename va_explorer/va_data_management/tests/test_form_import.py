@@ -328,3 +328,66 @@ def test_merge_geopoint_into_retrospective_enrichment():
     )
     result = merge_geopoint_into(df, source_prefix="PE-25", target_field="PE_25")
     assert result.loc[0, "PE_25"] == "-14.5 28.3"
+
+
+def test_find_geopoint_columns_bare_fallback():
+    """Bare component names match when no prefixed columns exist (post-strip ODK pull)."""
+    from va_explorer.va_data_management.utils.geopoint import (
+        find_geopoint_columns_for_prefix,
+    )
+
+    cols = ["key", "Latitude", "Longitude", "Altitude", "Accuracy"]
+    found = find_geopoint_columns_for_prefix(cols, "PE-25")
+    assert found == {
+        "latitude": "Latitude",
+        "longitude": "Longitude",
+        "altitude": "Altitude",
+        "accuracy": "Accuracy",
+    }
+
+
+def test_find_geopoint_columns_prefixed_wins_over_bare():
+    """Prefixed columns take precedence; bare fallback only fires when none match."""
+    from va_explorer.va_data_management.utils.geopoint import (
+        find_geopoint_columns_for_prefix,
+    )
+
+    cols = ["key", "PE-25-Latitude", "PE-25-Longitude", "Latitude", "Longitude"]
+    found = find_geopoint_columns_for_prefix(cols, "PE-25")
+    assert found == {"latitude": "PE-25-Latitude", "longitude": "PE-25-Longitude"}
+
+
+@pytest.mark.parametrize(
+    ("form_name", "gps_field"),
+    [
+        ("pregnancy", "PE_25"),
+        ("death", "DE_34"),
+        ("pregnancy_outcome", "gps"),
+    ],
+)
+def test_odk_pull_stripped_gps_columns_merged(form_name, gps_field):
+    """GPS survives the full pull pipeline including list_submissions' prefix strip.
+
+    list_submissions renames columns via c.rsplit("-", 1)[-1], turning
+    PE-25-Latitude into bare Latitude before import_dataframe_records runs.
+    Regression test: this used to leave the GPS field empty for every
+    ODK-pulled record.
+    """
+    prefix = {"pregnancy": "PE-25", "death": "DE-34", "pregnancy_outcome": "gps"}[
+        form_name
+    ]
+    df = _make_service_df(
+        form_name,
+        {
+            "key": f"strip-{form_name}",
+            f"{prefix}-Latitude": -14.5,
+            f"{prefix}-Longitude": 28.3,
+            f"{prefix}-Altitude": 1242.0,
+            f"{prefix}-Accuracy": 5.0,
+        },
+    )
+    # Same strip list_submissions applies to every pulled DataFrame.
+    df.columns = [c.rsplit("-", 1)[-1] for c in df.columns]
+    import_dataframe_records(form_name, df)
+    obj = _FORM_MODELS[form_name].objects.get(key=f"strip-{form_name}")
+    assert getattr(obj, gps_field) == "-14.5 28.3 1242 5"

@@ -141,7 +141,7 @@ def make_pyodk_client(project_id=None):
             ),
         }
     }
-    with NamedTemporaryFile(delete=False, suffix=".toml") as tmp:
+    with NamedTemporaryFile(mode="w", delete=False, suffix=".toml") as tmp:
         toml.dump(cfg, tmp)
         path = tmp.name
     client = Client(config_path=path)

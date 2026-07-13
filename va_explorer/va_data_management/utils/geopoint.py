@@ -11,6 +11,11 @@ _PREFIX_COMPONENT_RE = re.compile(
     re.IGNORECASE,
 )
 
+_BARE_COMPONENT_RE = re.compile(
+    r"^(?P<component>latitude|longitude|altitude|accuracy)$",
+    re.IGNORECASE,
+)
+
 
 def geopoint_component_name(column):
     match = GEOPOINT_COMPONENT_RE.match(str(column))
@@ -115,7 +120,14 @@ def parse_geopoint(value):
 
 
 def find_geopoint_columns_for_prefix(columns, source_prefix):
-    """Return {component: column_name} for GPS split columns matching source_prefix."""
+    """Return {component: column_name} for GPS split columns matching source_prefix.
+
+    Falls back to bare component names (``Latitude``/``Longitude``/...) when no
+    prefixed columns match: the ODK pull strips group prefixes from column names
+    (``PE-25-Latitude`` -> ``Latitude``) before the geopoint merge runs. A form
+    with two geopoints would be ambiguous after that strip, so the fallback
+    assumes at most one geopoint per form.
+    """
     target = source_prefix.lower().replace("_", "-")
     found = {}
     for col in columns:
@@ -124,6 +136,15 @@ def find_geopoint_columns_for_prefix(columns, source_prefix):
             continue
         prefix_norm = match.group(1).lower().replace("_", "-")
         if prefix_norm != target:
+            continue
+        component = match.group("component").lower()
+        if component not in found:
+            found[component] = str(col)
+    if found:
+        return found
+    for col in columns:
+        match = _BARE_COMPONENT_RE.match(str(col))
+        if not match:
             continue
         component = match.group("component").lower()
         if component not in found:
