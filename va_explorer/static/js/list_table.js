@@ -37,7 +37,13 @@
     var endpoint = slot.getAttribute("data-endpoint");
     if (!endpoint) return;
 
-    var state = { order_by: "", page: "1", interview_status: "" };
+    var currentParams = new URLSearchParams(window.location.search);
+    var state = {
+      order_by: currentParams.get("order_by") || "",
+      page: currentParams.get("page") || "1",
+      interview_status: currentParams.get("interview_status") || "",
+      death_status: currentParams.get("death_status") || "",
+    };
     var timer = null;
 
     function collectParams() {
@@ -50,6 +56,9 @@
       }
       if (state.interview_status) {
         params.set("interview_status", state.interview_status);
+      }
+      if (state.death_status) {
+        params.set("death_status", state.death_status);
       }
       if (state.order_by) params.set("order_by", state.order_by);
       if (state.page && state.page !== "1") params.set("page", state.page);
@@ -133,6 +142,10 @@
       var params = new URLSearchParams(link.getAttribute("href").slice(1));
       if (params.has("interview_status")) {
         state.interview_status = params.get("interview_status");
+        state.page = "1";
+      }
+      if (params.has("death_status")) {
+        state.death_status = params.get("death_status");
         state.page = "1";
       }
       if (params.has("order_by")) {

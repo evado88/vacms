@@ -24,7 +24,7 @@
                 <a class="btn btn-secondary" href="{% url 'va_data_management:deaths' %}">Reset</a>
               {% endif %}
               {% if request.user.can_download_csv_exports %}
-                <a class="btn btn-outline-secondary" href="{% url 'va_data_management:deaths_csv' %}{% if request.GET.urlencode %}?{{ request.GET.urlencode }}{% endif %}" aria-label="Download CSV" title="Download CSV"><i class="fas fa-download" aria-hidden="true"></i></a>
+                <a class="btn btn-outline-secondary" href="{% url 'va_data_management:deaths_csv' %}{% if request.GET.urlencode %}?{{ request.GET.urlencode }}{% endif %}" data-list-download aria-label="Download CSV" title="Download CSV"><i class="fas fa-download" aria-hidden="true"></i></a>
               {% endif %}
             </div>
           </div>
@@ -32,11 +32,9 @@
       </div>
     </section>
 
-    <section class="ou-card ou-mb-3">
-      <div class="ou-card-body p-0" data-list-slot data-endpoint="{% url 'va_data_management:deaths' %}?component=1">
-        {% include "partials/_list_table_component.html" %}
-      </div>
-    </section>
+    <div data-list-slot data-endpoint="{% url 'va_data_management:deaths' %}?component=1">
+      {% include "va_data_management/partials/_death_list_component.html" %}
+    </div>
   </div>
 {% endblock %}
 

@@ -10,6 +10,7 @@ from va_explorer.tests.factories import UserFactory
 from va_explorer.users.management.commands.initialize_groups import GROUPS_PERMISSIONS
 from va_explorer.va_data_management.constants import DEATH_PII_FIELDS, REDACTED_STRING
 from va_explorer.va_data_management.models import Death
+from va_explorer.vacms.cmsmodels.events import Event
 
 pytestmark = pytest.mark.django_db
 
@@ -64,7 +65,7 @@ def _parse_csv(response):
     return list(csv.reader(io.StringIO(response.content.decode())))
 
 
-def test_export_returns_all_fields_for_unscheduled_only(client):
+def test_export_defaults_to_all_deaths(client):
     client.force_login(_data_manager())
 
     unscheduled = _make_death(DE_03="No Event Person", eventid=None, district="Lusaka")
@@ -83,7 +84,51 @@ def test_export_returns_all_fields_for_unscheduled_only(client):
     id_col = header.index("id")
     ids = {row[id_col] for row in rows[1:]}
     assert str(unscheduled.id) in ids
+    assert str(scheduled.id) in ids
+
+
+def test_export_honors_unscheduled_tab(client):
+    client.force_login(_data_manager())
+
+    unscheduled = _make_death(DE_03="No Event Person", eventid=None)
+    scheduled = _make_death(DE_03="Has Event Person", eventid="E1")
+
+    response = client.get(
+        reverse("va_data_management:deaths_csv"),
+        {"death_status": "unscheduled"},
+    )
+
+    rows = _parse_csv(response)
+    id_col = rows[0].index("id")
+    ids = {row[id_col] for row in rows[1:]}
+    assert str(unscheduled.id) in ids
     assert str(scheduled.id) not in ids
+    assert "unscheduled_deaths_" in response["Content-Disposition"]
+
+
+def test_export_honors_completed_tab(client):
+    client.force_login(_data_manager())
+
+    completed = _make_death(DE_03="Completed Person")
+    completed_event = Event.objects.create(
+        death=completed,
+        event_type=Event.EventType.DEATH,
+        event_status=Event.EventStatus.VA_INTERVIEW_COMPLETED,
+        va_interview_status=Event.VAInterviewStatus.COMPLETED,
+    )
+    completed.eventid = str(completed_event.id)
+    completed.save(update_fields=["eventid"])
+    _make_death(DE_03="Unscheduled Person")
+
+    response = client.get(
+        reverse("va_data_management:deaths_csv"),
+        {"death_status": "completed"},
+    )
+
+    rows = _parse_csv(response)
+    id_col = rows[0].index("id")
+    assert {row[id_col] for row in rows[1:]} == {str(completed.id)}
+    assert "completed_deaths_" in response["Content-Disposition"]
 
 
 def test_export_honors_filters(client):
