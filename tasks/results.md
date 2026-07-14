@@ -127,3 +127,41 @@ regression test added. (The constraint prevented any bad write.)
 - Pre-existing unrelated failure: test_data_management_list_updates.py::
   test_households_list_excludes_placeholder_rows_and_reorders_filters
   (fails on clean tree).
+
+## VASA WHO-Id collision fix + DeathID reporting (2026-07-14)
+
+### Root causes
+- `Q1202` (combined full name) mapped straight to `Id10017` via PSEUDO_TO_WHO;
+  the loader ignored `COMBINED_WHO`, so the section given-name field (A4001/
+  C3012/N2023) won first-write, Q1202 was discarded as a "collision", and
+  `Id10018` (surname) was never populated. 11 of 16 znphi_vasa_who_2016.csv
+  records silently lost the surname.
+- `DeathID validation: checked=0` was correct (all 16 rows had blank DeathID;
+  VAID_decide=2) but unexplained by the command output. Latent bug: the SA
+  builder read the `DeathID` header case-sensitively.
+
+### Files Modified
+- `va_data_management/utils/vasa_loading.py` — COMBINED_WHO splitting
+  (`_split_full_name`/`_reconcile_names`/`_route_n2005`), collision events log
+  both values + sections, unresolved conflicts flagged as VALIDITY
+  DataQualityIssues (keys.check=name_conflict/who_id_conflict, self-healing),
+  case-insensitive SA columns, `dry_run` mode with field diffs, extended
+  summary (rows, resolved/unresolved, DeathID row counts, linking status).
+- `va_data_management/utils/matching/{service,__init__}.py` — `matching_enabled()`.
+- `management/commands/load_vasa_csv.py` — `--dry-run`, self-explanatory summary
+  (explains checked=0, reports linking status).
+
+### Tests Added (all passing; 58 vasa/mapping + 65 death-id/matching)
+- `tests/test_vasa_loading.py` — split/consistent/component/conflict name
+  reconciliation, DQ flag + self-heal, re-import repair, N2005 unit routing,
+  DeathID row counts + case-insensitive header, dry-run no-writes + diffs,
+  command --dry-run, linking flag summary.
+
+### Data remediation
+- Dry-run reviewed, then re-imported the CSV: 0 created / 16 updated; 13
+  records gained `Id10018`, 3 correctly without (single-token names; reversed-
+  order record keeps full name in Id10017). 0 conflict issues open.
+
+### Cache/Celery/Deploy
+- No cache keys, migrations, or Celery changes. ODK/pyODK ingestion shares the
+  fixed loader automatically (dry_run is keyword-only, call sites unchanged).

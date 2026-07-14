@@ -34,6 +34,11 @@ class Command(BaseCommand):
                 f"{', '.join(REPEAT_MODELS)}. May be repeated."
             ),
         )
+        parser.add_argument(
+            "--dry-run",
+            action="store_true",
+            help="Report what would change without writing anything.",
+        )
 
     def handle(self, *args, **options):
         repeat_csvs = {}
@@ -49,29 +54,54 @@ class Command(BaseCommand):
                 )
             repeat_csvs[group] = path.strip()
 
-        summary = load_vasa_from_csv(options["csv_file"], repeat_csvs)
+        dry_run = options["dry_run"]
+        summary = load_vasa_from_csv(options["csv_file"], repeat_csvs, dry_run=dry_run)
 
-        self.stdout.write(
+        def out(line):
+            self.stdout.write(f"DRY RUN: {line}" if dry_run else line)
+
+        out(f"Rows read: {summary['rows']}")
+        out(
             "Loaded VASA: "
             f"created={summary['created']}, updated={summary['updated']}, "
-            f"skipped={summary['skipped']}, errors={summary['errors']}, "
-            f"who_id_collisions={summary['collisions']}"
+            f"skipped={summary['skipped']}, errors={summary['errors']}"
+        )
+        out(
+            f"WHO-Id collisions: {summary['collisions']} event(s) across "
+            f"{summary['records_with_collisions']} record(s) — "
+            f"resolved by precedence: {summary['collisions_resolved']}, "
+            f"unresolved (DataQualityIssue flagged): "
+            f"{summary['collisions_unresolved']}"
+        )
+        out(
+            f"DeathID: {summary['rows_with_death_id']} of {summary['rows']} rows "
+            f"contained a DeathID ({summary['rows_without_death_id']} without)"
         )
         for group, stats in summary["repeats"].items():
-            self.stdout.write(f"  repeat {group}: {stats}")
+            out(f"  repeat {group}: {stats}")
 
         validation = summary.get("death_id_validation")
-        if validation is None:
+        if dry_run:
+            out("DeathID validation: skipped (dry run)")
+        elif validation is None:
             self.stdout.write(
                 self.style.WARNING("DeathID validation failed; see logs.")
             )
         else:
-            self.stdout.write(
-                f"DeathID validation: checked={validation['checked']}, "
+            out(
+                "DeathID validation (whole table): "
+                f"checked={validation['checked']}, "
                 f"invalid={validation['invalid']}, "
                 f"unmatched={validation['unmatched']}, "
                 f"resolved={validation['resolved']}"
             )
+            if validation["checked"] == 0:
+                out(
+                    "  note: checked=0 because "
+                    f"{summary['rows_with_death_id']} of {summary['rows']} "
+                    "imported rows contained a DeathID and no other VASA record "
+                    "carries one"
+                )
             if validation["invalid"] or validation["unmatched"]:
                 self.stdout.write(
                     self.style.WARNING(
@@ -79,3 +109,26 @@ class Command(BaseCommand):
                         "(records were still imported)."
                     )
                 )
+
+        linking = summary["linking"]
+        out(
+            "Death linking: "
+            + (
+                f"enabled — scheduled {linking['scheduled']} record(s)"
+                if linking["enabled"]
+                else "disabled (VA_DEATH_MATCH_ENABLED off) — scheduled 0 record(s)"
+            )
+        )
+
+        if dry_run:
+            for change in summary.get("changes", []):
+                if change["action"] == "create":
+                    out(f"  would create {change['instanceid']}")
+                    continue
+                fields = change.get("fields", {})
+                if not fields:
+                    out(f"  no changes for {change['instanceid']}")
+                    continue
+                out(f"  would update {change['instanceid']}:")
+                for field, diff in fields.items():
+                    out(f"    {field}: {diff['old']!r} -> {diff['new']!r}")

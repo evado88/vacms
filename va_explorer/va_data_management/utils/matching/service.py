@@ -288,6 +288,11 @@ def _persist(va, result, best_death, existing):
     return True
 
 
+def matching_enabled():
+    """Whether VA->Death auto-linking is turned on (``VA_DEATH_MATCH_ENABLED``)."""
+    return bool(_cfg("VA_DEATH_MATCH_ENABLED", False))
+
+
 def schedule_link_for_va_ids(ids, *, model_name, source):
     """Ingestion seam: enqueue linking for freshly-written VA IDs.
 
