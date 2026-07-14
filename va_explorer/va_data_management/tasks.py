@@ -55,6 +55,15 @@ def setup_periodic_tasks(sender, **kwargs):
         name="Pre-warm home dashboard cache",
     )
 
+    # Sweep newly-ingested VAs for Death links hourly. Only scheduled when
+    # auto-linking is enabled; the task itself also guards on the flag.
+    if getattr(settings, "VA_DEATH_MATCH_ENABLED", False):
+        sender.add_periodic_task(
+            crontab(minute=15),
+            sweep_unlinked_vas.s(),
+            name="Sweep unlinked VAs for Death links",
+        )
+
 
 # Result of tasks need to be json serializable so return dicts.
 @app.task()
@@ -101,6 +110,53 @@ def run_coding_algorithms_batch(record_ids, fk_field="verbalautopsy"):
 
     causes, issues = coding.run_interva5(records, fk_field=fk_field)
     return {"num_coded": len(causes), "num_issues": len(issues)}
+
+
+_LINK_BATCH_SIZE = 500
+
+
+@app.task()
+def sweep_unlinked_vas():
+    """Snapshot never-evaluated VA/VASA IDs and dispatch link batches.
+
+    Mirrors ``run_coding_algorithms``. No-ops unless ``VA_DEATH_MATCH_ENABLED``
+    so it is inert while auto-linking is disabled.
+    """
+    if not getattr(settings, "VA_DEATH_MATCH_ENABLED", False):
+        return {"enabled": False, "num_batches": 0}
+
+    num_batches = 0
+    total = 0
+    for model, model_name in ((VerbalAutopsy, "verbalautopsy"), (VASA, "vasa")):
+        record_ids = list(
+            model.objects.filter(va_death_match__isnull=True).values_list(
+                "id", flat=True
+            )
+        )
+        for i in range(0, len(record_ids), _LINK_BATCH_SIZE):
+            link_va_batch.delay(
+                record_ids[i : i + _LINK_BATCH_SIZE], model_name, "sweeper"
+            )
+            num_batches += 1
+        total += len(record_ids)
+
+    logger.info("Link sweeper dispatched %d batch(es) for %d VAs", num_batches, total)
+    return {"enabled": True, "num_batches": num_batches, "total": total}
+
+
+@app.task()
+def link_va_batch(record_ids, model_name="verbalautopsy", source="sweeper"):
+    """Link a batch of VA/VASA records to Death records by their PKs."""
+    from va_explorer.va_data_management.utils.matching import run_matching
+
+    model = VASA if model_name == "vasa" else VerbalAutopsy
+    qs = model.objects.filter(id__in=record_ids).select_related("va_death_match")
+    if model is VerbalAutopsy:
+        qs = qs.prefetch_related("events__death")
+    else:
+        qs = qs.select_related("social_autopsy")
+    summary = run_matching(qs.order_by("id"), apply=True, source=source)
+    return {"total": summary.get("total", 0), "changed": summary.get("changed", 0)}
 
 
 @app.task()

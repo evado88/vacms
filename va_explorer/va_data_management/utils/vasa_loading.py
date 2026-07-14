@@ -191,6 +191,7 @@ def load_vasa_from_dataframes(main_df, repeat_dfs=None):
         "repeats": {},
     }
     vasa_by_key = {}
+    vasa_ids = []
 
     for raw in main_df.to_dict(orient="records"):
         raw_ci = {str(k).strip().lower(): v for k, v in raw.items()}
@@ -226,6 +227,7 @@ def load_vasa_from_dataframes(main_df, repeat_dfs=None):
                 )
                 if _has_meaningful_value(vasa.key):
                     vasa_by_key[str(vasa.key).strip()] = vasa
+                vasa_ids.append(vasa.pk)
         except Exception:
             summary["errors"] += 1
             logger.exception("Failed to load VASA submission")
@@ -251,6 +253,15 @@ def load_vasa_from_dataframes(main_df, repeat_dfs=None):
     except Exception:
         summary["death_id_validation"] = None
         logger.exception("VASA DeathID validation failed after load")
+
+    # Auto-link ingested VASA records to Death records (no-op unless the feature
+    # flag is enabled). VASA carries a DeathID, so this is usually an exact join.
+    if vasa_ids:
+        from va_explorer.va_data_management.utils.matching import (
+            schedule_link_for_va_ids,
+        )
+
+        schedule_link_for_va_ids(vasa_ids, model_name="vasa", source="pyodk_ingestion")
 
     return summary
 

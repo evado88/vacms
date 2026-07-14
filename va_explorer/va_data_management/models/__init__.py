@@ -14,6 +14,7 @@ from .pregnancy import Pregnancy
 from .pregnancy_outcome import PregnancyOutcome, PregnancyOutcomeBaby
 from .social_mobilization import RumorLog, SocialMobilization
 from .srs_ea_population_target import BaselineCensusProvince, SRSEAPopulationTarget
+from .va_death_match import MatchMethod, MatchStatus, VADeathMatch
 from .vasa import (
     VASA,
     VASACareSeekingAdult,
@@ -64,4 +65,7 @@ __all__ = [
     "CSASupervisorTargetMap",
     "SRSEAPopulationTarget",
     "BaselineCensusProvince",
+    "VADeathMatch",
+    "MatchStatus",
+    "MatchMethod",
 ]

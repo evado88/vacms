@@ -160,6 +160,42 @@ ODK_PULL_FORMS = [
     },
 ]
 
+# ---------------------------------------------------------------------------
+# Verbal Autopsy -> Death record linkage (utils/matching)
+# ---------------------------------------------------------------------------
+# Master switch for AUTOMATIC linking during ingestion. Defaults OFF: the
+# retrospective command and sweeper are the initial operating mode; nothing
+# auto-links on ingest until an operator turns this on.
+VA_DEATH_MATCH_ENABLED = env.bool("VA_DEATH_MATCH_ENABLED", default=False)
+# Confidence thresholds (percent). Auto-link requires score STRICTLY greater
+# than the auto threshold; the review band is [review, auto] inclusive.
+VA_DEATH_MATCH_AUTO_THRESHOLD = env.int("VA_DEATH_MATCH_AUTO_THRESHOLD", default=90)
+VA_DEATH_MATCH_REVIEW_THRESHOLD = env.int("VA_DEATH_MATCH_REVIEW_THRESHOLD", default=80)
+# Minimum score gap between the best and second-best candidate before an
+# automatic link is permitted (guards ambiguous matches).
+VA_DEATH_MATCH_MIN_SEPARATION = env.int("VA_DEATH_MATCH_MIN_SEPARATION", default=5)
+# Tolerances for "compatible" (not exact) values.
+VA_DEATH_MATCH_MAX_AGE_TOLERANCE_YEARS = env.int(
+    "VA_DEATH_MATCH_MAX_AGE_TOLERANCE_YEARS", default=3
+)
+VA_DEATH_MATCH_MAX_DOD_TOLERANCE_DAYS = env.int(
+    "VA_DEATH_MATCH_MAX_DOD_TOLERANCE_DAYS", default=3
+)
+# Candidate blocking: Deaths whose date-of-death is within this many days of the
+# VA's are considered for fuzzy scoring; cap the number scored per VA.
+VA_DEATH_MATCH_CANDIDATE_DOD_WINDOW_DAYS = env.int(
+    "VA_DEATH_MATCH_CANDIDATE_DOD_WINDOW_DAYS", default=14
+)
+VA_DEATH_MATCH_MAX_CANDIDATES = env.int("VA_DEATH_MATCH_MAX_CANDIDATES", default=50)
+VA_DEATH_MATCH_ALGORITHM_VERSION = env(
+    "VA_DEATH_MATCH_ALGORITHM_VERSION", default="1.0"
+)
+# When True, matching errors during ingestion are re-raised; default False so a
+# matcher failure never breaks VA ingestion (errors are logged + recorded).
+VA_DEATH_MATCH_RAISE_INGESTION_ERRORS = env.bool(
+    "VA_DEATH_MATCH_RAISE_INGESTION_ERRORS", default=False
+)
+
 DEFAULT_AUTO_FIELD = "django.db.models.AutoField"
 
 # Databases

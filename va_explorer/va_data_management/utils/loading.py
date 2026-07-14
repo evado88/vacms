@@ -798,6 +798,19 @@ def load_records_from_dataframe(
         print("Marking VAs as duplicate...")
         VerbalAutopsy.mark_duplicates()
 
+    # Auto-link newly ingested VAs to Death records (no-op unless the feature
+    # flag is enabled; runs after commit so the matcher sees committed rows).
+    if not dry_run and new_vas:
+        from va_explorer.va_data_management.utils.matching import (
+            schedule_link_for_va_ids,
+        )
+
+        schedule_link_for_va_ids(
+            [va.pk for va in new_vas],
+            model_name="verbalautopsy",
+            source="pyodk_ingestion",
+        )
+
     return {
         "ignored": ignored_vas,
         "outdated": outdated_vas,

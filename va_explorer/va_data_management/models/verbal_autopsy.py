@@ -3,7 +3,7 @@ import contextlib
 import hashlib
 
 from django.conf import settings
-from django.core.exceptions import FieldDoesNotExist
+from django.core.exceptions import FieldDoesNotExist, ObjectDoesNotExist
 from django.db import models
 from django.db.models import Count, JSONField, Q
 from simple_history.models import HistoricalRecords
@@ -1651,6 +1651,20 @@ class BaseVerbalAutopsy(SoftDeletionModel):
     @property
     def is_community_va(self):
         return self.community_va_normalized == "yes"
+
+    @property
+    def linked_death(self):
+        """The Death this VA is confirmed-linked to, or None.
+
+        Reads the dedicated ``VADeathMatch`` row (see
+        ``utils/matching/``); only matched/manually-confirmed rows assert a
+        link, so review/ambiguous/unmatched evaluations return None here.
+        """
+        try:
+            match = self.va_death_match
+        except ObjectDoesNotExist:
+            return None
+        return match.death if (match and match.is_linked) else None
 
     def resolve_location_context(self):
         """
