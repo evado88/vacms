@@ -33,6 +33,7 @@ from va_explorer.va_data_management.tasks import run_coding_algorithms
 from va_explorer.va_data_management.utils.date_parsing import parse_date
 from va_explorer.va_data_management.utils.loading import get_va_summary_stats
 from va_explorer.va_data_management.utils.validate import validate_vas_for_dashboard
+from va_explorer.va_data_management.vasa.value_decode import sa_display_value
 
 _VA_GEOGRAPHY_FORM_NAME = "pregnancy"
 _VA_GEOGRAPHY_FIELDS = ("province", "district", "constituency", "ward")
@@ -294,17 +295,24 @@ class VASAAccessRestrictionMixin(SingleObjectMixin):
         return self.request.user.vasa_records()
 
 
-def _serialize_model_fields(instance, skip=()):
-    """Return [{name, label, value}] for a model instance's concrete fields."""
+def _serialize_model_fields(instance, skip=(), value_fn=None):
+    """Return [{name, label, value}] for a model instance's concrete fields.
+
+    ``value_fn(name, value)`` optionally transforms values for display (e.g.
+    decoding stored SA/repeat select codes to their choice labels).
+    """
     rows = []
     for field in instance._meta.fields:
         if field.name in skip:
             continue
+        value = getattr(instance, field.name)
+        if value_fn is not None:
+            value = value_fn(field.name, value)
         rows.append(
             {
                 "name": field.name,
                 "label": field.verbose_name,
-                "value": getattr(instance, field.name),
+                "value": value,
             }
         )
     return rows
@@ -352,8 +360,12 @@ class VASAShow(
             social_autopsy = self.object.social_autopsy
         except ObjectDoesNotExist:
             social_autopsy = None
+        # SA/repeat select answers are stored as raw codes; decode to their
+        # choice labels for display only (never for coding input).
         context["social_autopsy_fields"] = (
-            _serialize_model_fields(social_autopsy, skip=self._SA_SKIP)
+            _serialize_model_fields(
+                social_autopsy, skip=self._SA_SKIP, value_fn=sa_display_value
+            )
             if social_autopsy is not None
             else None
         )
@@ -364,7 +376,9 @@ class VASAShow(
                 "key": "neonate",
                 "label": "Care-Seeking (Neonate)",
                 "records": [
-                    _serialize_model_fields(row, skip=self._REPEAT_SKIP)
+                    _serialize_model_fields(
+                        row, skip=self._REPEAT_SKIP, value_fn=sa_display_value
+                    )
                     for row in self.object.care_seeking_neonate.all()
                 ],
             },
@@ -372,7 +386,9 @@ class VASAShow(
                 "key": "child",
                 "label": "Care-Seeking (Child)",
                 "records": [
-                    _serialize_model_fields(row, skip=self._REPEAT_SKIP)
+                    _serialize_model_fields(
+                        row, skip=self._REPEAT_SKIP, value_fn=sa_display_value
+                    )
                     for row in self.object.care_seeking_child.all()
                 ],
             },
@@ -380,7 +396,9 @@ class VASAShow(
                 "key": "adult",
                 "label": "Care-Seeking (Adult)",
                 "records": [
-                    _serialize_model_fields(row, skip=self._REPEAT_SKIP)
+                    _serialize_model_fields(
+                        row, skip=self._REPEAT_SKIP, value_fn=sa_display_value
+                    )
                     for row in self.object.care_seeking_adult.all()
                 ],
             },

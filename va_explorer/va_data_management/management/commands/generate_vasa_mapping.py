@@ -14,6 +14,7 @@ Usage::
     python manage.py generate_vasa_mapping --check     # verify, do not write
 """
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -203,7 +204,11 @@ class Command(BaseCommand):
         not_covered = sorted(who_form_ids - covered_who)
         in_vasa_not_who = sorted(covered_who - who_form_ids)
 
-        value_crosswalk = _build_value_crosswalk(xlsform, who_xlsform, pseudo_to_who)
+        value_crosswalk, fallback_codes, select_types = _build_value_crosswalk(
+            xlsform, who_xlsform, pseudo_to_who
+        )
+        sa_value_labels = _build_sa_value_labels(xlsform, sa_defs, repeat_field_defs)
+        vasa_sha, who_sha = _sha256(xlsform), _sha256(who_xlsform)
 
         field_map = {
             "PSEUDO_TO_WHO": pseudo_to_who,
@@ -211,10 +216,15 @@ class Command(BaseCommand):
             "INSTRUMENT_SECTION": instrument_section,
             "REPEAT_GROUPS": repeat_groups,
             "VALUE_CROSSWALK": value_crosswalk,
+            "SELECT_TYPES": select_types,
+            "FALLBACK_CODES": fallback_codes,
+            "XLSFORM_HASHES": {"vasa": vasa_sha, "who": who_sha},
+            "CROSSWALK_VERSION": f"{vasa_sha[:8]}-{who_sha[:8]}",
         }
         model_fields = {
             "SA_FIELD_DEFS": sa_defs,
             "REPEAT_FIELD_DEFS": repeat_field_defs,
+            "SA_VALUE_LABELS": sa_value_labels,
         }
         report = self._format_report(
             pseudo_to_who=pseudo_to_who,
@@ -227,6 +237,10 @@ class Command(BaseCommand):
             not_covered=not_covered,
             in_vasa_not_who=in_vasa_not_who,
             unresolved=unresolved,
+            value_crosswalk=value_crosswalk,
+            fallback_codes=fallback_codes,
+            sa_value_labels=sa_value_labels,
+            crosswalk_version=field_map["CROSSWALK_VERSION"],
         )
         return {
             "field_map": field_map,
@@ -286,6 +300,11 @@ class Command(BaseCommand):
             f"WHO Ids in VASA but not WHO form:   {kw['in_vasa_not_who']}",
             f"WHO Ids in WHO form not in VASA:    {len(kw['not_covered'])}",
             f"Unresolved WHO_names -> SA:         {len(kw['unresolved'])}",
+            f"Value-crosswalked select fields:    {len(kw['value_crosswalk'])} "
+            f"({sum(len(c) for c in kw['fallback_codes'].values())} fallback codes "
+            f"on {len(kw['fallback_codes'])} fields)",
+            f"SA/repeat display-label fields:     {len(kw['sa_value_labels'])}",
+            f"Crosswalk version (XLSForm hashes): {kw['crosswalk_version']}",
         ]
         return "\n".join(lines)
 
@@ -313,7 +332,8 @@ def _norm_label(text: str) -> str:
 
 
 def _choice_maps(xlsform: Path):
-    """Return (field -> list_name, list_name -> {code: label}) for an XLSForm."""
+    """Return (field -> list_name, list_name -> {code: label},
+    field -> select_one|select_multiple) for an XLSForm."""
     xl = pd.ExcelFile(xlsform)
     survey = xl.parse("survey", dtype=str).fillna("")
     choices = xl.parse("choices", dtype=str).fillna("")
@@ -322,12 +342,18 @@ def _choice_maps(xlsform: Path):
     label_col = next((cc[k] for k in cc if k.startswith("label")), None)
 
     field_list: dict = {}
+    field_kind: dict = {}
     for _, row in survey.iterrows():
         raw_type = str(row[sc["type"]]).strip()
         parts = raw_type.split()
         name = str(row[sc["name"]]).strip()
         if len(parts) >= 2 and parts[0].startswith("select"):
             field_list[name] = parts[1]
+            field_kind[name] = (
+                "select_multiple"
+                if parts[0].lower().startswith("select_multiple")
+                else "select_one"
+            )
 
     list_choices: dict = {}
     for _, row in choices.iterrows():
@@ -336,22 +362,27 @@ def _choice_maps(xlsform: Path):
         label = str(row[label_col]).strip() if label_col else ""
         if list_name:
             list_choices.setdefault(list_name, {})[code] = label
-    return field_list, list_choices
+    return field_list, list_choices, field_kind
 
 
 def _build_value_crosswalk(
     xlsform: Path, who_xlsform: Path, pseudo_to_who: dict
-) -> dict:
+) -> tuple:
     """Map each VASA select code to the WHO value the coding pipeline expects.
 
     VASA select choices are numeric codes with human labels (1 -> "Yes"); the VA
     value-space is WHO choice *names* ("yes"). For every VASA select field mapped
     to a WHO field, match the VASA label to the WHO field's choice label and emit
     ``{code: who_value}``. Where no WHO label matches, fall back to the
-    normalised VASA label so nothing is silently lost.
+    normalised VASA label so nothing is silently lost; those codes are recorded
+    in ``fallback_codes`` so the loader can surface them (coding may not
+    recognise a fallback value).
+
+    Returns ``(crosswalk, fallback_codes, select_types)`` where ``select_types``
+    marks every crosswalked field ``select_one`` or ``select_multiple``.
     """
-    vasa_field_list, vasa_list_choices = _choice_maps(xlsform)
-    who_field_list, who_list_choices = _choice_maps(who_xlsform)
+    vasa_field_list, vasa_list_choices, vasa_field_kind = _choice_maps(xlsform)
+    who_field_list, who_list_choices, _ = _choice_maps(who_xlsform)
 
     who_value_by_label: dict = {}
     for who_field, list_name in who_field_list.items():
@@ -361,6 +392,7 @@ def _build_value_crosswalk(
         }
 
     crosswalk: dict = {}
+    fallback_codes: dict = {}
     for pseudo, who in pseudo_to_who.items():
         list_name = vasa_field_list.get(pseudo)
         if not list_name:
@@ -368,12 +400,48 @@ def _build_value_crosswalk(
         codes = vasa_list_choices.get(list_name, {})
         who_values = who_value_by_label.get(who, {})
         mapped = {}
+        fallbacks = []
         for code, vasa_label in codes.items():
             who_value = who_values.get(_norm_label(vasa_label))
-            mapped[code] = who_value or _norm_label(vasa_label).replace(" ", "_")
+            if who_value:
+                mapped[code] = who_value
+            else:
+                mapped[code] = _norm_label(vasa_label).replace(" ", "_")
+                fallbacks.append(code)
         if mapped:
             crosswalk[pseudo] = mapped
-    return crosswalk
+            if fallbacks:
+                fallback_codes[pseudo] = sorted(fallbacks)
+    select_types = {pseudo: vasa_field_kind[pseudo] for pseudo in crosswalk}
+    return crosswalk, fallback_codes, select_types
+
+
+def _build_sa_value_labels(
+    xlsform: Path, sa_defs: list, repeat_field_defs: dict
+) -> dict:
+    """Display-only choice labels for social-autopsy / repeat select columns.
+
+    Keyed by generated model field name. Stored SA/repeat values remain the raw
+    codes; the UI decodes them at render time only (never the coding pipeline).
+    """
+    field_list, list_choices, field_kind = _choice_maps(xlsform)
+    defs = list(sa_defs)
+    for group_defs in repeat_field_defs.values():
+        defs.extend(group_defs)
+    value_labels: dict = {}
+    for column, field_name, _label in defs:
+        list_name = field_list.get(column)
+        choices = list_choices.get(list_name, {}) if list_name else {}
+        if choices:
+            value_labels[field_name] = {
+                "kind": field_kind[column],
+                "labels": choices,
+            }
+    return value_labels
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _who_form_ids(who_xlsform: Path) -> set:

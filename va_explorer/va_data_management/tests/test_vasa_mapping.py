@@ -187,3 +187,85 @@ def test_repeat_field_defs_cover_all_repeat_groups():
     assert set(model_fields.REPEAT_FIELD_DEFS) == set(field_map.REPEAT_GROUPS)
     for group, defs in model_fields.REPEAT_FIELD_DEFS.items():
         assert len(defs) == len(field_map.REPEAT_GROUPS[group])
+
+
+# ------------------------------------------------- value-decode artifact keys
+def test_xlsform_hashes_match_committed_workbooks():
+    from va_explorer.va_data_management.management.commands.generate_vasa_mapping import (  # noqa: E501
+        DEFAULT_WHO_XLSFORM,
+        DEFAULT_XLSFORM,
+        _sha256,
+    )
+
+    assert {
+        "vasa": _sha256(DEFAULT_XLSFORM),
+        "who": _sha256(DEFAULT_WHO_XLSFORM),
+    } == field_map.XLSFORM_HASHES
+    vasa_sha, who_sha = (
+        field_map.XLSFORM_HASHES["vasa"],
+        field_map.XLSFORM_HASHES["who"],
+    )
+    assert f"{vasa_sha[:8]}-{who_sha[:8]}" == field_map.CROSSWALK_VERSION
+
+
+def test_check_fails_on_xlsform_hash_drift(monkeypatch):
+    monkeypatch.setattr(
+        field_map, "XLSFORM_HASHES", {"vasa": "0" * 64, "who": "0" * 64}
+    )
+    with pytest.raises(CommandError, match="XLSFORM_HASHES"):
+        call_command("generate_vasa_mapping", "--check", "--quiet")
+
+
+def test_select_types_cover_exactly_the_crosswalked_fields():
+    assert set(field_map.SELECT_TYPES) == set(field_map.VALUE_CROSSWALK)
+    assert set(field_map.SELECT_TYPES.values()) <= {"select_one", "select_multiple"}
+    assert field_map.SELECT_TYPES["Q1601"] == "select_one"
+    assert field_map.SELECT_TYPES["A4119"] == "select_multiple"
+
+
+def test_fallback_codes_are_real_lowercase_crosswalk_entries():
+    assert field_map.FALLBACK_CODES  # the current form does produce fallbacks
+    for pseudo, codes in field_map.FALLBACK_CODES.items():
+        assert pseudo in field_map.VALUE_CROSSWALK
+        for code in codes:
+            value = field_map.VALUE_CROSSWALK[pseudo][code]
+            # Fallbacks derive from _norm_label and are lowercase by
+            # construction — the normalisation guarantee. Matched WHO choice
+            # names (which may legitimately be capitalised, e.g. "Ref"/"DK")
+            # are never marked fallback.
+            assert value == value.lower()
+    assert "Q1601" not in field_map.FALLBACK_CODES  # sex fully WHO-matched
+
+
+def test_domain_coverage_against_who_choice_lists():
+    """Every non-fallback decoded value must be a name in the target WHO
+    field's own choice list (fallbacks are the explicit, marked exceptions)."""
+    from va_explorer.va_data_management.management.commands.generate_vasa_mapping import (  # noqa: E501
+        DEFAULT_WHO_XLSFORM,
+        _choice_maps,
+    )
+
+    who_field_list, who_list_choices, _ = _choice_maps(DEFAULT_WHO_XLSFORM)
+    violations = []
+    for pseudo, crosswalk in field_map.VALUE_CROSSWALK.items():
+        who = field_map.PSEUDO_TO_WHO[pseudo]
+        list_name = who_field_list.get(who)
+        who_names = set(who_list_choices.get(list_name, {})) if list_name else set()
+        fallbacks = set(field_map.FALLBACK_CODES.get(pseudo, ()))
+        for code, value in crosswalk.items():
+            if code in fallbacks:
+                continue
+            if value not in who_names:
+                violations.append((pseudo, code, value, who))
+    assert not violations
+
+
+def test_sa_value_labels_key_real_sa_and_repeat_fields():
+    known_fields = {f for _c, f, _l in model_fields.SA_FIELD_DEFS}
+    for defs in model_fields.REPEAT_FIELD_DEFS.values():
+        known_fields |= {f for _c, f, _l in defs}
+    assert model_fields.SA_VALUE_LABELS
+    for field, entry in model_fields.SA_VALUE_LABELS.items():
+        assert field in known_fields
+        assert entry["kind"] in ("select_one", "select_multiple")
+        assert entry["labels"]

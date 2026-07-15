@@ -64,6 +64,10 @@ class VASA(BaseVerbalAutopsy):
     instrument = models.CharField(max_length=10, choices=INSTRUMENT_CHOICES, blank=True)
     # Discriminates VASA from VA anywhere the two are surfaced together.
     source = models.TextField(default="VASA", blank=True)
+    # Raw-code provenance for crosswalk-decoded select answers:
+    # {"values": {pseudo: raw}, "meta": {"crosswalk_version", "form_id"}}.
+    # editable=False keeps it out of model_to_dict() (coding input) and VASAForm.
+    raw_answers = models.JSONField(default=dict, blank=True, editable=False)
     created = models.DateTimeField(auto_now_add=True)
     updated = models.DateTimeField(auto_now=True)
     history = HistoricalRecords()

@@ -22,6 +22,11 @@ from va_explorer.va_data_management.utils.vasa_loading import (
     load_vasa_from_csv,
     load_vasa_from_dataframes,
 )
+from va_explorer.va_data_management.vasa.field_map import (
+    CROSSWALK_VERSION,
+    FALLBACK_CODES,
+    VALUE_CROSSWALK,
+)
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "vasa"
 MAIN = FIXTURES / "znphifacilityvasa_02.csv"
@@ -311,3 +316,112 @@ def test_linking_summary_reflects_feature_flag(settings):
     settings.VA_DEATH_MATCH_ENABLED = True
     summary = load_vasa_from_dataframes(_df([_row("uuid:link2")]))
     assert summary["linking"] == {"enabled": True, "scheduled": 1}
+
+
+# --------------------------------------------------------------------------- #
+# Value decoding: DQ surfacing, raw-answer provenance, batch summary
+# --------------------------------------------------------------------------- #
+
+
+def _decode_issues(check):
+    return DataQualityIssue.objects.filter(
+        issue_type=DataQualityIssue.VALIDITY, keys__check=check
+    )
+
+
+@pytest.mark.django_db
+def test_unknown_code_retained_in_place_and_flagged():
+    summary = load_vasa_from_dataframes(_df([_row("uuid:unk", Q1601="7")]))
+    vasa = VASA.objects.get(instanceid="uuid:unk")
+    assert vasa.Id10019 == "7"  # raw code retained, never fabricated
+    assert summary["decode"]["unknown_codes"] == 1
+    assert summary["decode"]["records_with_unknown"] == 1
+
+    issue = _decode_issues("unknown_code").get()
+    assert issue.status == DataQualityIssue.OPEN
+    assert issue.keys == {"check": "unknown_code", "who": "Id10019"}
+    assert issue.details["pseudo"] == "Q1601"
+    assert issue.details["raw"] == "7"
+    assert issue.details["crosswalk_version"] == CROSSWALK_VERSION
+
+    # A corrected re-import decodes cleanly and self-heals the issue.
+    load_vasa_from_dataframes(_df([_row("uuid:unk", Q1601="2")]))
+    vasa.refresh_from_db()
+    issue.refresh_from_db()
+    assert vasa.Id10019 == "female"
+    assert issue.status == DataQualityIssue.RESOLVED
+
+
+@pytest.mark.django_db
+def test_fallback_value_stored_and_flagged():
+    code = FALLBACK_CODES["A4002"][0]
+    summary = load_vasa_from_dataframes(_df([_row("uuid:fb", A4002=code)]))
+    vasa = VASA.objects.get(instanceid="uuid:fb")
+    assert vasa.Id10059 == VALUE_CROSSWALK["A4002"][code]
+    assert summary["decode"]["fallback_values"] == 1
+
+    issue = _decode_issues("fallback_value").get()
+    assert issue.status == DataQualityIssue.OPEN
+    assert issue.keys == {"check": "fallback_value", "who": "Id10059"}
+    assert issue.details["pseudo"] == "A4002"
+
+
+@pytest.mark.django_db
+def test_raw_answers_provenance_stored_and_merged_across_imports():
+    load_vasa_from_dataframes(_df([_row("uuid:prov", Q1601="2")]))
+    vasa = VASA.objects.get(instanceid="uuid:prov")
+    assert vasa.raw_answers["values"] == {"Q1601": "2"}
+    assert vasa.raw_answers["meta"]["crosswalk_version"] == CROSSWALK_VERSION
+
+    # A later import with a different answered field merges, never drops.
+    load_vasa_from_dataframes(_df([_row("uuid:prov", A4006="1")]))
+    vasa.refresh_from_db()
+    assert vasa.raw_answers["values"] == {"Q1601": "2", "A4006": "1"}
+    assert vasa.Id10019 == "female"
+    assert vasa.Id10064 == "yes"
+
+
+@pytest.mark.django_db
+def test_blank_reimport_clears_neither_value_nor_provenance():
+    load_vasa_from_dataframes(_df([_row("uuid:blank", Q1601="2")]))
+    load_vasa_from_dataframes(_df([_row("uuid:blank", Q1601="")]))
+    vasa = VASA.objects.get(instanceid="uuid:blank")
+    assert vasa.Id10019 == "female"
+    assert vasa.raw_answers["values"] == {"Q1601": "2"}
+
+
+@pytest.mark.django_db
+def test_reload_is_idempotent_including_provenance_and_issues():
+    rows = _df([_row("uuid:idem", Q1601="7", A4006="1")])
+    first = load_vasa_from_dataframes(rows)
+    vasa = VASA.objects.get(instanceid="uuid:idem")
+    snapshot = (vasa.Id10019, vasa.Id10064, vasa.raw_answers)
+
+    second = load_vasa_from_dataframes(rows)
+    vasa.refresh_from_db()
+    assert (vasa.Id10019, vasa.Id10064, vasa.raw_answers) == snapshot
+    assert second["decode"]["unknown_codes"] == first["decode"]["unknown_codes"]
+    assert _decode_issues("unknown_code").count() == 1  # updated, not duplicated
+    assert _decode_issues("unknown_code").get().status == DataQualityIssue.OPEN
+
+
+@pytest.mark.django_db
+def test_summary_reports_decode_counts():
+    summary = load_vasa_from_dataframes(
+        _df([_row("uuid:sum", Q1601="2", A4006="1", N2001="1")])
+    )
+    decode = summary["decode"]
+    assert decode["crosswalk_version"] == CROSSWALK_VERSION
+    assert decode["fields_decoded"] == 3
+    assert decode["unknown_codes"] == 0
+    assert decode["fallback_values"] == 0
+
+
+@pytest.mark.django_db
+def test_dry_run_reports_decode_counts_without_writing():
+    summary = load_vasa_from_dataframes(
+        _df([_row("uuid:drydecode", Q1601="7")]), dry_run=True
+    )
+    assert summary["decode"]["unknown_codes"] == 1
+    assert VASA.objects.count() == 0
+    assert _decode_issues("unknown_code").count() == 0

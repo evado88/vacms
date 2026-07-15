@@ -41,6 +41,59 @@ def test_vasa_and_va_produce_identically_shaped_coding_input():
 
 
 @pytest.mark.django_db
+def test_raw_answers_provenance_never_enters_coding_input():
+    vasa = VASA.objects.create(
+        instanceid="uuid:vasa-raw",
+        instrument="adult",
+        Id10019="female",
+        raw_answers={"values": {"Q1601": "2"}, "meta": {"crosswalk_version": "x"}},
+    )
+    row = coding.build_pycrossva_records([vasa])[0]
+    assert "-raw_answers" not in row
+    assert row["-Id10019"] == "female"
+
+
+@pytest.mark.django_db
+def test_coding_parity_between_loader_decoded_vasa_and_canonical_va():
+    """The in-place decoded values are exactly what coding receives: a VASA
+    ingested from coded answers equals a VA created with the decoded values."""
+    import pandas as pd
+
+    from va_explorer.va_data_management.utils.vasa_loading import (
+        load_vasa_from_dataframes,
+    )
+
+    load_vasa_from_dataframes(
+        pd.DataFrame(
+            [
+                {
+                    "instanceID": "uuid:parity",
+                    "KEY": "uuid:parity",
+                    "Q1601": "2",  # -> Id10019 female
+                    "A4006": "1",  # -> Id10064 yes
+                    "N2001": "",
+                    "A4001": "x",  # adult instrument trigger
+                }
+            ]
+        )
+    )
+    vasa = VASA.objects.get(instanceid="uuid:parity")
+    va = VerbalAutopsy.objects.create(
+        instanceid="uuid:parity-va", Id10019="female", Id10064="yes", Id10017="x"
+    )
+
+    vasa_input = coding.build_pycrossva_records([vasa])[0]
+    va_input = coding.build_pycrossva_records([va])[0]
+    shared = {k for k in vasa_input if k.startswith("-Id")} & set(va_input)
+    diffs = {
+        k: (vasa_input[k], va_input[k])
+        for k in shared
+        if str(vasa_input[k] or "") != str(va_input[k] or "")
+    }
+    assert diffs == {}
+
+
+@pytest.mark.django_db
 def test_social_autopsy_never_enters_coding_input():
     vasa = VASA.objects.create(instanceid="uuid:vasa-sa", instrument="neonate")
     sa_field = SA_FIELD_DEFS[0][1]

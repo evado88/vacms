@@ -1,5 +1,8 @@
 """VASA rows in the VA line list + the VASA detail page (SA/repeat/DQ tabs)."""
 
+import re
+
+import pandas as pd
 import pytest
 from django.contrib.auth.models import Permission
 from django.test import Client
@@ -16,7 +19,13 @@ from va_explorer.va_data_management.models import (
     VASACareSeekingNeonate,
     VASASocialAutopsy,
 )
-from va_explorer.va_data_management.vasa.model_fields import SA_FIELD_DEFS
+from va_explorer.va_data_management.utils.vasa_loading import (
+    load_vasa_from_dataframes,
+)
+from va_explorer.va_data_management.vasa.model_fields import (
+    SA_FIELD_DEFS,
+    SA_VALUE_LABELS,
+)
 
 pytestmark = pytest.mark.django_db
 
@@ -83,6 +92,62 @@ def test_vasa_detail_renders_sa_repeat_and_dq_tabs():
     assert "Care-Seeking (Neonate) (1)" in content
     assert "Data Quality" in content
     assert "An error occurred" in content
+
+
+def _field_row(content, field_name):
+    """The rendered detail-table row for one field (WHO and SA tabs share the
+    ``<tr ...><td><b>NAME</b></td>...<td>VALUE</td></tr>`` shape)."""
+    match = re.search(
+        rf"<tr[^>]*>\s*<td><b>{field_name}</b>.*?</tr>", content, flags=re.DOTALL
+    )
+    assert match is not None, f"no rendered row for {field_name}"
+    return match.group(0)
+
+
+def test_vasa_detail_shows_decoded_values_not_raw_codes():
+    _user, client = _viewer()
+    vasa = VASAFactory.create(instanceid="uuid:decoded-detail")
+    # Ingest coded answers through the real loader: Q1601=2 -> Id10019=female,
+    # A4006=1 -> Id10064=yes.
+    load_vasa_from_dataframes(
+        pd.DataFrame(
+            [
+                {
+                    "instanceID": vasa.instanceid,
+                    "KEY": vasa.instanceid,
+                    "Q1601": "2",
+                    "A4006": "1",
+                }
+            ]
+        )
+    )
+
+    response = client.get(f"/va_data_management/vasa/{vasa.id}")
+    assert response.status_code == 200
+    content = response.content.decode()
+
+    sex_row = _field_row(content, "Id10019")
+    assert "female" in sex_row
+    assert re.search(r"[>\"]\s*2\s*[<\"]", sex_row) is None  # no bare raw code
+    yes_row = _field_row(content, "Id10064")
+    assert "yes" in yes_row
+    assert re.search(r"[>\"]\s*1\s*[<\"]", yes_row) is None
+
+
+def test_vasa_detail_decodes_sa_select_codes_to_labels():
+    _user, client = _viewer()
+    vasa = VASAFactory.create(instrument="adult")
+    # Q1203 is a select-one SA question stored as a raw code.
+    label = SA_VALUE_LABELS["Q1203"]["labels"]["1"]
+    VASASocialAutopsy.objects.create(vasa=vasa, Q1203="1")
+
+    response = client.get(f"/va_data_management/vasa/{vasa.id}")
+    assert response.status_code == 200
+    content = response.content.decode()
+
+    row = _field_row(content, "Q1203")
+    assert label in row
+    assert re.search(r">\s*1\s*<", row) is None  # code not shown
 
 
 def test_vasa_detail_respects_location_scoping():

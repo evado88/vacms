@@ -73,6 +73,15 @@ class Command(BaseCommand):
             f"unresolved (DataQualityIssue flagged): "
             f"{summary['collisions_unresolved']}"
         )
+        decode = summary["decode"]
+        out(
+            f"Value decode (crosswalk {decode['crosswalk_version']}): "
+            f"{decode['fields_decoded']} fields decoded — "
+            f"unknown codes: {decode['unknown_codes']} "
+            f"({decode['records_with_unknown']} record(s)), "
+            f"fallback values: {decode['fallback_values']} "
+            f"({decode['records_with_fallback']} record(s))"
+        )
         out(
             f"DeathID: {summary['rows_with_death_id']} of {summary['rows']} rows "
             f"contained a DeathID ({summary['rows_without_death_id']} without)"
