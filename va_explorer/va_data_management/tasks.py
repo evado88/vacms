@@ -1,20 +1,14 @@
 import logging
-from collections import defaultdict
 
 from celery.schedules import crontab
 from django.conf import settings
-from django.db.models import Q
 
 from config.celery_app import app
 from config.settings.base import env
 from va_explorer.va_data_management.management.commands.import_from_kobo import (
     BATCH_SIZE,
 )
-from va_explorer.va_data_management.models import (
-    ClusterLocationCodes,
-    Death,
-    VerbalAutopsy,
-)
+from va_explorer.va_data_management.models import VASA, VerbalAutopsy
 from va_explorer.va_data_management.odk.config import get_odk_form_configs
 from va_explorer.va_data_management.odk.service import ODKPullService
 from va_explorer.va_data_management.utils import coding, kobo
@@ -61,6 +55,15 @@ def setup_periodic_tasks(sender, **kwargs):
         name="Pre-warm home dashboard cache",
     )
 
+    # Sweep newly-ingested VAs for Death links hourly. Only scheduled when
+    # auto-linking is enabled; the task itself also guards on the flag.
+    if getattr(settings, "VA_DEATH_MATCH_ENABLED", False):
+        sender.add_periodic_task(
+            crontab(minute=15),
+            sweep_unlinked_vas.s(),
+            name="Sweep unlinked VAs for Death links",
+        )
+
 
 # Result of tasks need to be json serializable so return dicts.
 @app.task()
@@ -70,37 +73,90 @@ def run_coding_algorithms():
     Splitting into independent sub-tasks prevents any single Celery call from
     running longer than the worker's soft time limit on large backlogs.
     """
-    va_ids = list(
-        VerbalAutopsy.objects.filter(causes__isnull=True).values_list("id", flat=True)
-    )
-    if not va_ids:
+    num_batches = 0
+    total_uncoded = 0
+    # VA and VASA share the coding pipeline; dispatch batches for each, tagging
+    # the batch with the FK field its results should be stored against.
+    for model, fk_field in ((VerbalAutopsy, "verbalautopsy"), (VASA, "vasa")):
+        record_ids = list(
+            model.objects.filter(causes__isnull=True).values_list("id", flat=True)
+        )
+        for i in range(0, len(record_ids), _CODING_BATCH_SIZE):
+            batch_ids = record_ids[i : i + _CODING_BATCH_SIZE]
+            run_coding_algorithms_batch.delay(batch_ids, fk_field)
+            num_batches += 1
+        total_uncoded += len(record_ids)
+
+    if not total_uncoded:
         return {"num_batches": 0, "total_uncoded": 0}
 
-    num_batches = 0
-    for i in range(0, len(va_ids), _CODING_BATCH_SIZE):
-        batch_ids = va_ids[i : i + _CODING_BATCH_SIZE]
-        run_coding_algorithms_batch.delay(batch_ids)
-        num_batches += 1
-
     logger.info(
-        "Coding orchestrator dispatched %d batch task(s) for %d VAs",
+        "Coding orchestrator dispatched %d batch task(s) for %d records",
         num_batches,
-        len(va_ids),
+        total_uncoded,
     )
-    return {"num_batches": num_batches, "total_uncoded": len(va_ids)}
+    return {"num_batches": num_batches, "total_uncoded": total_uncoded}
 
 
 @app.task()
-def run_coding_algorithms_batch(va_ids):
-    """Code a single batch of up to _CODING_BATCH_SIZE VAs identified by their PKs."""
-    verbal_autopsies = list(
-        VerbalAutopsy.objects.filter(id__in=va_ids, causes__isnull=True).order_by("id")
+def run_coding_algorithms_batch(record_ids, fk_field="verbalautopsy"):
+    """Code a batch of up to _CODING_BATCH_SIZE records (VA or VASA) by their PKs."""
+    model = VASA if fk_field == "vasa" else VerbalAutopsy
+    records = list(
+        model.objects.filter(id__in=record_ids, causes__isnull=True).order_by("id")
     )
-    if not verbal_autopsies:
+    if not records:
         return {"num_coded": 0, "num_issues": 0}
 
-    causes, issues = coding.run_interva5(verbal_autopsies)
+    causes, issues = coding.run_interva5(records, fk_field=fk_field)
     return {"num_coded": len(causes), "num_issues": len(issues)}
+
+
+_LINK_BATCH_SIZE = 500
+
+
+@app.task()
+def sweep_unlinked_vas():
+    """Snapshot never-evaluated VA/VASA IDs and dispatch link batches.
+
+    Mirrors ``run_coding_algorithms``. No-ops unless ``VA_DEATH_MATCH_ENABLED``
+    so it is inert while auto-linking is disabled.
+    """
+    if not getattr(settings, "VA_DEATH_MATCH_ENABLED", False):
+        return {"enabled": False, "num_batches": 0}
+
+    num_batches = 0
+    total = 0
+    for model, model_name in ((VerbalAutopsy, "verbalautopsy"), (VASA, "vasa")):
+        record_ids = list(
+            model.objects.filter(va_death_match__isnull=True).values_list(
+                "id", flat=True
+            )
+        )
+        for i in range(0, len(record_ids), _LINK_BATCH_SIZE):
+            link_va_batch.delay(
+                record_ids[i : i + _LINK_BATCH_SIZE], model_name, "sweeper"
+            )
+            num_batches += 1
+        total += len(record_ids)
+
+    logger.info("Link sweeper dispatched %d batch(es) for %d VAs", num_batches, total)
+    return {"enabled": True, "num_batches": num_batches, "total": total}
+
+
+@app.task()
+def link_va_batch(record_ids, model_name="verbalautopsy", source="sweeper"):
+    """Link a batch of VA/VASA records to Death records by their PKs."""
+    from va_explorer.va_data_management.utils.matching import run_matching
+
+    model = VASA if model_name == "vasa" else VerbalAutopsy
+    qs = model.objects.filter(id__in=record_ids).select_related("va_death_match")
+    if model is VerbalAutopsy:
+        qs = qs.prefetch_related("events__death")
+    else:
+        qs = qs.select_related("social_autopsy")
+    summary = run_matching(qs.order_by("id"), apply=True, source=source)
+    return {"total": summary.get("total", 0), "changed": summary.get("changed", 0)}
 
 
 @app.task()
@@ -207,124 +263,33 @@ def pull_odk_scheduled(schedule_key=None):
 
 @app.task()
 def assign_death_ids_task():
-    """Periodic task to assign death_ids to Death records without them.
+    """Periodic sweeper that assigns Death IDs to Death records without them.
 
-    Runs every 5 minutes to batch-assign sequential death_ids based on cluster codes.
-    Format: cluster_code + 4-digit sequential number (e.g., 1213SM0001, 1213SM0002).
+    Delegates to the shared service in ``utils/death_ids.py`` (same code path
+    as the ``assign_death_ids`` command and the import hooks); the service
+    serialises concurrent runs via a PostgreSQL advisory lock.
     """
+    from va_explorer.va_data_management.utils.death_ids import assign_death_ids
+
     try:
-        # Query deaths without death_id
-        deaths_qs = Death.objects.filter(Q(death_id__isnull=True) | Q(death_id=""))
-        total_missing = deaths_qs.count()
-
-        if total_missing == 0:
-            logger.debug("No deaths without death_ids found")
-            return {
-                "status": "success",
-                "deaths_assigned": 0,
-                "message": "No deaths to process",
-            }
-
-        logger.info("Found %s deaths without death_ids", total_missing)
-
-        # Group deaths by ward
-        deaths_by_ward = defaultdict(list)
-        for death in deaths_qs:
-            ward = (death.ward or "").strip()
-            if ward:
-                deaths_by_ward[ward].append(death)
-
-        if not deaths_by_ward:
-            logger.warning("No wards found in death records")
-            return {
-                "status": "success",
-                "deaths_assigned": 0,
-                "message": "No wards in death records",
-            }
-
-        # Build mapping: ward_code -> cluster_code
-        ward_to_cluster = {}
-        missing_wards = []
-
-        for ward_name in deaths_by_ward:
-            cluster_loc = ClusterLocationCodes.objects.filter(
-                ward_code__iexact=ward_name
-            ).first()
-
-            if cluster_loc and cluster_loc.cluster_code:
-                ward_to_cluster[ward_name] = cluster_loc.cluster_code
-            else:
-                missing_wards.append(ward_name)
-
-        if missing_wards:
+        summary = assign_death_ids()
+        if summary["assigned"]:
+            logger.info("Assigned death_ids to %s death(s)", summary["assigned"])
+        for ward, info in summary["skipped_wards"].items():
             logger.warning(
-                "No cluster code found for %s ward(s): %s",
-                len(missing_wards),
-                ", ".join(missing_wards[:5]),
+                "Skipped %s death(s) in ward '%s' (%s)",
+                info["count"],
+                ward,
+                info["reason"],
             )
-
-        # Assign death_ids
-        deaths_to_update = []
-        assignments_count = 0
-
-        for ward_name, deaths_in_ward in deaths_by_ward.items():
-            cluster_code = ward_to_cluster.get(ward_name)
-
-            if not cluster_code:
-                logger.warning(
-                    "Skipping %s death(s) in ward '%s' (no cluster code)",
-                    len(deaths_in_ward),
-                    ward_name,
-                )
-                continue
-
-            # Get existing deaths in this ward to find next sequence
-            existing_deaths = Death.objects.filter(ward__iexact=ward_name).exclude(
-                Q(death_id__isnull=True) | Q(death_id="")
-            )
-
-            # Extract sequence numbers from existing death_ids
-            existing_sequences = []
-            for existing_death in existing_deaths:
-                if existing_death.death_id and existing_death.death_id.startswith(
-                    cluster_code
-                ):
-                    suffix = existing_death.death_id[len(cluster_code) :]
-                    try:
-                        seq_num = int(suffix)
-                        existing_sequences.append(seq_num)
-                    except ValueError:
-                        pass
-
-            next_seq = max(existing_sequences) + 1 if existing_sequences else 1
-
-            # Assign sequential death_ids
-            for death in sorted(deaths_in_ward, key=lambda d: d.id):
-                death_id = f"{cluster_code}{next_seq:04d}"
-                death.death_id = death_id
-                deaths_to_update.append(death)
-                assignments_count += 1
-                next_seq += 1
-
-        if not deaths_to_update:
-            logger.info("No deaths to update (all missing cluster codes)")
-            return {
-                "status": "success",
-                "deaths_assigned": 0,
-                "message": "No deaths with valid cluster codes",
-            }
-
-        # Persist changes
-        Death.objects.bulk_update(deaths_to_update, ["death_id"], batch_size=1000)
-
-        logger.info("Successfully assigned death_ids to %s death(s)", assignments_count)
         return {
             "status": "success",
-            "deaths_assigned": assignments_count,
-            "wards_processed": len(ward_to_cluster),
-            "wards_skipped": len(missing_wards),
+            "deaths_assigned": summary["assigned"],
+            "total_missing": summary["total_missing"],
+            "wards_skipped": len(summary["skipped_wards"]),
+            "malformed_existing": len(summary["malformed_existing"]),
+            "overflow_wards": [o["ward"] for o in summary["overflow_wards"]],
         }
-
     except Exception as e:
         logger.exception("Error in assign_death_ids_task: %s", e)
         return {"status": "error", "error": str(e)}

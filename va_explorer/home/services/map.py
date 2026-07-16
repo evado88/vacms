@@ -20,6 +20,7 @@ from va_explorer.va_analytics.utils.loading import (
     _resolve_geo_name,
 )
 from va_explorer.va_data_management.models import (
+    VASA,
     Death,
     Location,
     Pregnancy,
@@ -352,11 +353,16 @@ def build_home_combined_map_payload(request):
             vas_qs = user.verbal_autopsies().filter(
                 deleted_at__isnull=True, duplicate=False
             )
+            vasa_qs = user.vasa_records().filter(deleted_at__isnull=True)
         else:
             vas_qs = VerbalAutopsy.objects.filter(
                 deleted_at__isnull=True, duplicate=False
             )
+            vasa_qs = VASA.objects.filter(deleted_at__isnull=True)
         vas_qs = _apply_va_geography_filter(vas_qs, geography_level, geography_value)
+        # VASA records are folded into the verbal-autopsy map layer (same geo
+        # derivation and geopoint field via BaseVerbalAutopsy).
+        vasa_qs = _apply_va_geography_filter(vasa_qs, geography_level, geography_value)
 
     with timed_block("home.map.aggregate", request=request):
         model_sets = (
@@ -392,7 +398,10 @@ def build_home_combined_map_payload(request):
             ),
             (
                 "verbal_autopsies_count",
-                _latest_va_geo_by_identifier(vas_qs, start_dt, end_dt),
+                {
+                    **_latest_va_geo_by_identifier(vas_qs, start_dt, end_dt),
+                    **_latest_va_geo_by_identifier(vasa_qs, start_dt, end_dt),
+                },
             ),
         )
 
@@ -501,12 +510,13 @@ def build_home_combined_map_payload(request):
         outcomes_qs=outcomes_qs,
         deaths_qs=deaths_qs,
         vas_qs=vas_qs,
+        vasa_qs=vasa_qs,
     )
     return payload
 
 
 def _attach_home_gps_payload(
-    payload, request, *, pregnancies_qs, outcomes_qs, deaths_qs, vas_qs
+    payload, request, *, pregnancies_qs, outcomes_qs, deaths_qs, vas_qs, vasa_qs=None
 ):
     """Attach combined GPS points across all four event models to the home payload."""
     from va_explorer.va_analytics.views import (
@@ -531,12 +541,15 @@ def _attach_home_gps_payload(
         payload["gps_pii_denied"] = True
         return
 
-    sources = (
+    sources = [
         (pregnancies_qs, "PE_25", "pregnancy"),
         (outcomes_qs, "gps", "pregnancy_outcome"),
         (deaths_qs, "DE_34", "death"),
         (vas_qs, "geopoint", "verbal_autopsy"),
-    )
+    ]
+    if vasa_qs is not None:
+        # VASA GPS points render on the same verbal-autopsy map layer.
+        sources.append((vasa_qs, "geopoint", "verbal_autopsy"))
     combined_points = []
     combined_total = 0
     truncated_any = False

@@ -198,10 +198,28 @@
       return state.colors[Math.min(bins.length - 2, state.colors.length - 1)];
     };
 
+    const gpsPIINoticeRow = () =>
+      `<div class="legend-gps-pii-note text-muted">GPS points hidden — requires PII permission</div>`;
+
     const gpsLegendRow = () =>
       userCanViewPII
         ? `<div class="legend-gps-row"><span class="legend-gps-swatch"></span>GPS records</div>`
-        : "";
+        : gpsPIINoticeRow();
+
+    const showGPSPIINotice = () => {
+      const legend = document.getElementById(legendId);
+      if (!legend || legend.querySelector(".legend-gps-pii-note")) return;
+      legend.insertAdjacentHTML("beforeend", gpsPIINoticeRow());
+    };
+
+    const showGPSFetchErrorNotice = () => {
+      const legend = document.getElementById(legendId);
+      if (!legend || legend.querySelector(".legend-gps-error-note")) return;
+      legend.insertAdjacentHTML(
+        "beforeend",
+        `<div class="legend-gps-error-note text-muted">GPS points could not be loaded (request failed — check ad-blocker/console)</div>`
+      );
+    };
 
     const renderLegend = (bins) => {
       const legend = document.getElementById(legendId);
@@ -493,6 +511,8 @@
           if (!response.ok) throw new Error(`GPS request failed: ${requestUrl}`);
           return response.json();
         },
+        onPIIDenied: showGPSPIINotice,
+        onFetchError: showGPSFetchErrorNotice,
       });
       return gpsLayerCtl;
     };

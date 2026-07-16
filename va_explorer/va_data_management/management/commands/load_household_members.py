@@ -15,6 +15,10 @@ from va_explorer.va_data_management.utils.loading import (
     normalize_string,
     normalize_value,
 )
+from va_explorer.va_data_management.utils.repeat_group_dedup import (
+    CHILD_DEDUP_SPECS,
+    run_dedup_for_model,
+)
 
 
 class Command(BaseCommand):
@@ -153,6 +157,19 @@ class Command(BaseCommand):
 
         HouseholdMember.objects.bulk_create(objects, batch_size=2000)
 
+        # Flag content duplicates (same household + name + DOB + sex) right
+        # away so dashboard counts only ever include one row per person —
+        # member CSVs often ship without keys, so the key dedup above cannot
+        # catch re-ingested people. Scoped to the households touched by this
+        # import; the most-complete row per set stays unflagged.
+        flagged = 0
+        if objects:
+            dedup_summary = run_dedup_for_model(
+                CHILD_DEDUP_SPECS["members"],
+                parent_ids={obj.household_id for obj in objects},
+            )
+            flagged = dedup_summary["flagged"]
+
         total_rows = len(df)
         imported = len(objects)
         skipped = len(skipped_rows)
@@ -171,6 +188,13 @@ class Command(BaseCommand):
                 f"Imported {imported} of {total_rows} household members."
             )
         )
+        if flagged:
+            self.stdout.write(
+                self.style.WARNING(
+                    f"Flagged {flagged} content-duplicate member(s); only the "
+                    "most complete record per person is counted as unique."
+                )
+            )
         if skipped:
             self.stdout.write(self.style.WARNING(f"Skipped {skipped} row(s):"))
             for reason, count in skip_reasons.items():

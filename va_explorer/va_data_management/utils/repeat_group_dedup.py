@@ -20,7 +20,7 @@ self-heal (a row that is no longer a duplicate is un-flagged).
 
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, Dict, List, Sequence
+from typing import Any, Collection, Dict, List, Optional, Sequence
 
 from va_explorer.va_data_management.models.data_quality import DataQualityIssue
 from va_explorer.va_data_management.utils.dq import (
@@ -55,10 +55,33 @@ def run_dedup_for_model(
     spec: ChildDedupSpec,
     *,
     resolve_missing: bool = True,
+    parent_ids: Optional[Collection] = None,
 ) -> Dict[str, Any]:
-    """Detect, flag, and record content duplicates for one child model."""
+    """Detect, flag, and record content duplicates for one child model.
+
+    ``parent_ids`` restricts the run to children of those parents (used by the
+    load commands to flag duplicates at ingest time without rescanning the
+    whole table). Scoped runs never resolve stale DataQualityIssues — that
+    requires the full signature set, so only unscoped runs do it.
+    """
     model = spec.model
-    rows = list(model.objects.values())
+    scoped = parent_ids is not None
+    if scoped:
+        resolve_missing = False
+        parent_ids = {p for p in parent_ids if p is not None}
+        if not parent_ids:
+            return {
+                "label": spec.label,
+                "total_rows": 0,
+                "groups": 0,
+                "flagged": 0,
+                "unflagged": 0,
+                "resolved": 0,
+            }
+        base_qs = model.objects.filter(**{f"{spec.parent_field}__in": parent_ids})
+    else:
+        base_qs = model.objects.all()
+    rows = list(base_qs.values())
     summary: Dict[str, Any] = {
         "label": spec.label,
         "total_rows": len(rows),
@@ -136,8 +159,9 @@ def run_dedup_for_model(
         )
 
     # Self-heal: any row currently flagged that is no longer a duplicate.
+    # Restricted to base_qs so a scoped run never unflags out-of-scope rows.
     summary["unflagged"] = (
-        model.objects.filter(is_duplicate=True)
+        base_qs.filter(is_duplicate=True)
         .exclude(id__in=desired_duplicate_to_canonical.keys())
         .update(is_duplicate=False, duplicate_of=None)
     )

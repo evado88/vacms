@@ -7,6 +7,7 @@ app_name = "data_management"
 urlpatterns = [
     path("", view=views.Index.as_view(), name="index"),
     path("show/<int:id>", view=views.Show.as_view(), name="show"),
+    path("vasa/<int:id>", view=views.VASAShow.as_view(), name="vasa_show"),
     path("edit/<int:id>", view=views.Edit.as_view(), name="edit"),
     path("reset/<int:id>", view=views.Reset.as_view(), name="reset"),
     path(

@@ -21,7 +21,7 @@ from django.utils.translation import gettext_lazy as _
 # from allauth.account.models import EmailAddress
 # from allauth.account.signals import email_confirmed
 # from django.dispatch import receiver
-from va_explorer.va_data_management.models import Location, VerbalAutopsy
+from va_explorer.va_data_management.models import VASA, Location, VerbalAutopsy
 from va_explorer.va_data_management.utils.location_access import (
     restrict_va_queryset_to_user_locations,
 )
@@ -147,6 +147,20 @@ class User(AbstractUser):
         )
 
         return restrict_va_queryset_to_user_locations(va_objects, self)
+
+    # The query set of VASA (Verbal + Social Autopsy) records this user can
+    # access. VASA shares BaseVerbalAutopsy with VerbalAutopsy (same WHO Id
+    # columns, same location/admin geography), so the identical location-scoping
+    # helper applies. Dashboards, the line list, and MSO supervision fold these
+    # in alongside verbal_autopsies() so VASA is surfaced as a verbal autopsy.
+    def vasa_records(self, date_cutoff=None, end_date=None):
+        date_cutoff = date_cutoff if date_cutoff else "1901-01-01"
+        end_date = end_date if end_date else datetime.today().strftime("%Y-%m-%d")
+        vasa_objects = VASA.objects.filter(
+            Id10023__gte=date_cutoff, Id10023__lte=end_date
+        )
+
+        return restrict_va_queryset_to_user_locations(vasa_objects, self)
 
     def is_fieldworker(self):
         return self.groups.filter(name="Field Workers").exists()

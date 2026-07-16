@@ -67,6 +67,11 @@
         fetchPoints: null,
         // optional ({ total, shown, truncated }) => void
         onPointsRendered: null,
+        // optional () => void, called when the server returns gps_pii_denied
+        onPIIDenied: null,
+        // optional (err) => void, called when the GPS fetch throws (network
+        // failure, blocked request, non-2xx response)
+        onFetchError: null,
       },
       opts
     );
@@ -149,6 +154,13 @@
         if (inFlight !== myRequest) return; // a newer refresh superseded us
         if (!result || result.gps_pii_denied) {
           group.clearLayers();
+          if (
+            result &&
+            result.gps_pii_denied &&
+            typeof options.onPIIDenied === "function"
+          ) {
+            options.onPIIDenied();
+          }
           return;
         }
         const points = Array.isArray(result.gps_points) ? result.gps_points : [];
@@ -162,6 +174,9 @@
         }
       } catch (err) {
         console.error("[gps-layer] failed to load points", err);
+        if (typeof options.onFetchError === "function") {
+          options.onFetchError(err);
+        }
       } finally {
         if (inFlight === myRequest) inFlight = null;
       }

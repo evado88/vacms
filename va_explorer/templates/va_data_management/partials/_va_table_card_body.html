@@ -1,4 +1,4 @@
-{% include "partials/_va_table.html" with va_list=object_list %}
+{% include "partials/_va_table.html" with va_list=object_list show_source=True %}
 {% if not object_list %}
   {% include "partials/empty_state.html" with message="No verbal autopsy records found for the selected filters." %}
 {% endif %}

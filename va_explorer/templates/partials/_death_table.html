@@ -34,10 +34,8 @@
           <td>{{ o.DE_06|standard_date|default:"-" }}</td>
           <td>
             <a
-              class="btn {% if o.eventid %}btn-secondary disabled{% else %}btn-primary{% endif %}"
-              {% if not o.eventid %}
+              class="btn btn-primary"
               href="{% url 'va_data_management:death_detail' id=o.id %}"
-              {% endif %}
             >
               View
             </a>

@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 import zipfile
 from urllib.parse import urlencode
@@ -33,6 +34,8 @@ from va_explorer.va_data_management.utils.location_access import (
 )
 from va_explorer.va_export.forms import VADownloadForm
 from va_explorer.va_export.profiles import ABRIDGED_VA_EXPORT_COLUMNS
+
+logger = logging.getLogger(__name__)
 
 EXPORT_DATASETS = {
     "verbalautopsy",
@@ -366,9 +369,17 @@ class VaApi(CustomAuthMixin, View):
             va_record_type = "full"
 
         # NOTE: using same filters as dashboard - exclude vas w/ null locations,
-        # unknown death dates, or unknown CODs
+        # unknown death dates, or unknown CODs.
+        # Do NOT re-impose the implicit "Id10023 <= today" upper bound that
+        # verbal_autopsies() adds by default: Id10023 is a free-text field and
+        # that string comparison can silently exclude every record (empty CSV)
+        # when death dates are stored in a non-ISO format or drift past "today".
+        # The user's explicit start_date/end_date (ISO-validated client-side) are
+        # still applied below.
         matching_vas = (
-            request.user.verbal_autopsies()
+            request.user.verbal_autopsies(
+                date_cutoff="1901-01-01", end_date="9999-12-31"
+            )
             .exclude(Id10023="dk")
             .select_related("location")
             .annotate(
@@ -472,7 +483,20 @@ class VaApi(CustomAuthMixin, View):
         # =========DATA CLEANING (if any matching VAs)========#
         va_df = pd.DataFrame()
 
-        if matching_vas.count() > 0:
+        va_count = matching_vas.count()
+        logger.info(
+            "VA export: user=%s rows=%s record_type=%s filters={ids:%s, "
+            "locations:%s, start:%s, end:%s, causes:%s}",
+            getattr(request.user, "email", None),
+            va_count,
+            va_record_type,
+            va_ids not in empty_values,
+            params.get("locations") or None,
+            params.get("start_date") or None,
+            params.get("end_date") or None,
+            params.get("causes") or None,
+        )
+        if va_count > 0:
             # Build a location ancestors lookup and add location information at
             # all levels to all vas
             location_ancestors = {
@@ -544,7 +568,20 @@ class VaApi(CustomAuthMixin, View):
         # a field absent from this record set is simply skipped (no KeyError).
         if va_record_type == "abridged" and not va_df.empty:
             keep = [c for c in ABRIDGED_VA_EXPORT_COLUMNS if c in va_df.columns]
-            va_df = va_df[keep]
+            if keep:
+                va_df = va_df[keep]
+            else:
+                # None of the abridged columns are present — emitting va_df[[]]
+                # would produce a data-less CSV. Fall back to the full column set
+                # so the download is never silently empty, and log the mismatch.
+                logger.warning(
+                    "VA export: abridged column set did not intersect the "
+                    "dataframe columns; falling back to full columns. "
+                    "Available columns: %s",
+                    list(va_df.columns),
+                )
+
+        logger.info("VA export: final dataframe shape=%s", tuple(va_df.shape))
 
         # =========DATA FORMAT LOGIC===================#
         # convert VAs to proper format. Currently supports .csv (default) and .json

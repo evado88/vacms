@@ -1,0 +1,212 @@
+{% extends "base.html" %}
+{% load static i18n %}
+{% load va_explorer_tags %}
+
+{% block title %}VASA #{{ object.id }}{% endblock %}
+
+{% block heading %}VASA #{{ object.id }}{% if instrument %} — {{ instrument }}{% endif %}{% endblock %}
+{% block breadcrumbs %}
+  <nav aria-label="Breadcrumb">
+    <ol class="breadcrumb bg-transparent p-0 mb-0">
+      <li class="breadcrumb-item"><a href="{% url 'va_data_management:index' %}">Verbal Autopsies</a></li>
+      <li class="breadcrumb-item active" aria-current="page">VASA #{{ object.id }}</li>
+    </ol>
+  </nav>
+{% endblock %}
+
+{% block content %}
+<div class="data-management-detail-content">
+<ul class="nav nav-tabs tab-spacing" id="myTab" role="tablist">
+  <li class="nav-item">
+    <a class="nav-link active" id="record-tab" data-toggle="tab" href="#record" role="tab" aria-controls="record" aria-selected="true">Record</a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link" id="social-autopsy-tab" data-toggle="tab" href="#social-autopsy" role="tab" aria-controls="social-autopsy" aria-selected="false">Social Autopsy</a>
+  </li>
+  {% for group in care_seeking_groups %}
+    <li class="nav-item">
+      <a class="nav-link" id="{{ group.key }}-tab" data-toggle="tab" href="#care-{{ group.key }}" role="tab" aria-controls="care-{{ group.key }}" aria-selected="false">{{ group.label }}</a>
+    </li>
+  {% endfor %}
+  <li class="nav-item">
+    <a class="nav-link" id="issues-tab" data-toggle="tab" href="#issues" role="tab" aria-controls="issues" aria-selected="false">Data Quality</a>
+  </li>
+  {% if diffs and not user.is_fieldworker %}
+    <li class="nav-item">
+      <a class="nav-link" id="history-tab" data-toggle="tab" href="#history" role="tab" aria-controls="history" aria-selected="false">Change History</a>
+    </li>
+  {% endif %}
+</ul>
+
+<div class="tab-content">
+  <!-- Record (WHO columns, shared with VA) -->
+  <div class="tab-pane fade show active" id="record" role="tabpanel" aria-labelledby="record-tab">
+    <div class="row mt-3">
+      <div class="va-options-container">
+        <div class="checkbox-container" align='center'>
+          <input class="checkbox" type="checkbox" id="hidden-missing" name="hidden-missing" value="checked" checked="TRUE">
+          <label class="checkbox-label"
+                data-toggle="tooltip"
+                title="Toggle whether or not you want to see fields with 'N/A' or '' as responses. When unchecked, these blank responses will be shown."
+                for="hidden-missing">
+                Hide Empty Fields
+          </label><br>
+        </div>
+      </div>
+    </div>
+    <div class="row mt-4">
+      <table class="table table-hover table-sm">
+        <thead>
+          <tr>
+            <th>Field Name</th>
+            <th>Field Question</th>
+            <th>Value</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for field in form %}
+            <tr data-value="{% pii_filter field.name field.value|format_date_field:field.name|replace %}">
+              <td><b>{{ field.name }}</b></td>
+              <td>{{ field.label }}</td>
+              <td>{% pii_filter field.name field.value|format_date_field:field.name|replace %}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Social Autopsy (linked, physically separate from coding input) -->
+  <div class="tab-pane fade" id="social-autopsy" role="tabpanel" aria-labelledby="social-autopsy-tab">
+    <div class="row mt-4">
+      {% if social_autopsy_fields %}
+        <table class="table table-hover table-sm">
+          <thead>
+            <tr>
+              <th>Field Name</th>
+              <th>Field Question</th>
+              <th>Value</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for field in social_autopsy_fields %}
+              <tr>
+                <td><b>{{ field.name }}</b></td>
+                <td>{{ field.label }}</td>
+                <td>{{ field.value|default:"" }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        {% include "partials/empty_state.html" with message="No social-autopsy data linked to this record." %}
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Care-Seeking repeat data for the record's instrument -->
+  {% for group in care_seeking_groups %}
+    <div class="tab-pane fade" id="care-{{ group.key }}" role="tabpanel" aria-labelledby="{{ group.key }}-tab">
+      <div class="row mt-4">
+        {% if group.records %}
+          {% for record in group.records %}
+            <table class="table table-hover table-sm mb-4">
+              <thead>
+                <tr><th colspan="2">{{ group.label }} — entry {{ forloop.counter }}</th></tr>
+              </thead>
+              <tbody>
+                {% for field in record %}
+                  <tr>
+                    <td><b>{{ field.name }}</b> <span class="text-muted">{{ field.label }}</span></td>
+                    <td>{{ field.value|default:"" }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          {% endfor %}
+        {% else %}
+          {% include "partials/empty_state.html" with message="No care-seeking entries recorded for this record." %}
+        {% endif %}
+      </div>
+    </div>
+  {% endfor %}
+
+  <!-- Data Quality / Coding Issues -->
+  <div class="tab-pane fade" id="issues" role="tabpanel" aria-labelledby="issues-tab">
+    <div class="row mt-4">
+      {% if errors %}
+        <table class="table table-hover table-sm">
+          <thead><tr><th>{{ errors|length }} Error{{ errors|pluralize }}</th></tr></thead>
+          <tbody>
+            {% for error in errors %}<tr><td>{{ error }}</td></tr>{% endfor %}
+          </tbody>
+        </table>
+      {% endif %}
+    </div>
+    {% if warnings %}
+      <div class="row mt-4">
+        <table class="table table-hover table-sm">
+          <thead><tr><th>{{ warnings|length }} User Warning{{ warnings|pluralize }}</th></tr></thead>
+          <tbody>
+            {% for warning in warnings %}<tr><td>{{ warning }}</td></tr>{% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+    {% if algo_warnings %}
+      <div class="row mt-4">
+        <table class="table table-hover table-sm">
+          <thead><tr><th>{{ algo_warnings|length }} Algorithm Warning{{ algo_warnings|pluralize }}</th></tr></thead>
+          <tbody>
+            {% for warning in algo_warnings %}<tr><td>{{ warning }}</td></tr>{% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+    {% if not errors and not warnings and not algo_warnings %}
+      {% include "partials/empty_state.html" with message="No data-quality issues recorded for this record." %}
+    {% endif %}
+  </div>
+
+  <!-- Change History -->
+  {% if diffs and not user.is_fieldworker %}
+    <div class="tab-pane fade" id="history" role="tabpanel" aria-labelledby="history-tab">
+      <div class="row mt-4">
+        <table class="table table-hover table-sm">
+          <thead><tr><th colspan=3>{{ diffs|length }} Change{{ diffs|pluralize }}</th></tr></thead>
+          <tbody>
+            {% for diff in diffs %}
+              <tr>
+                <td>{{ diff.new_record.history_date|date:"DATETIME_FORMAT" }}</td>
+                <td>{{ diff.new_record.history_user.name|default:"System" }} &lt;{{ diff.new_record.history_user.email|default:"noreply@host" }}&gt;</td>
+                <td>
+                  {% for change in diff.changes %}
+                    {% if change.old and change.new %}
+                      <b>{{ change.field }}</b> changed from <b>{% pii_filter change.field change.old %}</b> to <b>{% pii_filter change.field change.new %}</b><br/>
+                    {% elif change.new %}
+                      <b>{{ change.field }}</b> was set to <b>{% pii_filter change.field change.new %}</b><br/>
+                    {% elif change.old %}
+                      <b>{{ change.field }}</b> had value <b>{% pii_filter change.field change.old %}</b> deleted<br/>
+                    {% endif %}
+                  {% endfor %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  {% endif %}
+</div>
+</div>
+
+<div class="flt-action-backdrop"></div>
+<a href="{% url 'va_data_management:index' %}">
+  <div class="flt-action-btn child" data-subitem="1"><i class="fas fa-angle-double-left"></i></div>
+</a>
+<div class="flt-action-btn" id="main-fab"><i class="fas fa-sort"></i></div>
+{% endblock %}
+
+{% block page_scripts %}
+  <script src="{% static 'js/fab.js' %}"></script>
+{% endblock %}

@@ -798,6 +798,19 @@ def load_records_from_dataframe(
         print("Marking VAs as duplicate...")
         VerbalAutopsy.mark_duplicates()
 
+    # Auto-link newly ingested VAs to Death records (no-op unless the feature
+    # flag is enabled; runs after commit so the matcher sees committed rows).
+    if not dry_run and new_vas:
+        from va_explorer.va_data_management.utils.matching import (
+            schedule_link_for_va_ids,
+        )
+
+        schedule_link_for_va_ids(
+            [va.pk for va in new_vas],
+            model_name="verbalautopsy",
+            source="pyodk_ingestion",
+        )
+
     return {
         "ignored": ignored_vas,
         "outdated": outdated_vas,
@@ -857,33 +870,73 @@ def deduplicate_columns(record_df, drop_duplicates=True):
     return record_df
 
 
-def get_va_summary_stats(vas, filter_fields=False, cache_key="va_summary_stats"):
+def _merge_summary_aggregates(primary, extra):
+    """Combine two summary aggregates (VA + VASA) into one.
+
+    Totals add; the Max() columns take whichever is larger (``None`` last).
+    ``last_interview`` / ``_max_submissiondate`` are ISO text so lexicographic
+    max equals chronological max for well-formed values.
+    """
+
+    def _max(a, b):
+        if a is None:
+            return b
+        if b is None:
+            return a
+        return max(a, b)
+
+    return {
+        "last_created": _max(primary.get("last_created"), extra.get("last_created")),
+        "last_interview": _max(
+            primary.get("last_interview"), extra.get("last_interview")
+        ),
+        "total_vas": (primary.get("total_vas") or 0) + (extra.get("total_vas") or 0),
+        "_max_submissiondate": _max(
+            primary.get("_max_submissiondate"), extra.get("_max_submissiondate")
+        ),
+    }
+
+
+def get_va_summary_stats(
+    vas, filter_fields=False, cache_key="va_summary_stats", extra_qs=None
+):
     # if vas.count() > 0 code is the slowest SQL query
 
+    # ``extra_qs`` folds a second BaseVerbalAutopsy queryset (VASA) into the same
+    # summary so dashboards/line-list show one unified verbal-autopsy figure.
+
     # if filter_fields=True, filter down to only relevant fields
+    _summary_only_fields = (
+        "created",
+        "id",
+        "location",
+        "cluster",
+        "community_va",
+        "Id10023",
+        "submissiondate",
+        "Id10012",
+    )
     if filter_fields:
-        vas = vas.only(
-            "created",
-            "id",
-            "location",
-            "cluster",
-            "community_va",
-            "Id10023",
-            "submissiondate",
-            "Id10012",
-        )
+        vas = vas.only(*_summary_only_fields)
+        if extra_qs is not None:
+            extra_qs = extra_qs.only(*_summary_only_fields)
 
     # check cache for va summary stats and set it if not already there
     stats = cache.get(cache_key) if cache_key else None
     if not stats:
-        agg = vas.aggregate(
-            last_created=Max("created"),
-            last_interview=Max("Id10012"),
-            total_vas=Count("id"),
+        _summary_aggregate = {
+            "last_created": Max("created"),
+            "last_interview": Max("Id10012"),
+            "total_vas": Count("id"),
             # Max() on ISO text dates is lexicographic, which equals chronological
             # for well-formed YYYY-MM-DD* strings — avoids loading all rows to Python.
-            _max_submissiondate=Max("submissiondate"),
-        )
+            "_max_submissiondate": Max("submissiondate"),
+        }
+        agg = vas.aggregate(**_summary_aggregate)
+        if extra_qs is not None:
+            agg = _merge_summary_aggregates(
+                agg, extra_qs.aggregate(**_summary_aggregate)
+            )
         raw_sd = agg.get("_max_submissiondate")
         if raw_sd:
             parsed_sd = parse_date(str(raw_sd))
@@ -899,12 +952,15 @@ def get_va_summary_stats(vas, filter_fields=False, cache_key="va_summary_stats")
 
         # Facility VAs are expected to resolve a facility Location; community VAs
         # are expected to resolve an SRS cluster.
-        ineligible_count = vas.filter(
+        _ineligible_q = (
             Q(Id10023__in=["DK", "dk"])
             | Q(Id10023__isnull=True)
             | (Q(community_va__iexact="yes") & Q(cluster__isnull=True))
             | (~Q(community_va__iexact="yes") & Q(location__isnull=True))
-        ).count()
+        )
+        ineligible_count = vas.filter(_ineligible_q).count()
+        if extra_qs is not None:
+            ineligible_count += extra_qs.filter(_ineligible_q).count()
 
         stats = {
             "last_update": latest_submission or agg.get("last_created"),

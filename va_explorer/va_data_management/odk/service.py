@@ -58,6 +58,16 @@ FORM_PRE_NORMALIZE_RENAMES = {
 # ODK Central serves a repeat group from the same form_id but a different table.
 FORM_REPEAT_TABLE_MAP = {
     "social_mobilization_rumor_log": "Submissions.rumors_log_repeat",
+    "vasa_care_seeking_neonate": "Submissions.br_N2213",
+    "vasa_care_seeking_child": "Submissions.AD_C3253_1",
+    "vasa_care_seeking_adult": "Submissions.ar_A4252",
+}
+
+# Maps VASA repeat form_name → the mapping's repeat-group key.
+VASA_REPEAT_FORMS = {
+    "vasa_care_seeking_neonate": "br_N2213",
+    "vasa_care_seeking_child": "AD_C3253_1",
+    "vasa_care_seeking_adult": "ar_A4252",
 }
 
 # Maps form_name → (ODK split-column prefix, single target model field).
@@ -714,6 +724,18 @@ class ODKPullService:
         """Route data to appropriate loader."""
         if form_name == "social_mobilization_rumor_log":
             return import_rumor_log_records(df)
+        if form_name == "vasa":
+            from va_explorer.va_data_management.utils.vasa_loading import (
+                load_vasa_from_dataframes,
+            )
+
+            return load_vasa_from_dataframes(df)
+        if form_name in VASA_REPEAT_FORMS:
+            from va_explorer.va_data_management.utils.vasa_loading import (
+                load_vasa_repeat_dataframe,
+            )
+
+            return load_vasa_repeat_dataframe(VASA_REPEAT_FORMS[form_name], df)
         if form_name and form_name in FORM_MODEL_MAP:
             return import_dataframe_records(form_name, df)
         with transaction.atomic():

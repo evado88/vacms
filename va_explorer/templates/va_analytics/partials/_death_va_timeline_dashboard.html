@@ -1,0 +1,101 @@
+<main
+  id="deathVaTimelineApp"
+  class="outcomes-dashboard-root"
+  data-component="dashboard"
+  data-timeline-endpoint="{% url 'va_analytics:outcomes-deaths-va-timeline-api' %}"
+>
+  <div class="deaths-top-row">
+  <section class="sectionContainer panelView" id="vaTimelinePanelSection" data-component="panel">
+    <div class="highlightsContainer deaths-summary-cards" id="vaTimelineSummaryCards" data-component="summary">
+      <div class="highlight"><h3>Total Deaths</h3><p id="vaTimelineCardTotal">--</p></div>
+      <div class="highlight"><h3>Linked VA Coverage</h3><p id="vaTimelineCardCoverage">--</p></div>
+      <div class="highlight"><h3>Median Death &rarr; Capture (days)</h3><p id="vaTimelineCardDeathCapture">--</p></div>
+      <div class="highlight"><h3>Median Death &rarr; VA (days)</h3><p id="vaTimelineCardDeathVa">--</p></div>
+      <div class="highlight"><h3>Median Capture &rarr; VA (days)</h3><p id="vaTimelineCardCaptureVa">--</p></div>
+    </div>
+  </section>
+  </div>
+
+  <div class="deaths-filters-row">
+    <section class="sectionContainer" id="vaTimelineFiltersSection" data-component="filters">
+      <form id="vaTimelineFiltersForm" class="controls" method="get" action="">
+        <small class="dashboard-note">Compares when deaths occurred, when they were captured with the E_DEATH tool, and when the linked VA/VASA was submitted.</small>
+        <div class="filtersRow">
+          <div class="mainFiltersContainer">
+            <label for="vaTimelineFilterTimePreset">DOD:</label>
+            <select id="vaTimelineFilterTimePreset" class="select" name="time_preset">
+              <option value="all_time">All time</option>
+              <option value="last_30_days">Last 30 days</option>
+              <option value="last_7_days">Last 7 days</option>
+              <option value="last_24_hours">Last 24 hours</option>
+              <option value="custom">Custom</option>
+            </select>
+
+            <label for="vaTimelineFilterSex">Sex:</label>
+            <select id="vaTimelineFilterSex" class="select" name="sex">
+              <option value="">All</option>
+              <option value="Male">Male</option>
+              <option value="Female">Female</option>
+            </select>
+
+            <label for="vaTimelineFilterAgeGroup">Age:</label>
+            <select id="vaTimelineFilterAgeGroup" class="select" name="age_group">
+              <option value="">All</option>
+              <option value="neonate">Neonate</option>
+              <option value="child">Child</option>
+              <option value="adult">Adult</option>
+            </select>
+          </div>
+          <div class="betweenDatesContainer">
+            <span>Between</span>
+            <input id="vaTimelineFilterStartDatetime" class="input" type="date" name="start_datetime">
+            <span>and</span>
+            <input id="vaTimelineFilterEndDatetime" class="input" type="date" name="end_datetime">
+            <button id="vaTimelineFiltersReset" type="button" class="button resetBtn">Reset</button>
+          </div>
+        </div>
+      </form>
+    </section>
+  </div>
+
+  <div class="deaths-content-row">
+    <div class="deaths-col-right" style="flex: 1 1 100%; max-width: 100%;">
+      <div class="deaths-inner-row">
+        <div class="deaths-inner-col">
+          <section class="sectionContainer" id="vaTimelineHistogramSection" data-component="histogram">
+            <h2>Reporting Delay Distribution</h2>
+            <div class="chartsContainer">
+              <div class="chart-canvas-wrap">
+                <canvas id="vaTimelineHistogramChart" data-component="histogram-chart"></canvas>
+              </div>
+            </div>
+            <p id="vaTimelineHistogramEmpty" class="po-empty-state" hidden>No delay data available for the selected filters.</p>
+          </section>
+        </div>
+        <div class="deaths-inner-col">
+          <section class="sectionContainer" id="vaTimelineCumulativeSection" data-component="cumulative">
+            <h2>Cumulative Timeliness</h2>
+            <div class="chartsContainer">
+              <div class="chart-canvas-wrap">
+                <canvas id="vaTimelineCumulativeChart" data-component="cumulative-chart"></canvas>
+              </div>
+            </div>
+            <p id="vaTimelineCumulativeEmpty" class="po-empty-state" hidden>No cumulative timeliness data available for the selected filters.</p>
+          </section>
+        </div>
+      </div>
+
+      <section class="sectionContainer" id="vaTimelineMonthlySection" data-component="monthly">
+        <h2>Median Delay by Month of Death</h2>
+        <div class="chartsContainer">
+          <div class="chart-canvas-wrap compact">
+            <canvas id="vaTimelineMonthlyChart" data-component="monthly-chart"></canvas>
+          </div>
+        </div>
+        <p id="vaTimelineMonthlyEmpty" class="po-empty-state" hidden>No monthly delay data available for the selected filters.</p>
+      </section>
+
+      <p id="vaTimelineExcludedNote" class="dashboard-note" hidden></p>
+    </div>
+  </div>
+</main>

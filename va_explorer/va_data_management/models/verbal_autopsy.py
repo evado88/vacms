@@ -3,9 +3,9 @@ import contextlib
 import hashlib
 
 from django.conf import settings
-from django.core.exceptions import FieldDoesNotExist
+from django.core.exceptions import FieldDoesNotExist, ObjectDoesNotExist
 from django.db import models
-from django.db.models import Count, JSONField
+from django.db.models import Count, JSONField, Q
 from simple_history.models import HistoricalRecords
 from treebeard.mp_tree import MP_Node
 
@@ -52,26 +52,20 @@ class Location(MP_Node):
         return self.get_parent().id
 
 
-class VerbalAutopsy(SoftDeletionModel):
-    class Meta:
-        permissions = (("bulk_delete", "Can bulk delete"),)
-        indexes = [
-            models.Index(fields=["unique_va_identifier"]),
-            models.Index(fields=["Id10023"], name="death_date_filter_idx"),
-            # Optimise duplicate-flag filtering in Data Cleanup views
-            models.Index(fields=["duplicate"], name="va_duplicate_idx"),
-            # Optimise soft-deletion queryset filter (deleted_at IS NULL on every query)
-            models.Index(fields=["deleted_at"], name="va_deleted_at_idx"),
-            # Composite for date-range + location analytics queries
-            models.Index(
-                fields=["location_id", "Id10023"], name="va_location_date_idx"
-            ),
-        ]
+class BaseVerbalAutopsy(SoftDeletionModel):
+    """Shared field + helper definitions for WHO-VA-shaped instruments.
 
-    # Each VerbalAutopsy is associated with a facility, which is the leaf node location
-    location = models.ForeignKey(
-        Location, related_name="verbalautopsies", on_delete=models.CASCADE, null=True
-    )
+    Concrete instruments (``VerbalAutopsy``, ``VASA``) inherit every WHO
+    ``Idxxxxx`` field and the metadata/geo helper columns from here so the two
+    cannot drift apart. Instrument-specific concerns (``location``/``cluster``
+    FKs, history tracking, duplicate detection, Meta indexes) live on the
+    concrete subclasses. Because this base is abstract, its fields materialise
+    directly on each concrete table exactly as before — the VerbalAutopsy
+    schema is unchanged by this refactor.
+    """
+
+    class Meta:
+        abstract = True
 
     # The VA fields collected as part of the WHO VA form or local versions
     # TODO: Need an approach that supports different variants in different countries
@@ -92,13 +86,6 @@ class VerbalAutopsy(SoftDeletionModel):
     ea = models.TextField("EA", blank=True, null=True)
     area = models.TextField("Area", blank=True)
     hospital = models.TextField("Hospital", blank=True)
-    cluster = models.ForeignKey(
-        "SRSClusterLocation",
-        related_name="verbalautopsies",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-    )
     community_va = models.TextField("Community VA", blank=True, null=True)
     submissiondate = models.TextField("Submission Date", blank=True)
     Id10002 = models.TextField(
@@ -1618,13 +1605,122 @@ class VerbalAutopsy(SoftDeletionModel):
     Id10481 = models.TextField("Interview End Datetime", blank=True)
     geopoint = models.TextField("geopoint", blank=True)
     comment = models.TextField("Comment", blank=True)
-    # Track the history of changes to each verbal autopsy
-    history = HistoricalRecords(excluded_fields=["unique_va_identifier", "duplicate"])
     # Automatically set timestamps
     created = models.DateTimeField(auto_now_add=True)
     updated = models.DateTimeField(auto_now=True)
-    # Supports soft delete of duplicate records
     # deleted_at inherited from SoftDeletionModel
+
+    @staticmethod
+    def _has_meaningful_value(value):
+        normalized = ("" if value is None else str(value)).strip().lower()
+        return normalized not in {"", "nan", "none", "null"}
+
+    @property
+    def community_va_normalized(self):
+        """
+        ODK-first community/facility tagging:
+        - explicit community_va values win (yes/no variants)
+        - otherwise infer community from district/constituency/ward/ea
+        - otherwise infer facility when both area and hospital are present
+        - otherwise unresolved (None)
+        """
+        value = (self.community_va or "").strip().lower()
+        if value in {"yes", "y", "true", "1"}:
+            return "yes"
+        if value in {"no", "n", "false", "0"}:
+            return "no"
+
+        if any(
+            self._has_meaningful_value(candidate)
+            for candidate in (
+                self.district,
+                self.constituency,
+                self.ward,
+                self.ea,
+            )
+        ):
+            return "yes"
+
+        if self._has_meaningful_value(self.area) and self._has_meaningful_value(
+            self.hospital
+        ):
+            return "no"
+
+        return None
+
+    @property
+    def is_community_va(self):
+        return self.community_va_normalized == "yes"
+
+    @property
+    def linked_death(self):
+        """The Death this VA is confirmed-linked to, or None.
+
+        Reads the dedicated ``VADeathMatch`` row (see
+        ``utils/matching/``); only matched/manually-confirmed rows assert a
+        link, so review/ambiguous/unmatched evaluations return None here.
+        """
+        try:
+            match = self.va_death_match
+        except ObjectDoesNotExist:
+            return None
+        return match.death if (match and match.is_linked) else None
+
+    def resolve_location_context(self):
+        """
+        Canonical location context for downstream consumers.
+        Keeps legacy facility-location behavior while enabling community VA
+        geographies through SRS cluster hierarchy.
+        """
+        if self.is_community_va:
+            return {
+                "mode": "community",
+                "cluster": self.cluster,
+                "province": self.province,
+                "district": self.district,
+                "constituency": self.constituency,
+                "ward": self.ward,
+                "ea": self.ea,
+            }
+        return {
+            "mode": "facility",
+            "location": self.location,
+            "province": self.province,
+            "area": self.area,
+            "hospital": self.hospital,
+        }
+
+
+class VerbalAutopsy(BaseVerbalAutopsy):
+    class Meta:
+        permissions = (("bulk_delete", "Can bulk delete"),)
+        indexes = [
+            models.Index(fields=["unique_va_identifier"]),
+            models.Index(fields=["Id10023"], name="death_date_filter_idx"),
+            # Optimise duplicate-flag filtering in Data Cleanup views
+            models.Index(fields=["duplicate"], name="va_duplicate_idx"),
+            # Optimise soft-deletion queryset filter (deleted_at IS NULL on every query)
+            models.Index(fields=["deleted_at"], name="va_deleted_at_idx"),
+            # Composite for date-range + location analytics queries
+            models.Index(
+                fields=["location_id", "Id10023"], name="va_location_date_idx"
+            ),
+        ]
+
+    # Each VerbalAutopsy is associated with a facility, which is the leaf node location
+    location = models.ForeignKey(
+        Location, related_name="verbalautopsies", on_delete=models.CASCADE, null=True
+    )
+    cluster = models.ForeignKey(
+        "SRSClusterLocation",
+        related_name="verbalautopsies",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    # Track the history of changes to each verbal autopsy
+    history = HistoricalRecords(excluded_fields=["unique_va_identifier", "duplicate"])
+    # Supports soft delete of duplicate records
     unique_va_identifier = models.TextField(
         "md5 hash of the unique_va_identifiers", blank=True
     )
@@ -1773,72 +1869,6 @@ class VerbalAutopsy(SoftDeletionModel):
 
         super().save(*args, **kwargs)
 
-    @staticmethod
-    def _has_meaningful_value(value):
-        normalized = ("" if value is None else str(value)).strip().lower()
-        return normalized not in {"", "nan", "none", "null"}
-
-    @property
-    def community_va_normalized(self):
-        """
-        ODK-first community/facility tagging:
-        - explicit community_va values win (yes/no variants)
-        - otherwise infer community from district/constituency/ward/ea
-        - otherwise infer facility when both area and hospital are present
-        - otherwise unresolved (None)
-        """
-        value = (self.community_va or "").strip().lower()
-        if value in {"yes", "y", "true", "1"}:
-            return "yes"
-        if value in {"no", "n", "false", "0"}:
-            return "no"
-
-        if any(
-            self._has_meaningful_value(candidate)
-            for candidate in (
-                self.district,
-                self.constituency,
-                self.ward,
-                self.ea,
-            )
-        ):
-            return "yes"
-
-        if self._has_meaningful_value(self.area) and self._has_meaningful_value(
-            self.hospital
-        ):
-            return "no"
-
-        return None
-
-    @property
-    def is_community_va(self):
-        return self.community_va_normalized == "yes"
-
-    def resolve_location_context(self):
-        """
-        Canonical location context for downstream consumers.
-        Keeps legacy facility-location behavior while enabling community VA
-        geographies through SRS cluster hierarchy.
-        """
-        if self.is_community_va:
-            return {
-                "mode": "community",
-                "cluster": self.cluster,
-                "province": self.province,
-                "district": self.district,
-                "constituency": self.constituency,
-                "ward": self.ward,
-                "ea": self.ea,
-            }
-        return {
-            "mode": "facility",
-            "location": self.location,
-            "province": self.province,
-            "area": self.area,
-            "hospital": self.hospital,
-        }
-
     def __str__(self):
         return f"{self.deviceid} - {self.Id10023_a} - {self.hospital} - {self.area}"
 
@@ -1879,24 +1909,63 @@ class CODCodesDHIS(models.Model):
 # Add a manager for each of the models where on_delete=models.CASCADE
 # Adding an individual manager works if we only have a small number of related models, but is a brittle solution
 # TODO: Determine a way to handle cascading soft deletes globally/generically
+# A coding row (cause / issue / DHIS status) is parented by exactly one of a
+# VerbalAutopsy or a VASA record. Enforced at the DB level on each model.
+_EXACTLY_ONE_PARENT = (Q(verbalautopsy__isnull=False) & Q(vasa__isnull=True)) | (
+    Q(verbalautopsy__isnull=True) & Q(vasa__isnull=False)
+)
+
+
+def _alive_parent_filter():
+    """Coding rows are alive when their (single) parent record is not soft-deleted.
+
+    A row is parented by *either* a VerbalAutopsy *or* a VASA (never both — see
+    the CheckConstraint on each model). The per-clause ``__isnull=False`` guards
+    keep a soft-deleted parent from leaking in via the NULL side of the other
+    relation's outer join.
+    """
+    return Q(verbalautopsy__isnull=False, verbalautopsy__deleted_at__isnull=True) | Q(
+        vasa__isnull=False, vasa__deleted_at__isnull=True
+    )
+
+
 class DhisStatusManager(models.Manager):
     def get_queryset(self):
-        return super().get_queryset().filter(verbalautopsy__deleted_at__isnull=True)
+        return super().get_queryset().filter(_alive_parent_filter())
 
 
 class CauseOfDeathManager(models.Manager):
     def get_queryset(self):
-        return super().get_queryset().filter(verbalautopsy__deleted_at__isnull=True)
+        return super().get_queryset().filter(_alive_parent_filter())
 
 
 class CauseCodingIssueManager(models.Manager):
     def get_queryset(self):
-        return super().get_queryset().filter(verbalautopsy__deleted_at__isnull=True)
+        return super().get_queryset().filter(_alive_parent_filter())
 
 
 class DhisStatus(models.Model):
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                check=_EXACTLY_ONE_PARENT, name="dhisstatus_exactly_one_parent"
+            )
+        ]
+
+    # Exactly one of verbalautopsy / vasa is set (see the CheckConstraint).
     verbalautopsy = models.ForeignKey(
-        VerbalAutopsy, related_name="dhisva", on_delete=models.CASCADE
+        VerbalAutopsy,
+        related_name="dhisva",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+    )
+    vasa = models.ForeignKey(
+        "VASA",
+        related_name="dhisva",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
     )
     vaid = models.TextField(blank=False)
     edate = models.DateTimeField(auto_now_add=True)
@@ -1908,9 +1977,28 @@ class DhisStatus(models.Model):
 
 
 class CauseOfDeath(models.Model):
-    # One VerbalAutopsy can have multiple causes of death (through different algorithms)
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                check=_EXACTLY_ONE_PARENT, name="cod_exactly_one_parent"
+            )
+        ]
+
+    # A cause of death belongs to exactly one VerbalAutopsy or VASA record.
+    # One record can have multiple causes (through different algorithms).
     verbalautopsy = models.ForeignKey(
-        VerbalAutopsy, related_name="causes", on_delete=models.CASCADE
+        VerbalAutopsy,
+        related_name="causes",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+    )
+    vasa = models.ForeignKey(
+        "VASA",
+        related_name="causes",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
     )
     # Track the cause and the algorithm that provided the cause
     cause = models.TextField()
@@ -1940,10 +2028,26 @@ class CauseCodingIssue(models.Model):
                 name="coding_issue_va_severity_idx",
             ),
         ]
+        constraints = [
+            models.CheckConstraint(
+                check=_EXACTLY_ONE_PARENT, name="codingissue_exactly_one_parent"
+            )
+        ]
 
-    # One VerbalAutopsy can have multiple coding issues
+    # A coding issue belongs to exactly one VerbalAutopsy or VASA record.
     verbalautopsy = models.ForeignKey(
-        VerbalAutopsy, related_name="coding_issues", on_delete=models.CASCADE
+        VerbalAutopsy,
+        related_name="coding_issues",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+    )
+    vasa = models.ForeignKey(
+        "VASA",
+        related_name="coding_issues",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
     )
     text = models.TextField()
     SEVERITY_OPTIONS = ["error", "warning"]

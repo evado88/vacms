@@ -14,7 +14,12 @@ from va_explorer.va_data_management.models import (
     PregnancyOutcome,
     SocialMobilization,
 )
+from va_explorer.va_data_management.utils.death_ids import assign_death_ids
 from va_explorer.va_data_management.utils.loading import normalize_dataframe_columns
+from va_explorer.va_data_management.utils.repeat_group_dedup import (
+    CHILD_DEDUP_SPECS,
+    run_dedup_for_model,
+)
 
 FORM_MODEL_MAP = {
     "household": Household,
@@ -58,3 +63,41 @@ class Command(BaseCommand):
         model.objects.bulk_create(objects)
 
         self.stdout.write(f"Imported {len(objects)} records for {form_name}")
+
+        # Deaths are registered without a Death ID; mint them at ingest so no
+        # record waits for the periodic sweeper.
+        if model is Death and objects:
+            id_summary = assign_death_ids(
+                death_ids=[obj.id for obj in objects if obj.id]
+            )
+            if id_summary["assigned"]:
+                self.stdout.write(
+                    self.style.SUCCESS(
+                        f"Assigned death_ids to {id_summary['assigned']} "
+                        "imported death(s)."
+                    )
+                )
+            for ward, info in id_summary["skipped_wards"].items():
+                self.stdout.write(
+                    self.style.WARNING(
+                        f"No death_id for {info['count']} death(s) in ward "
+                        f"'{ward}' ({info['reason']})."
+                    )
+                )
+
+        # For repeat-group child models (e.g. household_member), flag content
+        # duplicates immediately so counts only include one row per person.
+        spec = next((s for s in CHILD_DEDUP_SPECS.values() if s.model is model), None)
+        if spec and objects:
+            summary = run_dedup_for_model(
+                spec,
+                parent_ids={getattr(obj, spec.parent_field) for obj in objects},
+            )
+            if summary["flagged"]:
+                self.stdout.write(
+                    self.style.WARNING(
+                        f"Flagged {summary['flagged']} content-duplicate "
+                        f"{spec.label} record(s); only the most complete record "
+                        "per person is counted as unique."
+                    )
+                )

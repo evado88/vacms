@@ -48,7 +48,13 @@ from va_explorer.users.models import User
 from va_explorer.utils.mixins import CsvDownloadPermissionMixin, CustomAuthMixin
 from va_explorer.utils.profiling import timed_block
 from va_explorer.va_analytics.filters import SupervisionFilter
-from va_explorer.va_data_management.models import Death, Pregnancy, PregnancyOutcome
+from va_explorer.va_data_management.models import (
+    Death,
+    MatchStatus,
+    Pregnancy,
+    PregnancyOutcome,
+    VADeathMatch,
+)
 from va_explorer.va_data_management.utils.date_parsing import (
     get_interview_dates,
     parse_date,
@@ -58,7 +64,12 @@ from va_explorer.va_data_management.utils.location_access import (
     restrict_queryset_to_user_locations,
 )
 
-from .utils.loading import _resolve_geo_name, get_filtered_va_queryset, load_va_data
+from .utils.loading import (
+    _resolve_geo_name,
+    get_filtered_va_queryset,
+    get_filtered_vasa_queryset,
+    load_va_data,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -732,8 +743,15 @@ def _qs_cache_signature(filtered_qs):
         return None
 
 
-def _attach_gps_payload(payload, request, filtered_qs, *, gps_field, event_type):
-    """Attach GPS-related fields to a map API payload, applying PII gating."""
+def _attach_gps_payload(
+    payload, request, filtered_qs, *, gps_field, event_type, extra_sources=None
+):
+    """Attach GPS-related fields to a map API payload, applying PII gating.
+
+    ``extra_sources`` is an optional list of ``(queryset, gps_field, event_type)``
+    tuples whose points are combined with the primary queryset's — used to fold
+    VASA GPS points onto the verbal-autopsy layer.
+    """
     include, limit, offset = _gps_request_params(request)
     if not include:
         return payload
@@ -752,17 +770,27 @@ def _attach_gps_payload(payload, request, filtered_qs, *, gps_field, event_type)
         payload["gps_truncated"] = False
         payload["gps_pii_denied"] = True
         return payload
-    points, total, truncated = _build_gps_points(
-        filtered_qs,
-        gps_field=gps_field,
-        event_type=event_type,
-        limit=limit,
-        offset=offset,
-        cache_signature=_qs_cache_signature(filtered_qs),
-    )
-    payload["gps_points"] = points
-    payload["gps_total"] = total
-    payload["gps_truncated"] = truncated
+    sources = [(filtered_qs, gps_field, event_type)]
+    if extra_sources:
+        sources.extend(extra_sources)
+    combined_points = []
+    combined_total = 0
+    truncated_any = False
+    for qs, source_field, source_event_type in sources:
+        points, total, truncated = _build_gps_points(
+            qs,
+            gps_field=source_field,
+            event_type=source_event_type,
+            limit=limit,
+            offset=offset,
+            cache_signature=_qs_cache_signature(qs),
+        )
+        combined_points.extend(points)
+        combined_total += total
+        truncated_any = truncated_any or truncated
+    payload["gps_points"] = combined_points
+    payload["gps_total"] = combined_total
+    payload["gps_truncated"] = truncated_any
     payload["gps_pii_denied"] = False
     return payload
 
@@ -1313,7 +1341,10 @@ class DashboardAPIView(APIView):
         sex = request.query_params.get("sex") or None
         source = request.query_params.get("source") or None
         compare_by = request.query_params.get("compare_by") or "province"
+        # VASA is folded into the verbal-autopsy analytics; build both querysets
+        # (the source filter selects between them / by community/facility).
         filtered_qs = get_filtered_va_queryset(request)
+        filtered_vasa_qs = get_filtered_vasa_queryset(request)
 
         data = load_va_data(
             request.user,
@@ -1326,6 +1357,7 @@ class DashboardAPIView(APIView):
             source=source,
             compare_by=compare_by,
             filtered_qs=filtered_qs,
+            filtered_vasa_qs=filtered_vasa_qs,
         )
         _attach_gps_payload(
             data,
@@ -1333,6 +1365,7 @@ class DashboardAPIView(APIView):
             filtered_qs,
             gps_field="geopoint",
             event_type="verbal_autopsy",
+            extra_sources=[(filtered_vasa_qs, "geopoint", "verbal_autopsy")],
         )
         return Response(data)
 
@@ -4051,6 +4084,201 @@ class DeathsTimelinessAPIView(APIView):
         if invalid_tab_response is not None:
             return invalid_tab_response
         return Response(_build_deaths_timeliness_distribution(build_deaths_qs(request)))
+
+
+_TIMELINE_BUCKETS = ["0-1", "2-3", "4-7", "8-14", "15-30", "31-60", ">60"]
+_TIMELINE_THRESHOLDS = [0, 1, 3, 7, 14, 30, 60, 90]
+_MAX_PLAUSIBLE_DELAY_DAYS = 1826  # 5 years
+
+
+def _timeline_bucket_label(delay):
+    if delay <= 1:
+        return "0-1"
+    if delay <= 3:
+        return "2-3"
+    if delay <= 7:
+        return "4-7"
+    if delay <= 14:
+        return "8-14"
+    if delay <= 30:
+        return "15-30"
+    if delay <= 60:
+        return "31-60"
+    return ">60"
+
+
+def _collect_va_submissions(filtered_qs):
+    """Fold authoritative VADeathMatch rows into per-death VA submission info.
+
+    Returns (linked_death_ids, {death_pk: (earliest_submission_dt, raw_va_dod)}).
+    A death may back both a VerbalAutopsy and a VASA (two match rows); the
+    earliest parseable submission wins, and its Id10023 is kept as the
+    date-of-death fallback.
+    """
+    match_rows = VADeathMatch.objects.filter(
+        death__in=filtered_qs.values("id"),
+        status__in=[MatchStatus.MATCHED_AUTO, MatchStatus.MATCHED_MANUAL],
+    ).values(
+        "death_id",
+        "verbal_autopsy__submissiondate",
+        "verbal_autopsy__Id10023",
+        "vasa__submissiondate",
+        "vasa__Id10023",
+    )
+
+    linked_death_ids = set()
+    va_submissions = {}
+    for row in match_rows:
+        death_pk = row["death_id"]
+        linked_death_ids.add(death_pk)
+        # Exactly one VA side is set per match row, so the other side's
+        # columns are all NULL and or-chaining cannot mix rows.
+        raw_submission = (
+            row["verbal_autopsy__submissiondate"] or row["vasa__submissiondate"]
+        )
+        raw_va_dod = row["verbal_autopsy__Id10023"] or row["vasa__Id10023"]
+        submission_dt = _parse_outcome_datetime(raw_submission, end_of_day=True)
+        if submission_dt is None:
+            continue
+        current = va_submissions.get(death_pk)
+        if current is None or submission_dt < current[0]:
+            va_submissions[death_pk] = (submission_dt, raw_va_dod)
+    return linked_death_ids, va_submissions
+
+
+def _build_death_va_timeline(filtered_qs):
+    death_rows = list(
+        filtered_qs.values("id", "DE_06", "submissiondate", "today", "start").iterator()
+    )
+    linked_death_ids, va_submissions = _collect_va_submissions(filtered_qs)
+
+    excluded = {
+        "unparseable_death_date": 0,
+        "negative_delta": 0,
+        "implausible_delta": 0,
+    }
+    capture_hist = dict.fromkeys(_TIMELINE_BUCKETS, 0)
+    va_hist = dict.fromkeys(_TIMELINE_BUCKETS, 0)
+    capture_delays = []
+    va_delays = []
+    capture_to_va_delays = []
+    monthly = {}
+    dated_deaths = 0
+
+    def _dod_anchored_delay(later_dt, dod_dt):
+        delay = (later_dt.date() - dod_dt.date()).days
+        if delay < 0:
+            excluded["negative_delta"] += 1
+            return None
+        if delay > _MAX_PLAUSIBLE_DELAY_DAYS:
+            excluded["implausible_delta"] += 1
+            return None
+        return delay
+
+    for row in death_rows:
+        va_entry = va_submissions.get(row["id"])
+        dod_dt = _parse_outcome_datetime(row.get("DE_06"), end_of_day=True)
+        if dod_dt is None and va_entry is not None:
+            dod_dt = _parse_outcome_datetime(va_entry[1], end_of_day=True)
+        if dod_dt is None:
+            excluded["unparseable_death_date"] += 1
+            continue
+        dated_deaths += 1
+        month = monthly.setdefault(dod_dt.strftime("%Y-%m"), {"capture": [], "va": []})
+
+        capture_dt = (
+            _parse_outcome_datetime(row.get("submissiondate"), end_of_day=True)
+            or _parse_outcome_datetime(row.get("today"), end_of_day=True)
+            or _parse_outcome_datetime(row.get("start"), end_of_day=True)
+        )
+        if capture_dt is not None:
+            delay = _dod_anchored_delay(capture_dt, dod_dt)
+            if delay is not None:
+                capture_delays.append(delay)
+                capture_hist[_timeline_bucket_label(delay)] += 1
+                month["capture"].append(delay)
+
+        if va_entry is not None:
+            va_dt = va_entry[0]
+            delay = _dod_anchored_delay(va_dt, dod_dt)
+            if delay is not None:
+                va_delays.append(delay)
+                va_hist[_timeline_bucket_label(delay)] += 1
+                month["va"].append(delay)
+            if capture_dt is not None:
+                # VA submitted before the death was captured is a legitimate
+                # ordering, so negatives are kept here.
+                capture_to_va = (va_dt.date() - capture_dt.date()).days
+                if abs(capture_to_va) <= _MAX_PLAUSIBLE_DELAY_DAYS:
+                    capture_to_va_delays.append(capture_to_va)
+
+    def _median_or_none(values):
+        return round(float(median(values)), 1) if values else None
+
+    def _cumulative_pct(delays):
+        if not dated_deaths:
+            return [0.0 for _ in _TIMELINE_THRESHOLDS]
+        return [
+            round(
+                100.0 * sum(1 for d in delays if d <= threshold) / dated_deaths,
+                1,
+            )
+            for threshold in _TIMELINE_THRESHOLDS
+        ]
+
+    total_deaths = len(death_rows)
+    linked_deaths = len(linked_death_ids)
+    # Months whose every delta was excluded (e.g. implausible historical DODs)
+    # would otherwise render as all-null points.
+    monthly_labels = sorted(
+        label for label, values in monthly.items() if values["capture"] or values["va"]
+    )
+
+    return {
+        "cards": {
+            "total_deaths": total_deaths,
+            "linked_deaths": linked_deaths,
+            "linked_coverage_pct": (
+                round(100.0 * linked_deaths / total_deaths, 1) if total_deaths else 0.0
+            ),
+            "median_death_to_capture_days": _median_or_none(capture_delays),
+            "median_death_to_va_days": _median_or_none(va_delays),
+            "median_capture_to_va_days": _median_or_none(capture_to_va_delays),
+        },
+        "delay_histogram": {
+            "labels": _TIMELINE_BUCKETS,
+            "death_to_capture": [capture_hist[label] for label in _TIMELINE_BUCKETS],
+            "death_to_va": [va_hist[label] for label in _TIMELINE_BUCKETS],
+        },
+        "cumulative": {
+            "thresholds": _TIMELINE_THRESHOLDS,
+            "captured_pct": _cumulative_pct(capture_delays),
+            "va_submitted_pct": _cumulative_pct(va_delays),
+            "denominator": dated_deaths,
+        },
+        "monthly_medians": {
+            "labels": monthly_labels,
+            "capture_delay": [
+                _median_or_none(monthly[label]["capture"]) for label in monthly_labels
+            ],
+            "va_delay": [
+                _median_or_none(monthly[label]["va"]) for label in monthly_labels
+            ],
+        },
+        "excluded": excluded,
+    }
+
+
+class DeathVATimelineAPIView(APIView):
+    def get(self, request, format=None):
+        tab = (request.GET.get("tab") or "").strip()
+        if tab and tab not in {"deaths", "va_timeline"}:
+            return Response(
+                {"detail": "Invalid tab for death-va-timeline endpoint."}, status=400
+            )
+        with timed_block("outcomes.deaths.va_timeline", request=request):
+            payload = _build_death_va_timeline(build_deaths_qs(request))
+        return Response(payload)
 
 
 def _build_deaths_place_distribution(filtered_qs):

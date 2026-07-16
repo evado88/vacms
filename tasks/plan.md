@@ -1,407 +1,182 @@
-# GPS Upsert for CSV Loaders Plan
-
-Date: 2026-05-08
-Branch target: `main`
-
-## Scope
-
-Enable updating (and adding when missing) of GPS coordinate values on **existing** records when re-loading CSVs for:
-
-- VerbalAutopsy (`load_va_csv`) — GPS field: `geopoint`, key: `instanceid`/`instancename`
-- Death (`load_death_csv`) — GPS field: `DE_34`, key: `key`
-- Pregnancy (`load_pregnancy_csv`) — GPS field: `PE_25`, key: `key`
-- PregnancyOutcome (`load_pregnancy_outcome_csv`) — GPS field: `gps`, key: `key`
-
-Add an opt-in `--upsert` flag (default off) so the existing "skip if exists" behaviour is preserved unless the operator explicitly asks for GPS updates.
-
-### Acceptance criteria
-
-- [ ] Each command accepts `--upsert` (no value, just a flag)
-- [ ] Without `--upsert`, behaviour is byte-for-byte identical to today (regression suite passes unchanged)
-- [ ] With `--upsert`, existing records have their GPS field updated when the incoming CSV row has a meaningful GPS value
-- [ ] `simple_history` records the change (use `bulk_update_with_history`)
-- [ ] Soft-deleted VAs (`deleted_at IS NOT NULL`) are NOT touched
-- [ ] No other fields are modified — GPS-only upsert (intentional narrow scope)
-- [ ] Anti-clobber rule: empty/blank incoming GPS never overwrites a populated existing value
-- [ ] Output summary line reports counts: `gps_updated`, `gps_skipped_no_change`, `gps_skipped_no_value`
-- [ ] Coverage stays >= 60%
-
-## Design Decisions (and why)
-
-### 1. GPS-only, not full upsert
-
-Rationale: the existing flow for Death/Pregnancy/PO uses `bulk_create(ignore_conflicts=True)` and was designed around the assumption that ODK CSV is the source of truth at insert time. Once a record exists, fields may have been corrected via the UI, simple_history, or data-cleanup workflows. A full upsert would silently clobber those. The user's request is explicitly about GPS, so we keep the scope tight.
-
-If full upsert is wanted later, this lays the groundwork for `--upsert-fields=...`.
-
-### 2. Match existing records by `key` (Death/Pregnancy/PO) and `instanceid`/`instancename` (VA)
-
-These are already the de-duplication keys today, so we re-use them. No new uniqueness assumptions.
-
-### 3. Anti-clobber: don't overwrite a populated value with blank
-
-Operators sometimes re-export from ODK with stripped GPS columns or partial dumps. Treating an empty incoming value as "delete the existing GPS" would destroy data.
-
-Rule:
-- existing empty + incoming meaningful → write
-- existing populated + incoming meaningful → write (this is the new behaviour gated by `--upsert`)
-- existing populated + incoming empty → skip
-- existing empty + incoming empty → skip
-
-### 4. VA loader already has partial enrichment — keep it, but extend
-
-`load_records_from_dataframe` already enriches `geopoint` on existing VAs **only when the existing geopoint is empty** (see [loading.py:556-590](va_explorer/va_data_management/utils/loading.py#L556-L590)). That stays as the default.
-
-`--upsert` on the VA loader adds: also overwrite when existing geopoint is populated and the incoming value is meaningful AND different.
-
-### 5. No new model fields, no migrations
-
-GPS fields already exist on all four models. This is a code-only change.
-
-### 6. Shared helper to avoid duplication
-
-Death, Pregnancy and PO loaders are nearly identical. Extract the upsert step into one helper in [va_explorer/va_data_management/utils/loading.py](va_explorer/va_data_management/utils/loading.py) — `upsert_gps_for_existing(model, df, key_field, gps_field)` — and call it from each command.
-
-## Affected Files
-
-### New / modified
-
-- [va_explorer/va_data_management/utils/loading.py](va_explorer/va_data_management/utils/loading.py) — add `upsert_gps_for_existing()` helper and extend `load_records_from_dataframe()` to honour `upsert_gps` and `dry_run` kwargs
-- [va_explorer/va_data_management/management/commands/load_va_csv.py](va_explorer/va_data_management/management/commands/load_va_csv.py) — add `--upsert` and `--dry-run` flags, thread through to the loader
-- [va_explorer/va_data_management/management/commands/load_death_csv.py](va_explorer/va_data_management/management/commands/load_death_csv.py) — add `--upsert` and `--dry-run` flags, call helper before bulk_create
-- [va_explorer/va_data_management/management/commands/load_pregnancy_csv.py](va_explorer/va_data_management/management/commands/load_pregnancy_csv.py) — same
-- [va_explorer/va_data_management/management/commands/load_pregnancy_outcome_csv.py](va_explorer/va_data_management/management/commands/load_pregnancy_outcome_csv.py) — same
-- [va_explorer/va_data_management/odk/service.py](va_explorer/va_data_management/odk/service.py) — `ODKPullService.upsert_into_models()` passes `upsert_gps=True` to `load_records_from_dataframe` (VA branch only) so scheduled VA pulls auto-upsert GPS
-
-### Tests added
-
-- `va_explorer/va_data_management/tests/test_load_csv_upsert.py` — covers all four loaders × all four anti-clobber combinations × flag-on / flag-off
-
-### Not affected
-
-- No model files
-- No migrations
-- No URL routes, views, templates, JS
-- No Celery tasks
-- No fixtures
-
-## Permission / Group / Location-scoping Implications
-
-None. These are management commands run from the shell by ops/admins. They do not flow through `CustomAuthMixin` / `LocationRestrictedQuerySetMixin`. No `fixtures/group.json` changes.
-
-The data they touch (Death, Pregnancy, PO, VA) IS location-scoped at view time, but that's unaffected — we're only mutating the GPS column on records that already exist.
-
-## Cache Invalidation Strategy
-
-GPS isn't displayed on the home dashboard fastpath, so no bump of `home_dashboard_fastpath:version`.
-
-GPS isn't part of the location tree, so no bump of `location_tree:version`.
-
-If a downstream feature later visualises GPS on a dashboard, that feature should add its own `analytics:gps_map:version` key. Out of scope here.
-
-## Celery / External Service Implications
-
-- **Scheduled ODK pulls auto-upsert GPS** (Q2 = yes):
-  - Death/Pregnancy/PO branch (`import_dataframe_records`) already does full-field upsert with GPS anti-clobber. No change needed.
-  - VA branch (`load_records_from_dataframe` via `ODKPullService.upsert_into_models`) gets `upsert_gps=True` passed in. New code path validated by `TestScheduledODKVAUpsert`.
-- `import_from_kobo` ([commands/import_from_kobo.py:42,56](va_explorer/va_data_management/management/commands/import_from_kobo.py#L42)) and `load_form_csv` keep insert-only behaviour by NOT passing `upsert_gps=True`. Document in PR.
-- No Celery schedule changes; no new periodic tasks.
-
-## Database / FK Considerations
-
-- `Event` has `on_delete=RESTRICT` against Death/Pregnancy/PO/VA. We are NOT deleting; UPDATE on a parent record never violates RESTRICT. Safe.
-- VerbalAutopsy is a `SoftDeletionModel`. Use `VerbalAutopsy.objects` (live only) when matching incoming rows for upsert — never `all_objects`. Soft-deleted records stay untouched.
-- No new indexes needed; `key` is already `unique=True, db_index=True` on all three secondary models, and `instanceid` lookups already work.
-
-## Implementation Steps
-
-### Step 1 — Add the helper
-
-In [va_explorer/va_data_management/utils/loading.py](va_explorer/va_data_management/utils/loading.py), add:
-
-```python
-def upsert_gps_for_existing(*, model, df, key_field, gps_field, dry_run=False):
-    """
-    Update <gps_field> on existing <model> rows whose <key_field> matches a row in <df>.
-    Anti-clobber: never overwrite populated GPS with empty incoming value.
-    Uses bulk_update_with_history so simple_history captures the change.
-
-    When dry_run=True: compute the plan but do NOT call bulk_update_with_history.
-
-    Returns dict:
-      {
-        "updated": int,             # number of rows that would change (or did change)
-        "skipped_no_change": int,   # incoming GPS identical to existing
-        "skipped_no_value": int,    # incoming GPS empty/blank
-        "sample": [                 # up to 10 examples for ops review
-            {"key": "...", "existing": "...", "incoming": "..."},
-            ...
-        ],
-      }
-    """
-```
-
-Implementation outline:
-1. Build `incoming = {row[key_field]: row[gps_field] for row in df.to_dict('records')}`
-2. Fetch existing records: `model.objects.filter(**{f"{key_field}__in": list(incoming.keys())})`
-   - For VerbalAutopsy specifically, `objects` (live only) — never `all_objects`
-3. For each existing row, classify:
-   - `_has_meaningful_value(incoming)` is False → `skipped_no_value`
-   - existing == incoming → `skipped_no_change`
-   - else → queue for update, append to `sample[:10]`
-4. If `not dry_run` and updates exist: `bulk_update_with_history(updates, model, fields=[gps_field], batch_size=500)`
-5. Return tally
-
-### Step 2 — Wire `--upsert` and `--dry-run` into Death/Pregnancy/PO commands
-
-For each of the three commands:
-
-```python
-def add_arguments(self, parser):
-    parser.add_argument("csv_file", type=argparse.FileType("r"))
-    parser.add_argument(
-        "--upsert",
-        action="store_true",
-        help="Also update GPS on records that already exist (matched by key).",
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Compute the load/upsert plan and print the summary without writing.",
-    )
-```
-
-In `handle`, BEFORE the line `df = df[~df["key"].astype(str).isin(existing_keys)]` — branch:
-
-```python
-upsert_stats = {"updated": 0, "skipped_no_change": 0, "skipped_no_value": 0, "sample": []}
-if options["upsert"]:
-    existing_in_csv_df = df[df["key"].astype(str).isin(existing_keys)]
-    upsert_stats = upsert_gps_for_existing(
-        model=Death,                    # or Pregnancy / PregnancyOutcome
-        df=existing_in_csv_df,
-        key_field="key",
-        gps_field="DE_34",              # or "PE_25" / "gps"
-        dry_run=options["dry_run"],
-    )
-```
-
-Then continue with the existing skip-existing-keys filter. Wrap the `bulk_create` so it is **skipped when `dry_run=True`** but the count is still reported.
-
-Append the upsert tally to the final `self.stdout.write(...)` summary. Prefix the whole summary with `[DRY RUN]` when `--dry-run` is on.
-
-### Step 3 — Wire `--upsert` and `--dry-run` into VA loader
-
-`load_va_csv.py`:
-
-```python
-parser.add_argument("--upsert", action="store_true", help="...")
-parser.add_argument("--dry-run", action="store_true", help="...")
-...
-results = load_records_from_dataframe(
-    csv_data,
-    random_locations,
-    upsert_gps=options["upsert"],
-    dry_run=options["dry_run"],
-)
-```
-
-`load_records_from_dataframe` signature:
-
-```python
-def load_records_from_dataframe(
-    record_df,
-    random_locations=False,
-    debug=False,
-    *,
-    upsert_gps=False,
-    dry_run=False,
-):
-```
-
-Inside, the existing block at [loading.py:556-590](va_explorer/va_data_management/utils/loading.py#L556-L590) currently fills only when existing geopoint is empty. Modify so that when `upsert_gps=True`, we also enrich when existing geopoint is populated and the incoming value is meaningful **and different** — append to `enriched_vas` either way.
-
-When `dry_run=True`, build the same `enriched_vas` / `created_vas` lists but skip `bulk_create_with_history(...)` and `bulk_update_with_history(...)`. The return dict is identical so `load_va_csv` reports the same summary; the command prefixes its output with `[DRY RUN]`.
-
-The trailing `bulk_update_with_history(enriched_vas, VerbalAutopsy, fields=["geopoint"], ...)` ([loading.py:677](va_explorer/va_data_management/utils/loading.py#L677)) already handles persistence for real runs — no new write path needed.
-
-### Step 3b — Wire `upsert_gps=True` into the scheduled VA pull
-
-In [va_explorer/va_data_management/odk/service.py](va_explorer/va_data_management/odk/service.py):
-
-```python
-def upsert_into_models(self, df, form_name):
-    if form_name and form_name in FORM_MODEL_MAP:
-        return import_dataframe_records(form_name, df)   # already upserts incl. GPS
-    with transaction.atomic():
-        results = load_records_from_dataframe(df, upsert_gps=True)   # NEW kwarg
-    return {...}
-```
-
-This satisfies Q2 for the VA branch. Death/Pregnancy/PO branches already upsert via `import_dataframe_records` — no change there.
-
-Note: `import_from_kobo` ([management/commands/import_from_kobo.py:42,56](va_explorer/va_data_management/management/commands/import_from_kobo.py#L42)) does NOT pass `upsert_gps=True`, preserving its insert-only behaviour. Add a `--upsert` flag to it too if we want symmetry, otherwise leave as-is and document.
-
-### Step 4 — Update output messages
-
-Each command should log the GPS upsert tally on its own line so ops can verify what happened:
-
-```
-Imported N death records (skipped X existing, Y intra-file duplicates, dropped Z blank-key rows).
-Upsert: updated K existing GPS values (M unchanged, P incoming had no GPS value).
-```
-
-If `--upsert` was not passed, omit the second line.
-
-If `--dry-run` was passed, prefix the entire output block with `[DRY RUN] ` and append a "Sample of changes that would be applied:" section listing up to 10 `(key, existing → incoming)` rows from `upsert_stats["sample"]`.
-
-Example with `--upsert --dry-run`:
-
-```
-[DRY RUN] Would import 12 death records (skipped 348 existing, 2 intra-file duplicates, dropped 0 blank-key rows).
-[DRY RUN] Upsert: would update 7 existing GPS values (341 unchanged, 0 incoming had no GPS value).
-Sample of changes that would be applied:
-  key=DTH-2026-001  -15.4067 28.2833  →  -15.4112 28.2901
-  key=DTH-2026-014  (empty)           →  -15.3987 28.3120
-  ...
-```
-
-### Step 5 — Tests
-
-New test file [va_explorer/va_data_management/tests/test_load_csv_upsert.py](va_explorer/va_data_management/tests/test_load_csv_upsert.py):
-
-```python
-class TestUpsertGPSDeath(TestCase):
-    def test_no_flag_keeps_existing_gps_untouched(self): ...
-    def test_flag_overwrites_populated_gps(self): ...
-    def test_flag_fills_empty_gps(self): ...
-    def test_anti_clobber_skips_blank_incoming(self): ...
-    def test_soft_deleted_va_not_touched(self):    # VA only
-    def test_history_record_created(self):          # check simple_history captured
-    def test_summary_counts_correct(self): ...
-    def test_dry_run_no_writes(self):               # no DB change, no history row
-    def test_dry_run_summary_matches_real_run(self): # tally identical to real run
-
-class TestScheduledODKVAUpsert(TestCase):
-    """Scheduled VA pull (ODKPullService) auto-upserts GPS — Q2."""
-    def test_va_geopoint_overwritten_on_scheduled_pull(self): ...
-    def test_va_geopoint_anti_clobber_on_scheduled_pull(self): ...
-```
-
-Replicate the upsert matrix for Pregnancy, PregnancyOutcome, VA. The four behavioural cases (empty/populated × meaningful/blank) are the core; the rest is fixtures.
-
-Run: `pytest va_explorer/va_data_management/tests/test_load_csv_upsert.py -v`
-
-### Step 6 — Manual smoke test
-
-```bash
-# Backup a small subset first
-pg_dump -t va_data_management_death -t va_data_management_pregnancy \
-        -t va_data_management_pregnancyoutcome -t va_data_management_verbalautopsy \
-        > /tmp/pre_upsert_backup.sql
-
-# Load CSV without flag (regression check — should match previous output)
-python manage.py load_death_csv test_data/death_with_gps.csv
-
-# Modify a few rows in the CSV — change GPS values, keep keys
-
-# Preview what would change (no writes)
-python manage.py load_death_csv test_data/death_with_gps_modified.csv --upsert --dry-run
-
-# Then commit the upsert
-python manage.py load_death_csv test_data/death_with_gps_modified.csv --upsert
-
-# Verify
-python manage.py shell -c "
-from va_explorer.va_data_management.models import Death
-print(Death.objects.filter(key='<known-key>').values('key', 'DE_34').first())
-print(Death.history.filter(key='<known-key>').values('history_date', 'DE_34'))
-"
-```
-
-Repeat for pregnancy, pregnancy_outcome, va.
-
-## Test Coverage Strategy
-
-| Test                                          | Asserts                                         |
-|-----------------------------------------------|-------------------------------------------------|
-| flag-off: existing record GPS unchanged       | regression — current behaviour intact           |
-| flag-on + empty existing + meaningful new     | gps_field updated                               |
-| flag-on + populated existing + meaningful new | gps_field overwritten                           |
-| flag-on + populated existing + blank new      | gps_field unchanged (anti-clobber)              |
-| flag-on + meaningful new but identical to existing | no spurious history row                    |
-| flag-on + soft-deleted VA in DB               | VA untouched (matched off `objects` not `all_objects`) |
-| flag-on + non-existent key                    | row falls through to bulk_create as before      |
-| Output summary line                            | counts match actual updates                    |
-| simple_history row created                     | one history entry per real update              |
-
-Coverage target: ≥ 60% on changed files, with new code paths at 100%.
-
-## Deployment Checklist
-
-- [ ] No DB migrations
-- [ ] No cache pre-warming required
-- [ ] No Celery schedule changes
-- [ ] No feature-flag wiring required (the flag is a CLI argument, opt-in)
-- [ ] PR description must call out: scheduled ODK pulls remain insert-only by design
-- [ ] Communicate to ops team: usage `--upsert` for GPS-only re-loads; document in `va_admin/management` runbook if one exists
-
-## Risks & Mitigations
-
-| Risk                                              | Mitigation                                                    |
-|---------------------------------------------------|---------------------------------------------------------------|
-| Operator runs `--upsert` with a partial CSV (no GPS column) and clobbers GPS | Anti-clobber: blank incoming never overwrites; tested |
-| Bulk update bypasses signals / history             | Use `bulk_update_with_history`, not `bulk_update`             |
-| Soft-deleted VAs revived                           | Match via `VerbalAutopsy.objects` (live only); tested         |
-| Performance on 100k+ row CSVs                      | `bulk_update_with_history` batched at 500 (matches existing pattern) |
-| Race condition with concurrent ODK pull            | `bulk_update` is per-row UPDATE; no FK constraint risk; small window |
-
-## Resolved Open Questions (2026-05-08)
-
-1. **GPS-only forever** — `--upsert` will only ever update the GPS field. No future expansion to other fields. Flag name stays `--upsert` (no `--upsert-fields`).
-2. **Scheduled ODK pulls auto-upsert GPS** — yes. See "Scheduled ODK Pull Path" section below for what changes (and what already works today).
-3. **`--dry-run` flag** — yes, add to all four commands. Computes the upsert plan and prints the summary (and a sample) without writing.
-
-## Scheduled ODK Pull Path (Q2)
-
-Investigation finding: today's behaviour is split between two code paths.
-
-| Form                | Scheduled-pull entry point                     | Today's upsert behaviour                                      |
-|---------------------|------------------------------------------------|---------------------------------------------------------------|
-| Death               | [odk/service.py:99](va_explorer/va_data_management/odk/service.py#L99) `import_dataframe_records` | **Already full upsert** with GPS anti-clobber ([service.py:185-194](va_explorer/va_data_management/odk/service.py#L185-L194)) |
-| Pregnancy           | same                                            | same                                                          |
-| PregnancyOutcome    | same                                            | same                                                          |
-| VerbalAutopsy       | [odk/service.py:461](va_explorer/va_data_management/odk/service.py#L461) `load_records_from_dataframe` | Inserts new VAs; only enriches GPS when existing geopoint is **empty** ([loading.py:556-590](va_explorer/va_data_management/utils/loading.py#L556-L590)) |
-
-So Death/Pregnancy/PO scheduled pulls already auto-upsert GPS today (and more — they full-field upsert). The only behaviour to add for Q2 is on the **VA path**: scheduled VA pulls should overwrite a populated `geopoint` when ODK delivers a new meaningful value.
-
-### Changes for the scheduled-pull path
-
-- [va_explorer/va_data_management/odk/service.py](va_explorer/va_data_management/odk/service.py) — `ODKPullService.upsert_into_models()` calls `load_records_from_dataframe(df, upsert_gps=True)` for the VA branch. Death/Pregnancy/PO branch (`import_dataframe_records`) is left as-is — it already covers the case.
-- `import_from_kobo` and any other batch-import callers stay opt-in by virtue of NOT setting `upsert_gps=True`.
-
-### Why we don't tighten `import_dataframe_records` to GPS-only
-
-It already updates ALL fields on existing records during scheduled pulls — has been doing so. Narrowing it to GPS-only would be a behaviour change for non-GPS fields, which is out of scope. Q1 ("GPS-only") refers to the new `--upsert` flag, not to retroactive narrowing of an existing path.
-
-## --dry-run Specification (Q3)
-
-Each of the four management commands accepts `--dry-run` (boolean, default off). When set:
-
-- All filtering, normalisation, GPS composition runs as normal
-- The upsert plan is computed (which records would be touched, with old vs new GPS)
-- **No writes** — neither `bulk_create` nor `bulk_update_with_history` is called
-- Output: same summary line as a real run, plus a sample of up to 10 (`key`, `existing_gps`, `incoming_gps`) tuples
-- Exit code 0 on success, non-zero only on parse / argument errors
-
-`--dry-run` may be combined with or without `--upsert`. Without `--upsert`, dry-run only previews which records would be inserted (current insert flow with no actual create). With `--upsert`, it also previews the GPS update plan.
-
-Implementation: add a `dry_run` flag to `upsert_gps_for_existing()` so the helper can compute the plan and return the tally + sample without writing. Each command short-circuits the `bulk_create` and write paths when dry-run is on.
-
-## Final Acceptance criteria (updated)
-
-- [ ] All four commands accept `--upsert` and `--dry-run`
-- [ ] `ODKPullService.upsert_into_models` passes `upsert_gps=True` for the VA branch
-- [ ] `import_from_kobo` and CLI commands without `--upsert` retain insert-only behaviour
-- [ ] `--dry-run` produces the same summary as a real run, with no writes (verified by absence of new history rows)
-- [ ] All other criteria from the original §"Acceptance criteria" still hold
+# Death ID Hardening Plan (v2 — Death mints, VASA carries)
+
+Specs: `docs/death_id_assignment.md`, `docs/death_id_hardening_prompt.md`
+Branch: dev/vasa
+
+## Context
+
+Death IDs (`NNNNCCSSSS`: 4-digit base, 2 checksum letters, 4-digit sequence)
+uniquely identify deaths within a ward cluster. The division of responsibility:
+
+- **Death records** (community `E_DEATH` form) are registered **without** a
+  death ID — verified: `E_DEATH.xlsx` has no death-ID field. **VACMS creates
+  and assigns** the ID after import.
+- **VASA records** (facility form `znphifacilityvasa_02_final.xlsx`) arrive
+  **with** a DeathID already entered by the interviewer — the form captures it
+  in the `DeathID` field (stored on `VASASocialAutopsy.DeathID`, a blank-able
+  TextField) and validates it in-form with a checksum + regex constraint.
+  **VACMS must never generate or overwrite these** — only validate and flag.
+
+The existing implementation is partial and has verified bugs (below); the
+facility form's regex bug means interviewers can only enter IDs ending
+0001–0009, rejecting 99% of valid IDs.
+
+## Verified current state (dev DB + code audit, 2026-07-08)
+
+Data:
+- 2,095 Death rows, **all missing death_id** (clean backfill; no malformed IDs).
+- `ClusterLocationCodes` table **empty**; `wards.csv` has 250 wards.
+- All 75 distinct `Death.ward` values match wards.csv **ward names**; 0 match
+  numeric `ward_code`. Max deaths in one ward: 92 (0001–0999 cap is safe).
+
+Code:
+- `generate_ward_codes.py` checksum **already matches the spec** (weights
+  3,5,7,9 / 9,7,5,3 mod 19; letter map R,G,A,B,K,Y,N,C,L,S,H,Z,D,E,J,P,F,T,M;
+  cluster code = digits + letter(3579-sum) + letter(9753-sum)) — but buried in
+  ~140 lines of pandas.
+- `assign_death_ids.py` command and `tasks.py::assign_death_ids_task` carry
+  **duplicated** assignment logic.
+- **BUG:** both match `ClusterLocationCodes.ward_code__iexact = Death.ward`;
+  Death.ward holds *names*, ward_code holds *numeric codes* → zero matches
+  even after loading wards.csv. Must match the `ward` (name) column.
+- Death `post_save` signal queues the task (single saves only);
+  `load_death_csv`/`load_form_csv` use `bulk_create` → **no signal** → imports
+  wait up to 15 min for the periodic task. No lock anywhere → signal/periodic/
+  manual runs can race and duplicate sequences.
+- `Death.death_id` = plain TextField, **no unique constraint**. Migration 0019
+  created the column, yet both commands still carry subprocess-makemigrations
+  / raw `ALTER TABLE` fallbacks (dead weight; remove).
+- Sequence formatting `{seq:04d}` is unbounded → could emit IDs the form
+  rejects (>0999).
+- **Form bug confirmed in-repo** at `va_explorer/static/data/
+  znphifacilityvasa_02_final.xlsx`: `string-length(.) =10 and regex(string(.),
+  '[1-9][0-9][0-9][0-9][A-Z][A-Z](000[1-9]|0[1-9][0-9]|[1-9][0-9][0-9])?')` —
+  with length 10 enforced, only suffixes 0001–0009 validate. Also `[A-Z][A-Z]`
+  accepts any letters, not the 19-letter checksum alphabet.
+- VASA import path: `utils/vasa_loading.py::load_vasa_from_csv` →
+  `VASA.objects.create(...)` + `VASASocialAutopsy.objects.update_or_create(...)`
+  (~line 221–224). VASA is not created by the ODK VA pull.
+- DQ machinery to reuse: `utils/dq.py` (`upsert_issue`,
+  `resolve_missing_issues`, stable signatures) — same pattern as
+  `utils/repeat_group_dedup.py`.
+- No tests exist for `assign_death_ids` / `generate_ward_codes`.
+
+## User decisions (confirmed)
+- Invalid VASA DeathID at import → **flag as DataQualityIssue, import anyway**.
+- Cross-check VASA DeathID against `Death.death_id` → **lookup + flag
+  unmatched as DQ issue; no FK/schema change**.
+- Suffix range stays **0001–0999** (per form intent); overflow reported loudly.
+
+## Implementation
+
+### 1. Shared utility `va_explorer/va_data_management/utils/death_ids.py`
+- `CHECKSUM_LETTERS = "RGABKYNCLSHZDEJPFTM"` (index = mod-19 value)
+- `checksum_letters(base4)` → two letters (3,5,7,9 then 9,7,5,3 weights)
+- `build_prefix(base4)` → `NNNNCC` (validates `[1-9][0-9]{3}`)
+- `DEATH_ID_REGEX = r"^[1-9][0-9]{3}[RGABKYNCLSHZDEJPFTM]{2}0[0-9]{3}$"`
+- `is_valid_death_id(v)` → regex + checksum recompute + suffix ≠ 0000
+- `format_death_id(cluster_code, seq)` → raises if seq outside 1–999
+- `extract_sequence(death_id)` → int | None (valid IDs only)
+- `assign_death_ids(*, dry_run=False, death_ids=None)` — shared service:
+  - ward→cluster: `ClusterLocationCodes.ward__iexact` (name) with
+    `ward_code__iexact` fallback  ← fixes the zero-match bug
+  - sequence continues from highest **valid** existing ID per cluster prefix;
+    malformed existing IDs reported, excluded from continuation, never
+    overwritten
+  - deterministic order: parsed `DE_06` then `id`; unparseable dates last
+  - idempotent; only fills blank death_id; `death_ids=` scopes to PKs
+  - serialized under a Redis cache lock (signal/periodic/manual can't race)
+  - returns summary: assigned, skipped_wards, malformed_existing, overflow
+
+### 2. Migration (va_data_management)
+- Conditional `UniqueConstraint` on `Death.death_id` (when set/non-blank) —
+  DB-level backstop. Safe: zero IDs assigned on this DB.
+
+### 3. Rewire existing call sites
+- `management/commands/assign_death_ids.py` → thin wrapper over the service;
+  keep `--dry-run` + preview table; add malformed/skipped reporting; **delete**
+  the auto-migration/ALTER TABLE code.
+- `tasks.py::assign_death_ids_task` → call the service (delete ~120 duplicated
+  lines); keep 900s periodic schedule + post_save signal as sweepers.
+- `generate_ward_codes.py` → use `checksum_letters()` instead of the pandas
+  checksum block (keep candidate-filtering rules; add an equivalence test).
+
+### 4. Death ingest hooks (mirror household-member dedup pattern)
+- `load_death_csv` + `load_form_csv` (form "death"): after `bulk_create`, call
+  `assign_death_ids(death_ids=<created PKs>)` synchronously. Re-imports stay
+  idempotent (existing IDs untouched).
+
+### 5. VASA-side validation (new; per confirmed decisions)
+- In `utils/vasa_loading.py`, where `VASASocialAutopsy` is created/updated:
+  collect each record's `DeathID` and after load run a validation pass:
+  - blank DeathID → no issue (VAID_decide covers "don't have it")
+  - fails `is_valid_death_id` → upsert `DataQualityIssue` (type VALIDITY or
+    DUPLICATE-style stable signature via `utils/dq.py::upsert_issue`),
+    title "VASA Death ID invalid"
+  - valid but no `Death.death_id` match → upsert issue "VASA Death ID not
+    found in death register"
+  - never mutate the stored DeathID; import always proceeds
+  - idempotent + self-healing on re-run (`resolve_missing_issues`)
+- Report counts in `load_vasa_csv` summary output.
+
+### 6. Fix the facility VASA form (in-repo)
+- Edit constraint in `va_explorer/static/data/znphifacilityvasa_02_final.xlsx`
+  (survey sheet, DeathID row) to:
+  `regex(., '^[1-9][0-9]{3}[RGABKYNCLSHZDEJPFTM]{2}0[0-9]{3}$')` (full-string;
+  keeps `string-length(.) = 10` redundant-but-harmless or drop it).
+- Run `manage.py generate_vasa_mapping --check` to confirm no field-map drift
+  (constraint text does not affect field defs).
+- `E_DEATH.xlsx` needs **no change** (no death-ID field — by design).
+- Deployment note: upload revised form to ODK Central (external step).
+
+### 7. Docs
+- Update `docs/death_id_assignment.md`: format spec + checksum table, worked
+  example (2026 → TL), Death-mints/VASA-carries split, ward-name matching,
+  ingest-time assignment, malformed-ID policy, VASA validation DQ issues,
+  removal of auto-migration behavior, runbook.
+
+## Files touched
+- NEW `va_explorer/va_data_management/utils/death_ids.py`
+- NEW migration (unique constraint)
+- NEW `va_explorer/va_data_management/tests/test_death_ids.py`
+- `management/commands/assign_death_ids.py`, `generate_ward_codes.py`,
+  `load_death_csv.py`, `load_form_csv.py`
+- `tasks.py` (assign_death_ids_task), `utils/vasa_loading.py`
+- `va_explorer/static/data/znphifacilityvasa_02_final.xlsx`
+- `docs/death_id_assignment.md`
+
+## Verification
+- Unit: checksum 2026→TL; `2026TL0001` valid; `DID-2026-0001` invalid;
+  suffixes 0001/0009/0010/0999 valid; 0000 & 1000 invalid; extract_sequence;
+  format overflow raises; pandas-vs-helper checksum equivalence sample.
+- Service: DE_06-then-id ordering; continuation from existing valid IDs;
+  malformed IDs don't poison sequences and aren't overwritten; skipped wards
+  reported; idempotent re-run; PK scoping; dry-run writes nothing.
+- Commands: `assign_death_ids --dry-run` previews without writing; real run
+  backfills; ward-name lookup resolves (use ClusterLocationCodes fixtures).
+- Import: `load_death_csv` test CSV → created rows get valid IDs; re-import
+  preserves them. **Use command/bulk paths, never `Death.objects.create()` in
+  tests** (post_save→Celery broker hang; see tasks/lessons.md).
+- VASA: `load_vasa_csv` fixture (`tests/fixtures/vasa/znphifacilityvasa_02.csv`)
+  with valid/invalid/unmatched DeathIDs → correct DQ issues raised, records
+  imported, re-run idempotent, issues resolve when fixed.
+- Form: unzip xlsx in a test (or one-off check) asserting the DeathID
+  constraint contains the new regex and not `000[1-9]`.
+- Suites: `pytest va_explorer/va_data_management/tests/test_death_ids.py`,
+  existing `test_repeat_group_dedup.py` (DQ machinery untouched), targeted
+  vasa loading tests; `pre-commit run --files ...`; coverage ≥ 60%.
+- End-to-end (dev DB): `generate_ward_codes --initial` →
+  `assign_death_ids --dry-run` → review → `assign_death_ids` → spot-check IDs
+  validate and are unique (2,095 rows).
+
+## Runbook (deploy order)
+1. Deploy code + migration.
+2. `python manage.py generate_ward_codes --initial` (250 wards).
+3. `python manage.py assign_death_ids --dry-run` → review skipped wards.
+4. `python manage.py assign_death_ids` (backfills 2,095 deaths).
+5. Upload fixed facility VASA form to ODK Central; verify a 0010-suffix ID
+   passes in ODK Collect.
+6. New deaths: ingest hooks + periodic task keep IDs assigned automatically;
+   VASA imports validate DeathIDs and raise DQ issues.
+
+(On approval: sync this plan into `tasks/plan.md` per project convention.)

@@ -1,102 +1,156 @@
 # Death ID Assignment
 
-The `assign_death_ids` management command generates and assigns unique sequential death identifiers to `Death` records that don't have them. Each death ID is composed of the ward's cluster code plus a sequential number, ensuring deaths are uniquely identifiable within a cluster and globally unique across the entire system.
+Death IDs uniquely identify death records within a ward cluster and globally
+across the system. The division of responsibility:
+
+- **Death records** (community `E_DEATH` form) are registered **without** a
+  Death ID. **VACMS creates and assigns** IDs — at import, via the periodic
+  Celery sweeper, or via the `assign_death_ids` backfill command.
+- **VASA records** (facility form) arrive **with** a `DeathID` entered by the
+  interviewer. VACMS never generates or overwrites these — it validates them
+  and flags problems as Data Quality issues (see "VASA Death ID validation").
+
+All generation and validation logic lives in one shared module,
+`va_explorer/va_data_management/utils/death_ids.py`, used by the management
+command, the Celery task, and the CSV import hooks — so the checksum and
+format cannot drift between call sites or the ODK form constraint.
 
 ## Format
 
-Death ID format: `{cluster_code}{sequence:04d}`
+A Death ID is a 10-character code `NNNNCCSSSS`:
 
-**Example:**
-- Cluster code: `1213SM`
-- First death in ward: `1213SM0001`
-- Second death in ward: `1213SM0002`
-- Third death in ward: `1213SM0003`
+| Chars | Meaning |
+|-------|---------|
+| 1–4   | 4-digit cluster base, first digit 1–9 (`[1-9][0-9]{3}`) |
+| 5–6   | Two uppercase checksum letters computed from the base digits |
+| 7–10  | 4-digit per-cluster sequence, **0001–0999** |
 
-Each ward maintains its own independent sequence counter.
+Checksum letters (mod-19 sums mapped through the letter table below):
+
+- Char 5 = letter for `(d1*3 + d2*5 + d3*7 + d4*9) mod 19`
+- Char 6 = letter for `(d1*9 + d2*7 + d3*5 + d4*3) mod 19`
+
+```text
+0=R, 1=G, 2=A, 3=B, 4=K, 5=Y, 6=N, 7=C, 8=L, 9=S,
+10=H, 11=Z, 12=D, 13=E, 14=J, 15=P, 16=F, 17=T, 18=M
+```
+
+**Worked example** — base `2026`:
+`(2*3 + 0*5 + 2*7 + 6*9) = 74 → 74 mod 19 = 17 → T` and
+`(2*9 + 0*7 + 2*5 + 6*3) = 46 → 46 mod 19 = 8 → L`, so the prefix is
+`2026TL` and the first death in that cluster is `2026TL0001`.
+
+The canonical validation regex (also the ODK form constraint):
+
+```text
+^[1-9][0-9]{3}[RGABKYNCLSHZDEJPFTM]{2}0[0-9]{3}$
+```
+
+plus checksum recomputation and suffix ≠ `0000`. `2026TL0001` validates;
+`DID-2026-0001` does not. Each ward cluster maintains its own independent
+sequence; `format_death_id` refuses sequences above 0999 so VACMS can never
+mint an ID the ODK form rejects.
 
 ## Prerequisites
 
-- `ClusterLocationCodes` table must be populated with ward cluster codes (see [Generate Cluster IDs](generate_cluster_id.md))
-- `Death` records must have the `ward` field populated
+- `ClusterLocationCodes` populated with ward cluster codes:
+  `python manage.py generate_ward_codes --initial` (reads
+  `va_explorer/static/data/wards.csv`). Cluster codes use the same checksum
+  helper as Death ID validation.
+- `Death` records must have `ward` populated. Ward matching is
+  **case-insensitive against the ward name** (`ClusterLocationCodes.ward`),
+  with a fallback to `ward_code` for deployments that store codes in
+  `Death.ward`.
 
-## Auto-Migration
+## How assignment happens
 
-The command automatically checks if the `death_id` column exists on the `Death` table. If the column is missing:
-1. Runs `makemigrations va_data_management`
-2. Runs `migrate` to create the column
-3. Proceeds with death ID assignment
+1. **At import** — `load_death_csv` and `load_form_csv death` assign IDs to
+   the just-imported records synchronously.
+2. **Periodic sweeper** — `assign_death_ids_task` runs every 15 minutes and
+   picks up anything imported through other paths (it is also queued by the
+   Death post_save signal for single-record saves).
+3. **Backfill/manual** — `python manage.py assign_death_ids`.
 
-If migrations fail, the command displays instructions to run them manually.
+All three call the same service, which:
+
+- only fills **blank** `death_id` values (idempotent — re-imports never change
+  an existing ID);
+- orders deaths by occurrence date (`DE_06`), then `id` (unparseable dates
+  last), so assignment order is deterministic;
+- continues each cluster's sequence from the highest **valid** existing ID;
+  malformed existing IDs are reported, ignored for sequencing, and never
+  overwritten;
+- serialises concurrent runs with a PostgreSQL advisory lock, and the
+  `unique_death_id_when_set` DB constraint guarantees no duplicates;
+- reports skipped wards (missing/invalid cluster code), malformed IDs, and
+  sequence overflow (a cluster exhausting 0999 is loudly reported and left
+  for operator action).
 
 ## Usage
 
-### Preview Assignments (Dry Run)
-
-Before assigning death IDs, preview what would be assigned:
-
 ```bash
+# Preview without writing
 python manage.py assign_death_ids --dry-run
-```
 
-**Output:**
-- Count of deaths without death_ids
-- Number of wards affected
-- Table preview showing first 20 assignments (ward, death_id, deceased name)
-- Total count of deaths to be updated
-
-### Assign Death IDs
-
-Execute the actual assignment:
-
-```bash
+# Assign for real
 python manage.py assign_death_ids
 ```
 
-**Behavior:**
-- Queries all `Death` records with missing or empty `death_id`
-- Groups deaths by ward
-- Looks up each ward's cluster code from `ClusterLocationCodes` (case-insensitive match on `ward_code`)
-- Finds the next available sequence number for each ward (respects existing assignments)
-- Generates sequential IDs and updates the database
-- Displays summary of assignments
+Output shows a preview table (ward, death_id, deceased name), skipped-ward
+warnings, malformed-ID warnings, and the assigned count.
 
-## Output Example
+## VASA Death ID validation
 
+After every VASA load (`load_vasa_csv` / `load_vasa_from_dataframes`), VACMS
+validates all `VASASocialAutopsy.DeathID` values:
+
+- **Invalid format/checksum** → open `DataQualityIssue` (VALIDITY) titled
+  *"VASA Death ID invalid"*.
+- **Well-formed but not found in `Death.death_id`** → issue titled
+  *"VASA Death ID not found in death register"*.
+- Blank DeathIDs are not flagged (`VAID_decide` covers "don't have it").
+
+Records are always imported and the stored DeathID is never modified. The
+checks are idempotent and self-healing: once the DeathID is corrected or the
+matching Death record is registered/assigned, the issue auto-resolves on the
+next validation pass.
+
+## Updating the ODK form
+
+The facility VASA form (`va_explorer/static/data/
+znphifacilityvasa_02_final.xlsx`, survey sheet, `DeathID` row) previously used
+suffix alternatives `000[1-9]|0[1-9][0-9]|[1-9][0-9][0-9]` — the last two are
+3 characters, so with `string-length(.) = 10` only `0001–0009` could ever
+validate, and `[A-Z][A-Z]` accepted non-checksum letters. The constraint is
+now:
+
+```text
+string-length(.) = 10 and regex(., '[1-9][0-9][0-9][0-9][RGABKYNCLSHZDEJPFTM][RGABKYNCLSHZDEJPFTM](000[1-9]|00[1-9][0-9]|0[1-9][0-9][0-9])')
 ```
-Found 45 deaths without death_ids.
-Deaths grouped into 3 ward(s).
-================================================================================
-Ward                 Death ID        Deceased Name
-================================================================================
-CHAMUKA              1213SM0001      John Doe
-CHAMUKA              1213SM0002      Jane Smith
-CHISAMBA             4567KL0001      Robert Brown
-...
-================================================================================
-✓ Successfully assigned death_ids to 45 death(s).
-```
 
-## Warnings & Edge Cases
-
-- **Missing cluster codes:** If a ward in the `Death` table doesn't exist in `ClusterLocationCodes`, deaths in that ward are skipped with a warning
-- **Case-insensitive matching:** Ward matching is case-insensitive to handle variations like "CHAMUKA" vs "chamuka"
-- **Sequence continuation:** If a ward already has some deaths with IDs, new deaths continue from the highest sequence number
+which accepts the full intended suffix range 0001–0999 (e.g. `2026TL0010`).
+**The revised form must be re-uploaded to ODK Central** for the fix to reach
+ODK Collect. The community `E_DEATH` form has no Death ID field — deaths are
+registered without one by design.
 
 ## Troubleshooting
 
-**No deaths without death_ids found:**
-All deaths already have IDs assigned; nothing to do.
+**No deaths without death_ids found** — nothing to do; all deaths have IDs.
 
-**No cluster code found for wards:**
-Ensure `ClusterLocationCodes` table is populated and matches ward names from the `Death` table. Run:
+**No cluster code found for ward(s)** — populate/refresh the table:
 ```bash
-python manage.py generate_ward_codes --initial
+python manage.py generate_ward_codes --initial      # first load
+python manage.py generate_ward_codes --update       # sync new wards from CSV
+python manage.py generate_ward_codes --update-codes # codes for codeless wards
 ```
+Ward names in `Death.ward` must match `wards.csv` ward names
+(case-insensitive).
 
-**Migration fails:**
-If auto-migration fails, run manually:
-```bash
-python manage.py makemigrations va_data_management
-python manage.py migrate
-```
-Then retry the command.
+**Malformed existing death_id warnings** — those IDs fail format/checksum
+validation. They are ignored for sequence continuation and left in place;
+correct or clear them manually if they should be regenerated.
+
+**Sequence exhausted (max 0999)** — the cluster is full. This is reported as
+an error and remaining deaths stay unassigned; raising the cap requires a
+coordinated change to `death_ids.MAX_SEQUENCE` **and** the ODK form
+constraint.

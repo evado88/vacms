@@ -7,6 +7,7 @@ from factory import Faker, Sequence
 from factory.django import DjangoModelFactory
 
 from va_explorer.va_data_management.models import (
+    VASA,
     CauseCodingIssue,
     CauseOfDeath,
     Death,
@@ -89,6 +90,17 @@ class VerbalAutopsyFactory(DjangoModelFactory):
     Id10007 = "Example Name"
     Id10023 = "1901-01-01"
     Id10058 = "hospital"
+    location = factory.SubFactory(LocationFacilityFactory)
+
+
+class VASAFactory(DjangoModelFactory):
+    class Meta:
+        model = VASA
+
+    Id10007 = "Example Name"
+    Id10023 = "1901-01-01"
+    Id10058 = "hospital"
+    instrument = "adult"
     location = factory.SubFactory(LocationFacilityFactory)
 
 

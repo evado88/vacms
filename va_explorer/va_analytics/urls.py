@@ -17,6 +17,7 @@ from va_explorer.va_analytics.views import (
     DeathsTimelinessAPIView,
     DeathsTopCausesAPIView,
     DeathsTrendAPIView,
+    DeathVATimelineAPIView,
     PregnancyEventsAncVisitsAPIView,
     PregnancyEventsBirthOutcomesAPIView,
     PregnancyEventsGestationalAgeAPIView,
@@ -275,6 +276,11 @@ urlpatterns = [
         "api/outcomes/deaths/timeliness/",
         view=DeathsTimelinessAPIView.as_view(),
         name="outcomes-deaths-timeliness-api",
+    ),
+    path(
+        "api/outcomes/deaths/va-timeline/",
+        view=DeathVATimelineAPIView.as_view(),
+        name="outcomes-deaths-va-timeline-api",
     ),
     path(
         "home-dashboard/kpis/",
