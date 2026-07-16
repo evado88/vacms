@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+
+{% block title %}Linkage Review — {{ va_label }}{% endblock %}
+
+{% block heading %}Linkage Review — {{ va_label }} ({{ va_model }}){% endblock %}
+
+{% block content %}
+  <p>
+    <a href="{% url 'va_data_management:linkage_review_index' %}">&larr; Back to queue</a>
+  </p>
+
+  <div class="card mb-3">
+    <div class="card-header">
+      Proposed link:
+      <strong>{{ match.death_id_snapshot|default:match.death|default:"none" }}</strong>
+      — status <span class="badge badge-info">{{ match.get_status_display }}</span>,
+      method {{ match.get_method_display|default:"—" }},
+      score {{ match.score|floatformat:1 }}
+      (separation {{ match.score_separation|floatformat:1 }})
+      {% if match.block_sources %}
+        <br><small class="text-muted">Surfaced by: {{ match.block_sources|join:", " }}</small>
+      {% endif %}
+    </div>
+    <div class="card-body table-responsive">
+      <table class="table table-sm">
+        <thead>
+          <tr>
+            <th>Field</th>
+            <th>{{ va_model }} value</th>
+            <th>Death value</th>
+            <th>Assessment</th>
+            <th>Weight</th>
+            <th>Awarded</th>
+            <th>Similarity</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for c in match.comparisons %}
+            <tr>
+              <td>{{ c.field }}</td>
+              <td>{{ c.va_value|default:"—" }}</td>
+              <td>{{ c.death_value|default:"—" }}</td>
+              <td>
+                {% if c.classification == "contradictory" %}
+                  <span class="badge badge-danger">{{ c.classification }}</span>
+                {% elif c.classification == "missing" %}
+                  <span class="badge badge-light">{{ c.classification }}</span>
+                {% else %}
+                  <span class="badge badge-success">{{ c.classification }}</span>
+                {% endif %}
+              </td>
+              <td>{{ c.weight }}</td>
+              <td>{{ c.awarded }}</td>
+              <td>{{ c.similarity|default_if_none:"—" }}</td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="7" class="text-muted">No per-field evidence recorded (re-run evaluation to populate).</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  {% if alternatives %}
+    <div class="card mb-3">
+      <div class="card-header">Ranked alternatives</div>
+      <div class="card-body table-responsive">
+        <table class="table table-sm">
+          <thead>
+            <tr><th>Death</th><th>Score</th><th>Method</th><th></th><th></th></tr>
+          </thead>
+          <tbody>
+            {% for alt in alternatives %}
+              <tr {% if alt.previous_link %}class="table-warning"{% endif %}>
+                <td>
+                  {{ alt.death_id|default:alt.death_pk }}
+                  {% if alt.death %}<small class="text-muted">— {{ alt.death.DE_03 }}, {{ alt.death.ward }}</small>{% endif %}
+                  {% if alt.previous_link %}<span class="badge badge-warning">previous link</span>{% endif %}
+                </td>
+                <td>{{ alt.score }}</td>
+                <td>{{ alt.method|default:"—" }}</td>
+                <td>
+                  {% if can_review and alt.death %}
+                    <form method="post" action="{% url 'va_data_management:linkage_review_confirm' match.pk %}">
+                      {% csrf_token %}
+                      <input type="hidden" name="death_pk" value="{{ alt.death.pk }}">
+                      <button class="btn btn-sm btn-outline-success" type="submit">Confirm this one</button>
+                    </form>
+                  {% endif %}
+                </td>
+                <td></td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  {% endif %}
+
+  {% if can_review %}
+    <div class="d-flex">
+      <form method="post" action="{% url 'va_data_management:linkage_review_confirm' match.pk %}" class="mr-2">
+        {% csrf_token %}
+        <button class="btn btn-success" type="submit" {% if not match.death %}disabled{% endif %}>
+          Confirm link
+        </button>
+      </form>
+      <form method="post" action="{% url 'va_data_management:linkage_review_reject' match.pk %}" class="form-inline">
+        {% csrf_token %}
+        <input class="form-control mr-2" type="text" name="reason" placeholder="Rejection reason">
+        <button class="btn btn-outline-danger" type="submit" {% if not match.death %}disabled{% endif %}>
+          Reject link
+        </button>
+      </form>
+    </div>
+  {% else %}
+    <p class="text-muted">You can view this queue but need the review permission to confirm or reject.</p>
+  {% endif %}
+{% endblock %}

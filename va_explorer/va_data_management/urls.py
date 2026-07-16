@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import views
+from . import views, views_linkage
 
 app_name = "data_management"
 
@@ -107,5 +107,25 @@ urlpatterns = [
         "deaths/delete_all",
         view=views.DeathDeleteAll.as_view(),
         name="death_delete_all",
+    ),
+    path(
+        "linkage-review",
+        view=views_linkage.LinkageReviewIndexView.as_view(),
+        name="linkage_review_index",
+    ),
+    path(
+        "linkage-review/<int:pk>",
+        view=views_linkage.LinkageReviewDetailView.as_view(),
+        name="linkage_review_detail",
+    ),
+    path(
+        "linkage-review/<int:pk>/confirm",
+        view=views_linkage.ConfirmLinkView.as_view(),
+        name="linkage_review_confirm",
+    ),
+    path(
+        "linkage-review/<int:pk>/reject",
+        view=views_linkage.RejectLinkView.as_view(),
+        name="linkage_review_reject",
     ),
 ]

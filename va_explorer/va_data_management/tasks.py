@@ -63,6 +63,13 @@ def setup_periodic_tasks(sender, **kwargs):
             sweep_unlinked_vas.s(),
             name="Sweep unlinked VAs for Death links",
         )
+        # Weekly report-only calibration: watches the link rate against the
+        # expected prior so a drifting crosswalk/config gets noticed.
+        sender.add_periodic_task(
+            crontab(day_of_week=1, hour=3, minute=0),
+            linkage_calibration_report.s(),
+            name="Weekly VA-Death linkage calibration report",
+        )
 
 
 # Result of tasks need to be json serializable so return dicts.
@@ -157,6 +164,61 @@ def link_va_batch(record_ids, model_name="verbalautopsy", source="sweeper"):
         qs = qs.select_related("social_autopsy")
     summary = run_matching(qs.order_by("id"), apply=True, source=source)
     return {"total": summary.get("total", 0), "changed": summary.get("changed", 0)}
+
+
+@app.task()
+def linkage_calibration_report():
+    """Weekly report-only calibration pass over every VA/VASA.
+
+    Logs the achieved link rate against the expected prior
+    (``VA_DEATH_MATCH_EXPECTED_LINK_RATE``, default 75%) and warns when
+    candidate coverage falls below it — the spec's signal that blocking,
+    thresholds or the crosswalk are losing true matches.
+    """
+    from va_explorer.va_data_management.utils.matching import run_matching
+
+    if not getattr(settings, "VA_DEATH_MATCH_ENABLED", False):
+        return {"enabled": False}
+
+    def _iter_vas():
+        for model in (VerbalAutopsy, VASA):
+            qs = model.objects.all().select_related("va_death_match")
+            if model is VerbalAutopsy:
+                qs = qs.prefetch_related("events__death")
+            else:
+                qs = qs.select_related("social_autopsy")
+            yield from qs.order_by("id").iterator(chunk_size=_LINK_BATCH_SIZE)
+
+    summary = run_matching(_iter_vas(), apply=False, source="calibration_task")
+    total = summary.get("total", 0) or 1
+    linked = (
+        summary.get("matched_auto", 0)
+        + summary.get("matched_manual", 0)
+        + summary.get("skipped", 0)  # existing manual links
+    )
+    queued = summary.get("pending_review", 0) + summary.get("ambiguous", 0)
+    coverage = 100.0 * (linked + queued) / total
+    prior = float(getattr(settings, "VA_DEATH_MATCH_EXPECTED_LINK_RATE", 75))
+    report = {
+        "enabled": True,
+        "total": total,
+        "linked": linked,
+        "review_queue": queued,
+        "coverage_pct": round(coverage, 1),
+        "expected_prior_pct": prior,
+        "config": summary.get("config"),
+    }
+    if coverage < prior:
+        logger.warning(
+            "Linkage coverage %.1f%% is below the %.0f%% prior — investigate "
+            "blocking/thresholds/crosswalk. %s",
+            coverage,
+            prior,
+            report,
+        )
+    else:
+        logger.info("Linkage calibration OK: %s", report)
+    return report
 
 
 @app.task()

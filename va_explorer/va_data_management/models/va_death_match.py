@@ -22,7 +22,11 @@ class MatchMethod(models.TextChoices):
 
     EXACT_DEATH_ID = "exact_death_id", "Exact Death ID"
     EVENT_BRIDGE = "event_bridge", "Case Management event"
-    FUZZY_DEMOGRAPHIC = "fuzzy_demographic", "Fuzzy demographic"
+    NRC = "nrc", "National ID (NRC)"
+    DEATH_REG_NO = "death_reg_no", "Death registration number"
+    EXACT_COMPOSITE = "exact_composite", "Exact composite (name+sex+DOD+district)"
+    FUZZY_DEMOGRAPHIC = "fuzzy_demographic", "Fuzzy demographic"  # legacy (v1)
+    PROBABILISTIC = "probabilistic", "Probabilistic score"
     MANUAL = "manual", "Manual"
 
 
@@ -86,6 +90,12 @@ class VADeathMatch(models.Model):
     contradictory_fields = models.JSONField(default=list, blank=True)
     missing_fields = models.JSONField(default=list, blank=True)
     alternatives = models.JSONField(default=list, blank=True)
+    # Per-field contribution snapshot (list of FieldComparison dicts).
+    comparisons = models.JSONField(default=list, blank=True)
+    # Which blocking passes surfaced the winning candidate (v2 union blocking).
+    block_sources = models.JSONField(default=list, blank=True)
+    # Name of the MatchingConfig row the evaluation ran under.
+    config_version = models.CharField(max_length=64, blank=True, null=True)
 
     # --- Lifecycle ---
     matched_at = models.DateTimeField(null=True, blank=True)
@@ -145,3 +155,158 @@ class VADeathMatch(models.Model):
     def __str__(self):
         target = self.va
         return f"[{self.status}] {target} -> {self.death} ({self.score:.0f}%)"
+
+
+class MatchingConfig(models.Model):
+    """Tunable weights/thresholds for the VA<->Death matching engine.
+
+    Exactly one row is active at a time; ``active()`` merges it over the
+    engine/settings defaults so a partially-filled row is safe. Every change is
+    audited via simple-history (the spec requires a config audit trail), so
+    recalibration is: edit the row (admin), run ``link_deaths_to_vas
+    --calibrate``, compare, then apply.
+    """
+
+    name = models.CharField(max_length=64, unique=True, default="default")
+    is_active = models.BooleanField(default=False)
+    # Partial overrides; anything not set here falls back to defaults.
+    weights = models.JSONField(default=dict, blank=True)
+    thresholds = models.JSONField(default=dict, blank=True)
+    algorithm_version = models.CharField(max_length=32, default="2.0")
+    notes = models.TextField(blank=True, null=True)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="matching_configs_updated",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    created = models.DateTimeField(auto_now_add=True)
+    updated = models.DateTimeField(auto_now=True)
+
+    history = HistoricalRecords(excluded_fields=["updated"])
+
+    class Meta:
+        verbose_name = "Matching configuration"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["is_active"],
+                condition=models.Q(is_active=True),
+                name="matchingconfig_single_active",
+            ),
+        ]
+
+    @classmethod
+    def active(cls, name=None):
+        """Return the merged engine config dict (never raises).
+
+        ``{"name", "weights", "thresholds", "algorithm_version"}`` — DB row
+        values overlaid on the defaults from ``utils.matching.config``.
+        """
+        from va_explorer.va_data_management.utils.matching.config import (
+            default_thresholds,
+            default_weights,
+        )
+
+        merged = {
+            "name": "defaults",
+            "weights": default_weights(),
+            "thresholds": default_thresholds(),
+            "algorithm_version": "2.0",
+        }
+        row = None
+        try:
+            qs = (
+                cls.objects.filter(name=name)
+                if name
+                else cls.objects.filter(is_active=True)
+            )
+            row = qs.first()
+        except Exception:  # pragma: no cover - pre-migration / broken DB
+            row = None
+        if row is not None:
+            merged["name"] = row.name
+            merged["weights"].update(row.weights or {})
+            merged["thresholds"].update(row.thresholds or {})
+            merged["algorithm_version"] = row.algorithm_version
+        return merged
+
+    def __str__(self):
+        flag = " (active)" if self.is_active else ""
+        return f"MatchingConfig {self.name}{flag} v{self.algorithm_version}"
+
+
+class VADeathMatchRejection(models.Model):
+    """A reviewer-rejected (VA, Death) pair — never re-proposed by the engine.
+
+    ``VADeathMatch`` is one row per VA holding only the *current* proposal, so
+    a rejection must live in its own pair table to survive the next evaluation
+    proposing a different death (and to accumulate multiple rejections per VA).
+    """
+
+    verbal_autopsy = models.ForeignKey(
+        "va_data_management.VerbalAutopsy",
+        related_name="death_match_rejections",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+    )
+    vasa = models.ForeignKey(
+        "va_data_management.VASA",
+        related_name="death_match_rejections",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+    )
+    death = models.ForeignKey(
+        "va_data_management.Death",
+        related_name="va_match_rejections",
+        on_delete=models.CASCADE,
+    )
+    rejected_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="va_death_match_rejections",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    reason = models.TextField(blank=True, null=True)
+    created = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "VA–Death match rejection"
+        constraints = [
+            models.CheckConstraint(
+                check=(
+                    models.Q(verbal_autopsy__isnull=False, vasa__isnull=True)
+                    | models.Q(verbal_autopsy__isnull=True, vasa__isnull=False)
+                ),
+                name="vadeathrej_exactly_one_va",
+            ),
+            models.UniqueConstraint(
+                fields=["verbal_autopsy", "death"],
+                condition=models.Q(verbal_autopsy__isnull=False),
+                name="vadeathrej_unique_va_death",
+            ),
+            models.UniqueConstraint(
+                fields=["vasa", "death"],
+                condition=models.Q(vasa__isnull=False),
+                name="vadeathrej_unique_vasa_death",
+            ),
+        ]
+
+    @classmethod
+    def rejected_death_pks(cls, va) -> set:
+        """PKs of deaths a reviewer rejected for this VA/VASA."""
+        if va._meta.model_name == "vasa":
+            qs = cls.objects.filter(vasa=va)
+        else:
+            qs = cls.objects.filter(verbal_autopsy=va)
+        return set(qs.values_list("death_id", flat=True))
+
+    @property
+    def va(self):
+        return self.verbal_autopsy or self.vasa
+
+    def __str__(self):
+        return f"Rejected: {self.va} -x-> {self.death}"

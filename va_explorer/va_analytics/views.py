@@ -4234,6 +4234,27 @@ def _build_death_va_timeline(filtered_qs):
         label for label, values in monthly.items() if values["capture"] or values["va"]
     )
 
+    # Review-queue health (additive keys; existing consumers are unaffected).
+    queue_counts = dict(
+        VADeathMatch.objects.filter(
+            status__in=[MatchStatus.PENDING_REVIEW, MatchStatus.AMBIGUOUS]
+        )
+        .values_list("status")
+        .annotate(n=Count("id"))
+        .values_list("status", "n")
+    )
+    contradiction_count = (
+        VADeathMatch.objects.exclude(contradictory_fields=[])
+        .filter(
+            status__in=[
+                MatchStatus.PENDING_REVIEW,
+                MatchStatus.AMBIGUOUS,
+                MatchStatus.MATCHED_AUTO,
+            ]
+        )
+        .count()
+    )
+
     return {
         "cards": {
             "total_deaths": total_deaths,
@@ -4244,6 +4265,9 @@ def _build_death_va_timeline(filtered_qs):
             "median_death_to_capture_days": _median_or_none(capture_delays),
             "median_death_to_va_days": _median_or_none(va_delays),
             "median_capture_to_va_days": _median_or_none(capture_to_va_delays),
+            "review_queue_pending": queue_counts.get(MatchStatus.PENDING_REVIEW, 0),
+            "review_queue_ambiguous": queue_counts.get(MatchStatus.AMBIGUOUS, 0),
+            "matches_with_contradictions": contradiction_count,
         },
         "delay_histogram": {
             "labels": _TIMELINE_BUCKETS,

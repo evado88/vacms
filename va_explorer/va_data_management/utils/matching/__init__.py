@@ -10,6 +10,9 @@ Public API (import from here, not the submodules):
     )
 """
 
+from .config import resolve_config
+from .death_index import DeathIndex
+from .profiles import LinkageProfile, build_death_profile, build_va_profile
 from .results import MatchResult
 from .service import (
     auto_link_verbal_autopsy_to_death,
@@ -21,6 +24,11 @@ from .service import (
 
 __all__ = [
     "MatchResult",
+    "LinkageProfile",
+    "DeathIndex",
+    "build_va_profile",
+    "build_death_profile",
+    "resolve_config",
     "evaluate_va",
     "auto_link_verbal_autopsy_to_death",
     "matching_enabled",

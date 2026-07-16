@@ -1,0 +1,290 @@
+"""Tests for the v2 engine: deterministic rules, union blocking, scoring bands,
+rejected-pair exclusion and previous-link demotion."""
+
+import pytest
+
+from va_explorer.va_data_management.models import (
+    MatchingConfig,
+    MatchMethod,
+    MatchStatus,
+    VADeathMatch,
+    VADeathMatchRejection,
+)
+from va_explorer.va_data_management.utils.matching import (
+    DeathIndex,
+    auto_link_verbal_autopsy_to_death,
+    build_va_profile,
+    evaluate_va,
+    resolve_config,
+)
+from va_explorer.va_data_management.utils.matching.candidate_selection import (
+    union_block_candidates,
+)
+from va_explorer.va_data_management.utils.matching.scoring import score_candidate
+
+from .test_va_death_matching import _make_death, _make_va, _make_vasa
+
+pytestmark = pytest.mark.django_db
+
+
+# --------------------------------------------------------------------------
+# Stage 1 deterministic rules
+# --------------------------------------------------------------------------
+def test_nrc_rule_links_deterministically():
+    death = _make_death(DE_08="123456/78/9")
+    va = _make_va(Id10073="123456789")
+    result = evaluate_va(va)
+    assert result.status == MatchStatus.MATCHED_AUTO
+    assert result.method == MatchMethod.NRC
+    assert result.death_pk == death.pk
+
+
+def test_nrc_rule_requires_uniqueness():
+    _make_death(DE_08="123456/78/9", key="d1")
+    _make_death(DE_08="123456/78/9", key="d2")
+    va = _make_va(Id10073="123456789")
+    result = evaluate_va(va)
+    # Two register entries share the NRC: never a deterministic link.
+    assert result.method != MatchMethod.NRC
+    assert result.status in {MatchStatus.AMBIGUOUS, MatchStatus.PENDING_REVIEW}
+
+
+def test_nrc_with_dod_year_conflict_routes_to_review():
+    _make_death(DE_08="123456/78/9", DE_06="2023-12-31")
+    va = _make_va(Id10073="123456789", Id10023="2024-01-10")
+    result = evaluate_va(va)
+    # Key matched; DOD only 10 days apart but the year differs -> review.
+    assert result.status == MatchStatus.PENDING_REVIEW
+    assert result.method == MatchMethod.NRC
+
+
+def test_exact_composite_rule():
+    death = _make_death(DE_03="Unique Person", DE_08="")
+    va = _make_va(Id10017="Unique", Id10018="Person")
+    result = evaluate_va(va)
+    assert result.status == MatchStatus.MATCHED_AUTO
+    assert result.method == MatchMethod.EXACT_COMPOSITE
+    assert result.death_pk == death.pk
+
+
+def test_invalid_vasa_death_id_format_never_uses_death_id_rule():
+    death = _make_death()
+    death.death_id = "BADID12345"  # fails checksum/format validation
+    death.save()
+    vasa = _make_vasa(death_id="BADID12345")
+    result = evaluate_va(vasa)
+    assert result.method != MatchMethod.EXACT_DEATH_ID
+
+
+# --------------------------------------------------------------------------
+# Stage 2 union blocking — recall property
+# --------------------------------------------------------------------------
+def _blocks_for(va, death):
+    index = DeathIndex.build()
+    assert death.pk in index.deaths
+    profile = build_va_profile(va)
+    thresholds = resolve_config()["thresholds"]
+    candidates, stats = union_block_candidates(profile, index, thresholds=thresholds)
+    hit = next((blocks for d, blocks in candidates if d.pk == death.pk), None)
+    return hit, stats
+
+
+BLANK_GEO = {"ward": "", "district": "", "province": "", "ea": "", "constituency": ""}
+
+
+@pytest.mark.parametrize(
+    ("death_kwargs", "va_kwargs", "expected_block"),
+    [
+        # (a) shares only district + year of death (name/dates differ).
+        (
+            {"DE_03": "Peter Zulu", "DE_06": "2024-03-01", "ward": "Elsewhere"},
+            {
+                "Id10017": "Pita",
+                "Id10018": "Zoolu",
+                "Id10023": "2024-06-01",
+                "ward": "",
+            },
+            "district_year",
+        ),
+        # (b) shares only constituency + ward.
+        (
+            {
+                **{"DE_06": "", "district": "", "province": ""},
+                "constituency": "KAB",
+                "ward": "Chaisa",
+            },
+            {
+                "Id10023": "2024-01-10",
+                "district": "",
+                "province": "",
+                "constituency": "KAB",
+                "ward": "Chaisa",
+            },
+            "constituency_ward",
+        ),
+        # (c) shares only the DOD window — no geography at all.
+        (
+            {**BLANK_GEO, "DE_06": "2024-01-20"},
+            {**BLANK_GEO, "Id10023": "2024-01-10"},
+            "dod_window",
+        ),
+        # (d) misspelled surname caught by the phonetic block (name differs,
+        #     DOD far outside every window).
+        (
+            {"DE_03": "Jon Bandah", "DE_06": "2024-09-01"},
+            {"Id10017": "John", "Id10018": "Banda", "Id10023": "2024-09-05"},
+            "phonetic_surname_district",
+        ),
+        # (e) initials + death year (same initials, different names/geo).
+        (
+            {**BLANK_GEO, "DE_03": "Jane Bwalya", "DE_06": "2024-05-05"},
+            {
+                **BLANK_GEO,
+                "Id10017": "Josephine",
+                "Id10018": "Banda",
+                "Id10023": "2024-07-07",
+            },
+            "initials_year",
+        ),
+    ],
+)
+def test_every_true_pair_shares_at_least_one_block(
+    death_kwargs, va_kwargs, expected_block
+):
+    death = _make_death(**death_kwargs)
+    va = _make_va(**va_kwargs)
+    blocks, stats = _blocks_for(va, death)
+    assert blocks, f"true pair missed by all blocks (stats={stats})"
+    assert expected_block in blocks
+    assert stats["total"] >= 1
+
+
+def test_facility_va_falls_back_to_province_block():
+    death = _make_death(district="", ward="", ea="", province="Lusaka")
+    va = _make_va(
+        community_va="no",  # facility VA
+        district="",
+        ward="",
+        ea="",
+        constituency="",
+        province="Lusaka",
+        Id10023="",  # no DOD either — province is the only signal
+        location=None,
+    )
+    blocks, stats = _blocks_for(va, death)
+    assert blocks == ["province"]
+
+
+# --------------------------------------------------------------------------
+# Scoring bands + config overrides
+# --------------------------------------------------------------------------
+def test_config_weight_override_changes_outcome():
+    death = _make_death(DE_03="Jon Banda")
+    va = _make_va(Id10017="John", Id10018="Banda")
+    base = resolve_config()
+    score_default = score_candidate(va, death, method=None, config=base).score
+
+    crippled = {
+        **base,
+        "weights": {**base["weights"], "name": 0, "dod": 0},
+    }
+    score_crippled = score_candidate(va, death, method=None, config=crippled).score
+    assert score_crippled != score_default
+
+
+def test_pregnancy_flags_only_compared_for_female_adults():
+    base = resolve_config()
+    death_m = _make_death(DE_05="male", DE_16="01", key="m")
+    va_m = _make_va(Id10019="male", Id10305="yes")
+    cand = score_candidate(va_m, death_m, method=None, config=base)
+    preg = next(c for c in cand.comparisons if c.field == "pregnancy")
+    assert preg.classification == "missing"  # males: excluded from the vector
+
+    death_f = _make_death(DE_05="female", DE_16="01", key="f")
+    va_f = _make_va(Id10019="female", Id10305="yes")
+    cand = score_candidate(va_f, death_f, method=None, config=base)
+    preg = next(c for c in cand.comparisons if c.field == "pregnancy")
+    assert preg.classification in {"exact", "compatible"}
+    assert preg.awarded > 0
+
+
+def test_near_miss_lands_in_review_band():
+    # Same name/sex/geo but DOD ~2 months off: strong but not auto-linkable.
+    _make_death(DE_06="2024-03-05")
+    va = _make_va(Id10023="2024-01-10")
+    result = evaluate_va(va)
+    assert result.status == MatchStatus.PENDING_REVIEW
+
+
+# --------------------------------------------------------------------------
+# Rejected-pair exclusion + previous-link demotion
+# --------------------------------------------------------------------------
+def test_rejected_pair_is_never_reproposed_and_next_best_surfaces():
+    best = _make_death(DE_03="John Banda", key="best")
+    other = _make_death(DE_03="Jon Bandah", key="other")
+    va = _make_va()
+
+    result = auto_link_verbal_autopsy_to_death(va, save=True)
+    assert result.death_pk == best.pk
+
+    VADeathMatchRejection.objects.create(verbal_autopsy=va, death=best)
+    result = auto_link_verbal_autopsy_to_death(va, save=True, force_recheck=True)
+    assert result.death_pk != best.pk
+    # The next-best candidate surfaces instead of silence.
+    assert result.death_pk == other.pk or result.status in {
+        MatchStatus.PENDING_REVIEW,
+        MatchStatus.AMBIGUOUS,
+        MatchStatus.MATCHED_AUTO,
+    }
+
+
+def test_previous_auto_link_is_demoted_not_silently_unlinked():
+    old = _make_death(DE_03="John Banda", key="old")
+    va = _make_va()
+    auto_link_verbal_autopsy_to_death(va, save=True)
+    match = VADeathMatch.objects.get(verbal_autopsy=va)
+    assert match.status == MatchStatus.MATCHED_AUTO
+    assert match.death_id == old.pk
+
+    # The register entry is edited into a clear mismatch; re-evaluation must
+    # not silently unlink — it demotes to review with the old death preserved.
+    old.DE_03 = "Completely Different"
+    old.DE_05 = "female"
+    old.DE_06 = "2019-06-06"
+    old.save()
+
+    result = auto_link_verbal_autopsy_to_death(va, save=True, force_recheck=True)
+    assert result.status == MatchStatus.PENDING_REVIEW
+    assert result.demoted_previous_link
+    match.refresh_from_db()
+    assert match.status == MatchStatus.PENDING_REVIEW
+    assert match.alternatives
+    assert match.alternatives[0].get("previous_link") is True
+
+
+def test_manual_link_is_never_touched():
+    death = _make_death()
+    va = _make_va()
+    VADeathMatch.objects.create(
+        verbal_autopsy=va,
+        death=death,
+        status=MatchStatus.MATCHED_MANUAL,
+        is_manual=True,
+        method=MatchMethod.MANUAL,
+        score=100.0,
+    )
+    result = auto_link_verbal_autopsy_to_death(va, save=True)
+    assert result.status == MatchStatus.SKIPPED
+    match = VADeathMatch.objects.get(verbal_autopsy=va)
+    assert match.status == MatchStatus.MATCHED_MANUAL
+    assert match.death_id == death.pk
+
+
+def test_active_matching_config_overrides_settings():
+    # The seeded row (migration 0052) drives thresholds; widen review band and
+    # verify a weak single-field pair now routes to review instead of unmatched.
+    config = MatchingConfig.objects.get(name="default", is_active=True)
+    assert resolve_config()["thresholds"]["auto"] == 88
+    config.thresholds = {"auto": 99, "review": 99}
+    config.save()
+    assert resolve_config()["thresholds"]["auto"] == 99

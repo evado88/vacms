@@ -165,7 +165,7 @@ def test_fuzzy_name_match_with_consistent_demographics():
     va = _make_va(Id10017="John", Id10018="Banda")
     result = evaluate_va(va)
     assert result.status == MatchStatus.MATCHED_AUTO
-    assert result.method == MatchMethod.FUZZY_DEMOGRAPHIC
+    assert result.method == MatchMethod.PROBABILISTIC
     assert result.death_pk == death.pk
 
 
@@ -293,7 +293,7 @@ def test_command_dry_run_makes_no_writes(valid_death_id):
     _set_death_id(death, valid_death_id)
     _make_vasa(death_id=valid_death_id)
 
-    call_command("link_verbal_autopsies", "--model", "vasa")
+    call_command("link_deaths_to_vas", "--model", "vasa")
     assert VADeathMatch.objects.count() == 0  # dry-run default
 
 
@@ -311,7 +311,7 @@ def test_command_apply_persists_only_qualifying(valid_death_id):
         Id10018="Qqq",
     )
 
-    call_command("link_verbal_autopsies", "--model", "vasa", "--apply")
+    call_command("link_deaths_to_vas", "--model", "vasa", "--apply")
     linked = VADeathMatch.objects.filter(status=MatchStatus.MATCHED_AUTO)
     assert linked.count() == 1
     assert linked.first().death_id == death.pk

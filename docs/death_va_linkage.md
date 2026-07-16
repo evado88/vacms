@@ -120,7 +120,7 @@ A suggested structure may include modules such as:
 * `services/matching/scoring.py`
 * `services/matching/candidate_selection.py`
 * `services/matching/results.py`
-* `management/commands/link_verbal_autopsies.py`
+* `management/commands/link_deaths_to_vas.py`
 
 Adapt the structure to the existing VACMS project conventions after inspecting the repository.
 
@@ -253,17 +253,17 @@ Create a Django management command that can evaluate and link existing Verbal Au
 The command should follow the project’s naming conventions and support options comparable to:
 
 ```bash
-python manage.py link_verbal_autopsies --dry-run
-python manage.py link_verbal_autopsies --apply
-python manage.py link_verbal_autopsies --va-id <identifier>
-python manage.py link_verbal_autopsies --district <district>
-python manage.py link_verbal_autopsies --facility <facility>
-python manage.py link_verbal_autopsies --from-date <date>
-python manage.py link_verbal_autopsies --to-date <date>
-python manage.py link_verbal_autopsies --status unmatched
-python manage.py link_verbal_autopsies --limit 100
-python manage.py link_verbal_autopsies --recheck
-python manage.py link_verbal_autopsies --export-report <path>
+python manage.py link_deaths_to_vas --dry-run
+python manage.py link_deaths_to_vas --apply
+python manage.py link_deaths_to_vas --va-id <identifier>
+python manage.py link_deaths_to_vas --district <district>
+python manage.py link_deaths_to_vas --facility <facility>
+python manage.py link_deaths_to_vas --from-date <date>
+python manage.py link_deaths_to_vas --to-date <date>
+python manage.py link_deaths_to_vas --status unmatched
+python manage.py link_deaths_to_vas --limit 100
+python manage.py link_deaths_to_vas --recheck
+python manage.py link_deaths_to_vas --export-report <path>
 ```
 
 The exact options should be adapted to the project.

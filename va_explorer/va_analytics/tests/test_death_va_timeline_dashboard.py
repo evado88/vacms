@@ -54,6 +54,9 @@ class DeathVaTimelineBuilderTests(TestCase):
             "median_death_to_capture_days",
             "median_death_to_va_days",
             "median_capture_to_va_days",
+            "review_queue_pending",
+            "review_queue_ambiguous",
+            "matches_with_contradictions",
         }
         assert set(payload["delay_histogram"].keys()) == {
             "labels",

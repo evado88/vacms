@@ -48,6 +48,8 @@ class CandidateScore:
     score: float
     comparisons: List[FieldComparison] = field(default_factory=list)
     hard_disqualified: bool = False
+    # Which blocking passes surfaced this candidate (v2 union blocking).
+    block_sources: List[str] = field(default_factory=list)
 
     def _fields(self, classification: str) -> List[str]:
         return [c.field for c in self.comparisons if c.classification == classification]
@@ -91,16 +93,21 @@ class MatchResult:
     death_id: Optional[str]
     score: float
     score_separation: float
+    va_tool: str = ""  # "community_va" | "facility_va" | "vasa"
     supporting_fields: List[str] = field(default_factory=list)
     contradictory_fields: List[str] = field(default_factory=list)
     missing_fields: List[str] = field(default_factory=list)
     alternatives: List[dict] = field(default_factory=list)
     comparisons: List[dict] = field(default_factory=list)
+    block_sources: List[str] = field(default_factory=list)
+    config_name: str = ""
     algorithm_version: str = ""
     source: str = ""
     changed: bool = False
     previously_linked: bool = False
     previous_was_manual: bool = False
+    # Previously auto-linked but the fresh evaluation disagreed -> review.
+    demoted_previous_link: bool = False
     error: Optional[str] = None
 
     def to_report_row(self) -> dict:
@@ -108,6 +115,7 @@ class MatchResult:
             "va_model": self.va_model,
             "va_pk": self.va_pk,
             "va_identifier": self.va_identifier,
+            "va_tool": self.va_tool,
             "death_pk": self.death_pk,
             "death_id": self.death_id,
             "score": round(self.score, 2),
@@ -121,9 +129,11 @@ class MatchResult:
                 f"{a['death_id'] or a['death_pk']}={a['score']}"
                 for a in self.alternatives
             ),
+            "block_sources": ";".join(self.block_sources),
             "changed": self.changed,
             "previously_linked": self.previously_linked,
             "previous_was_manual": self.previous_was_manual,
+            "demoted_previous_link": self.demoted_previous_link,
             "source": self.source,
             "algorithm_version": self.algorithm_version,
             "error": self.error or "",
