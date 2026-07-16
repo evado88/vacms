@@ -8,6 +8,7 @@
 {% block css %}
   {{ block.super }}
   <link href="{% static 'css/home_dashboard.css' %}?v=20260219d" rel="stylesheet">
+  <link href="{% static 'css/death_va_timeline_dashboard.css' %}?v=20260716a" rel="stylesheet">
   <link href="{% static 'css/regional_operations.css' %}" rel="stylesheet">
   <link href="{% static 'css/rumor_details_dashboard.css' %}?v=20260524c" rel="stylesheet">
   <link href="{% static 'vendor/leaflet-1.9.2/leaflet.css' %}" rel="stylesheet">
@@ -34,6 +35,11 @@
       <li class="nav-item" role="presentation">
         <a class="nav-link {% if home_active_tab == 'va_statistics' %}active{% endif %}" id="tab-3-tab" data-tab="va_statistics" href="?tab=va_statistics" role="tab" aria-controls="tab-3" aria-selected="{% if home_active_tab == 'va_statistics' %}true{% else %}false{% endif %}">
           VA Statistics
+        </a>
+      </li>
+      <li class="nav-item" role="presentation">
+        <a class="nav-link {% if home_active_tab == 'va_timeline' %}active{% endif %}" id="va-timeline-tab" data-tab="va_timeline" href="{% url 'home:index' %}?tab=va_timeline" role="tab" aria-controls="va-timeline-pane" aria-selected="{% if home_active_tab == 'va_timeline' %}true{% else %}false{% endif %}">
+          Death &rarr; VA Timeline
         </a>
       </li>
       <li class="nav-item" role="presentation">
@@ -232,6 +238,9 @@
           <div class="home-panel home-panel-placeholder">Loading VA statistics...</div>
         </div>
       </div>
+      <div class="tab-pane dashboard-tab-panel fade {% if home_active_tab == 'va_timeline' %}show active{% endif %}" id="va-timeline-pane" data-tab-panel="va_timeline" role="tabpanel" aria-labelledby="va-timeline-tab">
+        {% include "va_analytics/partials/_death_va_timeline_dashboard.html" %}
+      </div>
       <div class="tab-pane dashboard-tab-panel fade home-trends-tab {% if home_active_tab == 'trends' %}show active{% endif %}" id="tab-4" data-tab-panel="trends" role="tabpanel" aria-labelledby="tab-4-tab">
         <div id="homeTrendsComponentSlot" data-component-slot data-component="trends" data-scope="trends,trends-data" data-endpoint="{% url 'home:home_trends_component' %}" data-cache-key="home:trends">
           <div class="home-panel home-panel-placeholder">Loading trends...</div>
@@ -256,6 +265,7 @@
   <script src="{% static 'js/rumor_word_cloud.js' %}?v=20260505b"></script>
   <script src="{% static 'js/rumor_details_dashboard.js' %}?v=20260524b"></script>
   <script src="{% static 'js/rumor_overview_dashboard.js' %}?v=20260524b"></script>
+  <script src="{% static 'js/death_va_timeline_dashboard.js' %}?v=20260715a"></script>
   <script src="{% static 'js/home.js' %}?v=20260430a"></script>
 
   <script>

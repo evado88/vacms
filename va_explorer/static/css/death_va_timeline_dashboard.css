@@ -1,0 +1,211 @@
+#deathVaTimelineApp {
+  --timeline-card: #ffffff;
+  --timeline-border: #e2e8f0;
+  --timeline-muted: #6b7280;
+  --timeline-text: #111827;
+  --timeline-gap: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--timeline-gap);
+  width: 100%;
+  max-width: 100%;
+  padding: 0;
+  overflow-x: hidden;
+}
+
+#deathVaTimelineApp .deaths-top-row,
+#deathVaTimelineApp .deaths-filters-row,
+#deathVaTimelineApp .deaths-content-row {
+  width: 100%;
+}
+
+#deathVaTimelineApp .deaths-content-row,
+#deathVaTimelineApp .deaths-inner-row {
+  display: flex;
+  gap: var(--timeline-gap);
+}
+
+#deathVaTimelineApp .deaths-col-right,
+#deathVaTimelineApp .deaths-inner-col {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+#deathVaTimelineApp .deaths-inner-row {
+  margin-top: var(--timeline-gap);
+}
+
+#deathVaTimelineApp .deaths-inner-col {
+  flex: 1;
+}
+
+#deathVaTimelineApp .sectionContainer {
+  height: auto;
+  padding: 0.75rem;
+  text-align: center;
+  background: var(--timeline-card);
+  border: 1px solid var(--timeline-border);
+  border-radius: 12px;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.05);
+}
+
+#deathVaTimelineApp .sectionContainer:hover {
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+}
+
+#deathVaTimelineApp .highlightsContainer {
+  display: flex;
+  align-items: stretch;
+  gap: var(--timeline-gap);
+}
+
+#deathVaTimelineApp .highlight {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--timeline-border);
+  border-radius: 10px;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
+}
+
+#deathVaTimelineApp .highlight h3 {
+  min-height: 3rem;
+  margin: 0;
+  padding: 0.45rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #1f2937;
+  background: #f8fafc;
+  border-bottom: 1px solid var(--timeline-border);
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-wrap: balance;
+}
+
+#deathVaTimelineApp .highlight p {
+  margin: 0;
+  padding: 0.45rem;
+  color: #0f172a;
+  background: var(--timeline-card);
+  font-size: 0.95rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+#deathVaTimelineApp .controls {
+  padding: 10px 12px;
+  text-align: left;
+  background: var(--timeline-card);
+  border: 1px solid var(--timeline-border);
+  border-radius: 12px;
+}
+
+#deathVaTimelineApp .filtersRow,
+#deathVaTimelineApp .mainFiltersContainer,
+#deathVaTimelineApp .betweenDatesContainer {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+#deathVaTimelineApp .filtersRow {
+  justify-content: space-between;
+  margin-top: 0.5rem;
+}
+
+#deathVaTimelineApp .controls label {
+  margin-bottom: 0;
+  font-size: 0.8rem;
+}
+
+#deathVaTimelineApp .controls :is(select, input[type="date"], button) {
+  min-height: 2.25rem;
+  height: 2.25rem;
+  border: 1px solid #dbe3ef;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  line-height: 1.2;
+}
+
+#deathVaTimelineApp .controls :is(select, input[type="date"]) {
+  padding: 0.35rem 0.65rem;
+  background: var(--timeline-card);
+}
+
+#deathVaTimelineApp .controls button {
+  padding: 0 0.9rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#deathVaTimelineApp #vaTimelineFiltersReset {
+  color: #ffffff;
+  background: #6b7280;
+  border-color: #6b7280;
+}
+
+#deathVaTimelineApp #vaTimelineFiltersReset:hover,
+#deathVaTimelineApp #vaTimelineFiltersReset:focus {
+  background: #4b5563;
+  border-color: #4b5563;
+}
+
+#deathVaTimelineApp h2 {
+  margin-bottom: 0.75rem;
+  color: var(--timeline-text);
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-wrap: balance;
+}
+
+#deathVaTimelineApp .chartsContainer {
+  background: var(--timeline-card);
+  border: 0;
+  box-shadow: none;
+}
+
+#deathVaTimelineApp .chart-canvas-wrap {
+  height: 260px;
+}
+
+#deathVaTimelineApp .chart-canvas-wrap.compact {
+  height: 220px;
+}
+
+#deathVaTimelineApp .dashboard-note,
+#deathVaTimelineApp .po-empty-state {
+  color: var(--timeline-muted);
+  font-size: 0.72rem;
+  font-style: italic;
+  text-wrap: pretty;
+}
+
+#deathVaTimelineApp .po-empty-state {
+  margin-top: 0.5rem;
+  text-align: left;
+}
+
+@media (max-width: 767.98px) {
+  #deathVaTimelineApp .highlightsContainer,
+  #deathVaTimelineApp .deaths-inner-row {
+    flex-direction: column;
+  }
+
+  #deathVaTimelineApp .filtersRow {
+    align-items: stretch;
+  }
+
+  #deathVaTimelineApp .mainFiltersContainer,
+  #deathVaTimelineApp .betweenDatesContainer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  #deathVaTimelineApp .controls :is(select, input[type="date"], button) {
+    width: 100%;
+  }
+}

@@ -16,6 +16,8 @@ from va_explorer.tests.factories import (
     VerbalAutopsyFactory,
 )
 from va_explorer.va_data_management.models import (
+    VASACareSeekingAdult,
+    VASACareSeekingChild,
     VASACareSeekingNeonate,
     VASASocialAutopsy,
 )
@@ -89,9 +91,37 @@ def test_vasa_detail_renders_sa_repeat_and_dq_tabs():
 
     assert "Social Autopsy" in content
     assert "SA_TAB_VALUE" in content
-    assert "Care-Seeking (Neonate) (1)" in content
+    assert "Care-Seeking" in content
+    assert "Care-Seeking (1)" not in content
+    assert "Care-Seeking (Neonate)" not in content
+    assert "Care-Seeking (Child)" not in content
+    assert "Care-Seeking (Adult)" not in content
     assert "Data Quality" in content
     assert "An error occurred" in content
+
+
+def test_vasa_detail_only_renders_care_seeking_fields_for_instrument():
+    _user, client = _viewer()
+    vasa = VASAFactory.create(instrument="neonate")
+    VASACareSeekingNeonate.objects.create(
+        vasa=vasa, key="neonate-row", N2213_2="NEONATE_PROVIDER"
+    )
+    # These rows should not leak into the single tab when the record is a
+    # neonate, even if malformed/imported data has populated another repeat.
+    VASACareSeekingChild.objects.create(
+        vasa=vasa, key="child-row", C3253_2="CHILD_PROVIDER"
+    )
+    VASACareSeekingAdult.objects.create(
+        vasa=vasa, key="adult-row", A4252_2="ADULT_PROVIDER"
+    )
+
+    response = client.get(f"/va_data_management/vasa/{vasa.id}")
+    assert response.status_code == 200
+    content = response.content.decode()
+
+    assert "NEONATE_PROVIDER" in content
+    assert "CHILD_PROVIDER" not in content
+    assert "ADULT_PROVIDER" not in content
 
 
 def _field_row(content, field_name):

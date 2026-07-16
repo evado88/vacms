@@ -324,9 +324,9 @@ class VASAShow(
     """Detail page for a VASA record.
 
     Tabs: Record (WHO columns, shared with VA), Social Autopsy (linked SA model),
-    a Care-Seeking tab per repeat group, Coding Issues / Data Quality, and Change
-    History. Social-autopsy / repeat data live on separate models and never enter
-    the coding pipeline.
+    one instrument-appropriate Care-Seeking tab, Coding Issues / Data Quality,
+    and Change History. Social-autopsy / repeat data live on separate models and
+    never enter the coding pipeline.
     """
 
     permission_required = "va_data_management.view_verbalautopsy"
@@ -370,38 +370,30 @@ class VASAShow(
             else None
         )
 
-        # Care-seeking repeat groups (one tab each; may have zero rows).
+        # Care-seeking repeat data is instrument-specific.  Keep one tab in
+        # the UI, but select the corresponding repeat model here so fields
+        # belonging to the other instruments can never be rendered.  Maternal
+        # records use the adult care-seeking repeat form in the VASA export.
+        repeat_group = {
+            "neonate": "neonate",
+            "child": "child",
+            "adult": "adult",
+            "maternal": "adult",
+        }.get(self.object.instrument)
+        care_seeking_records = []
+        if repeat_group:
+            care_seeking_records = [
+                _serialize_model_fields(
+                    row, skip=self._REPEAT_SKIP, value_fn=sa_display_value
+                )
+                for row in getattr(self.object, f"care_seeking_{repeat_group}").all()
+            ]
         context["care_seeking_groups"] = [
             {
-                "key": "neonate",
-                "label": "Care-Seeking (Neonate)",
-                "records": [
-                    _serialize_model_fields(
-                        row, skip=self._REPEAT_SKIP, value_fn=sa_display_value
-                    )
-                    for row in self.object.care_seeking_neonate.all()
-                ],
-            },
-            {
-                "key": "child",
-                "label": "Care-Seeking (Child)",
-                "records": [
-                    _serialize_model_fields(
-                        row, skip=self._REPEAT_SKIP, value_fn=sa_display_value
-                    )
-                    for row in self.object.care_seeking_child.all()
-                ],
-            },
-            {
-                "key": "adult",
-                "label": "Care-Seeking (Adult)",
-                "records": [
-                    _serialize_model_fields(
-                        row, skip=self._REPEAT_SKIP, value_fn=sa_display_value
-                    )
-                    for row in self.object.care_seeking_adult.all()
-                ],
-            },
+                "key": "all",
+                "label": "Care-Seeking",
+                "records": care_seeking_records,
+            }
         ]
 
         # Change history diffs.
