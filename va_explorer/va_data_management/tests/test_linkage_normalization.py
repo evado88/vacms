@@ -34,6 +34,20 @@ def test_name_token_helpers():
     assert sim > 90
 
 
+def test_nrc_name_evidence_aligns_components_without_reusing_tokens():
+    evidence = N.nrc_name_evidence("Jhon", "Banda", "Banda John")
+    assert evidence["exact"] is False
+    assert evidence["surname_min_similarity"] == 100
+    assert evidence["given_name_min_similarity"] > 90
+    assert evidence["unpaired_tokens"] == {"va": [], "death": []}
+
+
+def test_nrc_name_evidence_does_not_let_surname_mask_given_name_conflict():
+    evidence = N.nrc_name_evidence("Peter", "Banda", "John Banda")
+    assert evidence["surname_min_similarity"] == 100
+    assert evidence["given_name_min_similarity"] < 90
+
+
 # --- dates ------------------------------------------------------------------
 @pytest.mark.parametrize(
     ("value", "expected_day", "expected_precision"),
@@ -53,12 +67,26 @@ def test_parse_partial_date(value, expected_day, expected_precision):
     assert precision == expected_precision
 
 
+@pytest.mark.django_db
+def test_month_precision_is_not_scored_as_day_exact():
+    from va_explorer.va_data_management.utils.matching import resolve_config
+    from va_explorer.va_data_management.utils.matching.scoring import score_candidate
+
+    death = _make_death(DE_06="2024-03")
+    va = VerbalAutopsyFactory.create(Id10017="John", Id10018="Banda", Id10023="2024-03")
+    candidate = score_candidate(va, death, method=None, config=resolve_config())
+    dod = next(c for c in candidate.comparisons if c.field == "dod")
+    assert dod.classification == "compatible"
+    assert dod.awarded < dod.weight
+
+
 # --- identifiers / GPS ------------------------------------------------------
 def test_normalize_nrc():
     assert N.normalize_nrc(" 123456/78/9 ") == "123456789"
     assert N.normalize_nrc("123456789") == "123456789"
     assert N.normalize_nrc("000000") is None  # degenerate placeholder
     assert N.normalize_nrc("12345") is None  # too short
+    assert N.normalize_nrc("not applicable") is None
     assert N.normalize_nrc("") is None
 
 
@@ -125,7 +153,7 @@ def test_va_profile_age_and_year_only_dod():
         ageInDays="12190",
     )
     p = build_va_profile(va)
-    assert p.tool in {"community_va", "facility_va"}
+    assert p.tool == "unknown"
     assert p.dod == date(2023, 1, 1)
     assert p.dod_precision == "year"
     assert p.age_days == 12190

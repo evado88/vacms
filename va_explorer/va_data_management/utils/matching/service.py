@@ -18,6 +18,7 @@ Two guiding rules (from the specs):
   with the previous death preserved in ``alternatives`` — a human decides.
 """
 
+import copy
 import logging
 
 from django.conf import settings
@@ -26,6 +27,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from . import candidate_selection as cs
+from . import normalization as N
 from .config import resolve_config
 from .death_index import DeathIndex
 from .profiles import build_va_profile
@@ -33,6 +35,7 @@ from .results import MatchResult
 from .scoring import dod_year_conflict, score_candidate
 
 logger = logging.getLogger(__name__)
+MATCHING_MODES = {"off", "shadow", "review_only", "auto"}
 
 
 def _cfg(name, default):
@@ -41,6 +44,12 @@ def _cfg(name, default):
 
 def _va_identifier(va):
     return getattr(va, "instanceid", None) or getattr(va, "key", None)
+
+
+def _crosswalk_version():
+    from va_explorer.va_data_management.linkage.linkage_map import CROSSWALK_VERSION
+
+    return CROSSWALK_VERSION
 
 
 def _blank_result(va, status, source, config):
@@ -55,6 +64,8 @@ def _blank_result(va, status, source, config):
         score=0.0,
         score_separation=0.0,
         config_name=config["name"],
+        config_snapshot=copy.deepcopy(config),
+        crosswalk_version=_crosswalk_version(),
         algorithm_version=config["algorithm_version"],
         source=source,
     )
@@ -80,6 +91,8 @@ def _result_from_candidate(
         comparisons=[c.as_dict() for c in cand.comparisons],
         block_sources=cand.block_sources,
         config_name=config["name"],
+        config_snapshot=copy.deepcopy(config),
+        crosswalk_version=_crosswalk_version(),
         algorithm_version=config["algorithm_version"],
         source=source,
     )
@@ -87,7 +100,12 @@ def _result_from_candidate(
 
 def _evaluate(va, *, source, config, index):
     """Pure evaluation: ``(MatchResult, best_death_or_None, block_stats)``."""
-    from va_explorer.va_data_management.models import MatchMethod, MatchStatus
+    from va_explorer.va_data_management.models import (
+        MatchMethod,
+        MatchStatus,
+        ReviewMode,
+        ReviewReason,
+    )
 
     thresholds = config["thresholds"]
     profile = build_va_profile(va)
@@ -95,13 +113,10 @@ def _evaluate(va, *, source, config, index):
 
     def _finish(result, best_death, block_stats):
         result.va_tool = profile.tool
+        result.block_stats = block_stats
         return result, best_death, block_stats
 
-    # --- Stage 1: deterministic keys, each with a contradiction guard --------
-    det_death, det_method = cs.deterministic_candidate(
-        va, profile, index, rejected=rejected
-    )
-    if det_death is not None:
+    def _deterministic_result(det_death, det_method):
         death_profile = index.profile(det_death.pk)
         cand = score_candidate(
             va,
@@ -123,7 +138,9 @@ def _evaluate(va, *, source, config, index):
                 alternatives=[],
                 config=config,
             )
-            return _finish(result, det_death, {})
+            result.review_reason = ReviewReason.HARD_CONTRADICTION
+            result.review_mode = ReviewMode.IN_PERSON
+            return result, det_death
         if det_method == MatchMethod.EXACT_DEATH_ID:
             # The interviewer-entered Death ID is authoritative.
             cand.score = 100.0
@@ -136,9 +153,141 @@ def _evaluate(va, *, source, config, index):
             alternatives=[],
             config=config,
         )
+        return result, det_death
+
+    # --- Stage 1: primary exact keys, guarded against contradictions ---------
+    det_death, det_method = cs.deterministic_candidate(
+        va, profile, index, rejected=rejected, phase="primary"
+    )
+    if det_death is not None:
+        result, det_death = _deterministic_result(det_death, det_method)
         return _finish(result, det_death, {})
 
-    # --- Stage 2: probabilistic over union-of-blocks candidates --------------
+    # --- Stage 2: exact NRC, with exact/fuzzy component-level name gates -----
+    nrc_candidates = cs.nrc_name_candidates(profile, index, rejected=rejected)
+    if nrc_candidates:
+        unique_nrc = len(nrc_candidates) == 1
+        death, evidence = nrc_candidates[0]
+        death_profile = index.profile(death.pk)
+        method = (
+            MatchMethod.NAME_NRC_EXACT
+            if evidence["exact"]
+            else MatchMethod.NAME_NRC_PROBABILISTIC
+        )
+        cand = score_candidate(
+            va,
+            death,
+            method=method,
+            config=config,
+            va_profile=profile,
+            death_profile=death_profile,
+            block_sources=["nrc"],
+        )
+        component_comparison = {
+            "field": "nrc_name_components",
+            "va_value": profile.name_raw,
+            "death_value": death_profile.name_raw,
+            "classification": "exact" if evidence["exact"] else "fuzzy",
+            "weight": 0,
+            "awarded": 0,
+            "similarity": evidence["overall_name_similarity"],
+            "evidence": evidence,
+        }
+
+        has_complete_components = bool(
+            N.name_token_set(profile.given_name_raw)
+            and N.name_token_set(profile.surname_raw)
+            and evidence["given_name_min_similarity"] is not None
+            and evidence["surname_min_similarity"] is not None
+        )
+        no_unpaired_tokens = not any(evidence["unpaired_tokens"].values())
+        exact_safe = unique_nrc and has_complete_components and evidence["exact"]
+        fuzzy_safe = bool(
+            unique_nrc
+            and has_complete_components
+            and thresholds.get("name_nrc_probabilistic_auto_enabled", False)
+            and (evidence["overall_name_similarity"] or 0)
+            >= float(thresholds["name_nrc_auto_similarity"])
+            and (evidence["surname_min_similarity"] or 0)
+            >= float(thresholds["name_nrc_surname_min_similarity"])
+            and (evidence["given_name_min_similarity"] or 0)
+            >= float(thresholds["name_nrc_given_min_similarity"])
+            and no_unpaired_tokens
+        )
+        hard_conflict = dod_year_conflict(profile, death_profile) or any(
+            comparison.field in {"sex", "dod"}
+            and comparison.classification == "contradictory"
+            for comparison in cand.comparisons
+        )
+
+        if not unique_nrc:
+            status = MatchStatus.PENDING_REVIEW
+            review_reason = ReviewReason.NRC_DUPLICATE
+        elif hard_conflict:
+            status = MatchStatus.PENDING_REVIEW
+            review_reason = ReviewReason.HARD_CONTRADICTION
+        elif exact_safe or fuzzy_safe:
+            status = MatchStatus.MATCHED_AUTO
+            review_reason = None
+        elif not has_complete_components:
+            status = MatchStatus.PENDING_REVIEW
+            review_reason = ReviewReason.NRC_NAME_MISSING
+        elif (evidence["surname_min_similarity"] or 0) >= float(
+            thresholds["name_nrc_surname_min_similarity"]
+        ) and (evidence["given_name_min_similarity"] or 0) < float(
+            thresholds["name_nrc_given_min_similarity"]
+        ):
+            status = MatchStatus.PENDING_REVIEW
+            review_reason = ReviewReason.NRC_GIVEN_NAME_CONFLICT
+        else:
+            status = MatchStatus.PENDING_REVIEW
+            review_reason = ReviewReason.NRC_NAME_CONFLICT
+
+        alternatives = []
+        for alternate_death, alternate_evidence in nrc_candidates[1:4]:
+            alternate_profile = index.profile(alternate_death.pk)
+            alternate = score_candidate(
+                va,
+                alternate_death,
+                method=(
+                    MatchMethod.NAME_NRC_EXACT
+                    if alternate_evidence["exact"]
+                    else MatchMethod.NAME_NRC_PROBABILISTIC
+                ),
+                config=config,
+                va_profile=profile,
+                death_profile=alternate_profile,
+                block_sources=["nrc"],
+            ).as_alternative()
+            alternate["name_evidence"] = alternate_evidence
+            alternatives.append(alternate)
+
+        result = _result_from_candidate(
+            va,
+            cand,
+            status,
+            source=source,
+            separation=cand.score,
+            alternatives=alternatives,
+            config=config,
+        )
+        result.supporting_fields = list(
+            dict.fromkeys(["nrc", *result.supporting_fields])
+        )
+        result.comparisons.append(component_comparison)
+        result.review_reason = review_reason
+        result.review_mode = ReviewMode.IN_PERSON if review_reason else None
+        return _finish(result, death, {"nrc": len(nrc_candidates)})
+
+    # --- Stage 3: secondary exact keys, guarded against contradictions -------
+    det_death, det_method = cs.deterministic_candidate(
+        va, profile, index, rejected=rejected, phase="secondary"
+    )
+    if det_death is not None:
+        result, det_death = _deterministic_result(det_death, det_method)
+        return _finish(result, det_death, {})
+
+    # --- Stage 4: probabilistic over union-of-blocks candidates --------------
     candidates, block_stats = cs.union_block_candidates(
         profile, index, thresholds=thresholds, rejected=rejected
     )
@@ -176,8 +325,10 @@ def _evaluate(va, *, source, config, index):
     tie_margin = float(thresholds.get("tie_margin", thresholds.get("min_sep", 5)))
     min_sep = float(thresholds.get("min_sep", 5))
 
-    if best.score >= auto and not best.hard_disqualified:
-        if separation >= max(min_sep, tie_margin):
+    if best.score >= review and separation < tie_margin:
+        status = MatchStatus.AMBIGUOUS
+    elif best.score >= auto and not best.hard_disqualified:
+        if separation >= min_sep:
             status = MatchStatus.MATCHED_AUTO
         else:
             # Top candidates too close to safely distinguish -> review.
@@ -197,6 +348,12 @@ def _evaluate(va, *, source, config, index):
         alternatives=alternatives,
         config=config,
     )
+    if status == MatchStatus.AMBIGUOUS:
+        result.review_reason = ReviewReason.CLOSE_CANDIDATES
+        result.review_mode = ReviewMode.DESK
+    elif status == MatchStatus.PENDING_REVIEW:
+        result.review_reason = ReviewReason.SCORE_REVIEW_BAND
+        result.review_mode = ReviewMode.DESK
     # Only surface a proposed death for actionable outcomes.
     if status == MatchStatus.UNMATCHED:
         result.death_pk = None
@@ -227,6 +384,13 @@ def _existing_match(va):
         return None
 
 
+def _locked_existing_match(va):
+    from va_explorer.va_data_management.models import VADeathMatch
+
+    field = "verbal_autopsy" if va._meta.model_name == "verbalautopsy" else "vasa"
+    return VADeathMatch.objects.select_for_update().filter(**{field: va}).first()
+
+
 def _reconcile_previous_link(result, existing):
     """Never silently unlink: demote a changed auto-link to review.
 
@@ -236,7 +400,11 @@ def _reconcile_previous_link(result, existing):
     preserved at the top of ``alternatives``. Manual links never reach here
     (they are skipped upstream unless force-rechecked by an authorised run).
     """
-    from va_explorer.va_data_management.models import MatchStatus
+    from va_explorer.va_data_management.models import (
+        MatchStatus,
+        ReviewMode,
+        ReviewReason,
+    )
 
     if existing is None or existing.is_manual or not existing.is_linked:
         return result
@@ -245,6 +413,8 @@ def _reconcile_previous_link(result, existing):
         return result
 
     result.status = MatchStatus.PENDING_REVIEW
+    result.review_reason = ReviewReason.PREVIOUS_LINK_CHANGED
+    result.review_mode = ReviewMode.DESK
     result.demoted_previous_link = True
     previous = {
         "death_pk": existing.death_id,
@@ -266,6 +436,7 @@ def auto_link_verbal_autopsy_to_death(
     *,
     save=True,
     force_recheck=False,
+    review_only=False,
     source="service",
     config=None,
     index=None,
@@ -276,14 +447,19 @@ def auto_link_verbal_autopsy_to_death(
     is set: matching failures are logged and recorded as status=ERROR so
     ingestion is never broken by the matcher.
     """
-    from va_explorer.va_data_management.models import MatchStatus
+    from va_explorer.va_data_management.models import (
+        MatchStatus,
+        ReviewMode,
+        ReviewReason,
+    )
 
     va = verbal_autopsy
     config = config or resolve_config()
-    existing = _existing_match(va)
+    existing = _locked_existing_match(va) if save else _existing_match(va)
 
-    # Never overwrite a manually confirmed link unless explicitly rechecking.
-    if existing is not None and existing.is_manual and not force_recheck:
+    # Human-confirmed links are authoritative. Force recheck may inspect them in
+    # dry-run mode, but no automatic pathway may overwrite one.
+    if existing is not None and existing.is_manual:
         result = _blank_result(va, existing.status, source, config)
         result.death_pk = existing.death_id
         result.previously_linked = existing.is_linked
@@ -295,6 +471,10 @@ def auto_link_verbal_autopsy_to_death(
         result, best_death, _ = _evaluate(
             va, source=source, config=config, index=_index_for(va, index)
         )
+        if review_only and result.status == MatchStatus.MATCHED_AUTO:
+            result.status = MatchStatus.PENDING_REVIEW
+            result.review_reason = ReviewReason.SCORE_REVIEW_BAND
+            result.review_mode = ReviewMode.DESK
         result = _reconcile_previous_link(result, existing)
         if result.demoted_previous_link and result.death_pk is None:
             # Keep pointing at the previous death while a human reviews.
@@ -309,9 +489,11 @@ def auto_link_verbal_autopsy_to_death(
             raise
         result = _blank_result(va, MatchStatus.ERROR, source, config)
         result.error = str(exc)
-        best_death = None
         if save:
-            _persist(va, result, best_death, existing)
+            if existing is not None and existing.is_linked:
+                _record_error(existing, result)
+            else:
+                _persist(va, result, None, existing)
         return result
 
     result.previously_linked = bool(existing and existing.is_linked)
@@ -343,12 +525,18 @@ def _persist(va, result, best_death, existing):
             or (existing.death_id or None) != (result.death_pk or None)
             or existing.method != (result.method or None)
             or round(existing.score, 2) != round(result.score, 2)
+            or existing.review_reason != (result.review_reason or None)
+            or existing.review_mode != (result.review_mode or None)
+            or existing.config_snapshot != result.config_snapshot
+            or existing.crosswalk_version != (result.crosswalk_version or None)
         )
 
     if not changed:
         # Nothing meaningful changed: just bump the re-eval timestamp via an
         # UPDATE so simple_history records no spurious audit row.
-        VADeathMatch.objects.filter(pk=match.pk).update(last_evaluated_at=now)
+        VADeathMatch.objects.filter(pk=match.pk).update(
+            last_evaluated_at=now, last_error={}
+        )
         return False
 
     match.death = best_death
@@ -360,6 +548,12 @@ def _persist(va, result, best_death, existing):
     match.source = result.source
     match.algorithm_version = result.algorithm_version
     match.config_version = result.config_name or None
+    match.config_snapshot = result.config_snapshot
+    match.crosswalk_version = result.crosswalk_version or None
+    match.review_reason = result.review_reason or None
+    match.review_mode = result.review_mode or None
+    match.rejected_reason = None
+    match.last_error = {}
     match.supporting_fields = result.supporting_fields
     match.contradictory_fields = result.contradictory_fields
     match.missing_fields = result.missing_fields
@@ -369,13 +563,44 @@ def _persist(va, result, best_death, existing):
     match.last_evaluated_at = now
     if result.status in {MatchStatus.MATCHED_AUTO, MatchStatus.MATCHED_MANUAL}:
         match.matched_at = now
+    elif match.death_id is None:
+        match.matched_at = None
+    match.decision_version += 1
     match.save()
     return True
 
 
+def _record_error(match, result):
+    """Record matcher failure without destroying an authoritative link."""
+    match.last_error = {
+        "message": result.error,
+        "source": result.source,
+        "occurred_at": timezone.now().isoformat(),
+        "algorithm_version": result.algorithm_version,
+        "config_version": result.config_name,
+        "crosswalk_version": result.crosswalk_version,
+    }
+    match.last_evaluated_at = timezone.now()
+    match.save(update_fields=["last_error", "last_evaluated_at"])
+
+
 def matching_enabled():
-    """Whether VA->Death auto-linking is turned on (``VA_DEATH_MATCH_ENABLED``)."""
-    return bool(_cfg("VA_DEATH_MATCH_ENABLED", False))
+    """Whether any automatic VA->Death evaluation mode is enabled."""
+    return matching_mode() != "off"
+
+
+def matching_mode():
+    """Return off/shadow/review_only/auto with legacy-flag compatibility."""
+    mode = _cfg("VA_DEATH_MATCH_MODE", None)
+    if mode in (None, ""):
+        return "auto" if _cfg("VA_DEATH_MATCH_ENABLED", False) else "off"
+    mode = str(mode).strip().lower()
+    if mode not in MATCHING_MODES:
+        raise ValueError(
+            f"VA_DEATH_MATCH_MODE must be one of {sorted(MATCHING_MODES)}; "
+            f"got {mode!r}."
+        )
+    return mode
 
 
 def schedule_link_for_va_ids(ids, *, model_name, source):
@@ -386,7 +611,7 @@ def schedule_link_for_va_ids(ids, *, model_name, source):
     auto-linking on. Enqueues after the surrounding transaction commits so the
     matcher never queries half-written data.
     """
-    if not _cfg("VA_DEATH_MATCH_ENABLED", False):
+    if not matching_enabled():
         return
     ids = [int(i) for i in ids if i is not None]
     if not ids:
@@ -410,6 +635,7 @@ def run_matching(
     on_result=None,
     config_name=None,
     death_index=None,
+    review_only=False,
 ):
     """Drive matching over an iterable of VA/VASA instances.
 
@@ -450,12 +676,14 @@ def run_matching(
                 va,
                 save=True,
                 force_recheck=force_recheck,
+                review_only=review_only,
                 source=source,
                 config=config,
                 index=index,
             )
             if result.changed:
                 summary["changed"] += 1
+            _collect_blocks(result, result.block_stats)
         else:
             existing = _existing_match(va)
             if existing is not None and existing.is_manual and not force_recheck:

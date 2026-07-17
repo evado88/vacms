@@ -221,26 +221,30 @@ def name_initials(value) -> Optional[str]:
     return "".join(sorted(t[0] for t in tokens))
 
 
-def surname_phonetic(value) -> Optional[str]:
-    """Phonetic (soundex) encoding of the last name token, for blocking.
-
-    Falls back to metaphone when soundex cannot encode the token (non-ASCII);
-    returns None for blank names so a missing surname never forms a block.
-    """
-    name = normalize_name(value)
-    if not name:
-        return None
-    surname = name.split()[-1]
+def _phonetic_token(token) -> Optional[str]:
     try:
-        code = jellyfish.soundex(surname)
+        code = jellyfish.soundex(token)
     except Exception:
         code = None
     if not code:
         try:
-            code = jellyfish.metaphone(surname)
+            code = jellyfish.metaphone(token)
         except Exception:
             return None
     return code or None
+
+
+def name_phonetics(value) -> frozenset:
+    """Phonetic codes for every normalized name token, independent of order."""
+    return frozenset(
+        code for token in name_token_set(value) if (code := _phonetic_token(token))
+    )
+
+
+def surname_phonetic(value) -> Optional[str]:
+    """Phonetic encoding of the last name token for VA-side blocking."""
+    name = normalize_name(value)
+    return _phonetic_token(name.split()[-1]) if name else None
 
 
 def jaro_winkler(a: str, b: str) -> float:
@@ -263,6 +267,116 @@ def best_token_alignment_similarity(a, b) -> Optional[float]:
         ta, tb = tb, ta
     scores = [max(jaro_winkler(t, other) for other in tb) for t in ta]
     return sum(scores) / len(scores)
+
+
+def one_to_one_token_alignment(a, b) -> dict:
+    """Greedily align name tokens without reusing a token on either side."""
+    left = sorted(name_token_set(a))
+    right = sorted(name_token_set(b))
+    if not left or not right:
+        return {
+            "similarity": None,
+            "pairs": [],
+            "unpaired_left": left,
+            "unpaired_right": right,
+        }
+    scored = sorted(
+        (
+            (jaro_winkler(l_token, r_token), li, ri, l_token, r_token)
+            for li, l_token in enumerate(left)
+            for ri, r_token in enumerate(right)
+        ),
+        reverse=True,
+    )
+    used_left, used_right, pairs = set(), set(), []
+    target = min(len(left), len(right))
+    for score, li, ri, l_token, r_token in scored:
+        if li in used_left or ri in used_right:
+            continue
+        used_left.add(li)
+        used_right.add(ri)
+        pairs.append({"left": l_token, "right": r_token, "similarity": round(score, 2)})
+        if len(pairs) == target:
+            break
+    return {
+        "similarity": (
+            sum(pair["similarity"] for pair in pairs) / len(pairs) if pairs else None
+        ),
+        "pairs": pairs,
+        "unpaired_left": [token for i, token in enumerate(left) if i not in used_left],
+        "unpaired_right": [
+            token for i, token in enumerate(right) if i not in used_right
+        ],
+    }
+
+
+def nrc_name_evidence(given_name, surname, death_name) -> dict:
+    """Component-level name evidence for an exact-NRC candidate.
+
+    Death stores one free-text full name while VA/VASA has WHO given/surname
+    fields. The surname is aligned to its best Death-name token; given names are
+    aligned against the remaining tokens so a matching surname cannot mask a
+    materially different first name.
+    """
+    death_tokens = sorted(name_token_set(death_name))
+    surname_tokens = sorted(name_token_set(surname))
+    given_tokens = sorted(name_token_set(given_name))
+    full_va = " ".join(token for token in (given_name, surname) if norm_text(token))
+    overall = one_to_one_token_alignment(full_va, death_name)
+
+    surname_pairs = []
+    used_death = set()
+    for surname_token in surname_tokens:
+        choices = [
+            (jaro_winkler(surname_token, token), idx, token)
+            for idx, token in enumerate(death_tokens)
+            if idx not in used_death
+        ]
+        if not choices:
+            break
+        score, idx, token = max(choices)
+        used_death.add(idx)
+        surname_pairs.append(
+            {"left": surname_token, "right": token, "similarity": round(score, 2)}
+        )
+
+    remaining_death = [
+        token for idx, token in enumerate(death_tokens) if idx not in used_death
+    ]
+    given = one_to_one_token_alignment(
+        " ".join(given_tokens), " ".join(remaining_death)
+    )
+    surname_similarity = (
+        sum(pair["similarity"] for pair in surname_pairs) / len(surname_pairs)
+        if surname_pairs
+        else None
+    )
+    return {
+        "exact": bool(
+            name_token_set(full_va)
+            and name_token_set(full_va) == name_token_set(death_name)
+        ),
+        "overall_name_similarity": overall["similarity"],
+        "given_name_similarity": given["similarity"],
+        "given_name_min_similarity": (
+            min(pair["similarity"] for pair in given["pairs"])
+            if given["pairs"]
+            else None
+        ),
+        "surname_similarity": surname_similarity,
+        "surname_min_similarity": (
+            min(pair["similarity"] for pair in surname_pairs) if surname_pairs else None
+        ),
+        "token_pairs": {
+            "surname": surname_pairs,
+            "given": given["pairs"],
+            "overall": overall["pairs"],
+        },
+        "unpaired_tokens": {
+            "va": overall["unpaired_left"],
+            "death": overall["unpaired_right"],
+        },
+    }
 
 
 # --- v2 additions: dates -------------------------------------------------------
@@ -338,6 +452,14 @@ def normalize_nrc(value) -> Optional[str]:
         return None
     cleaned = re.sub(r"[^0-9A-Za-z]", "", text).upper()
     if len(cleaned) < 6:
+        return None
+    if cleaned in {
+        "UNKNOWN",
+        "NOTKNOWN",
+        "NOTAPPLICABLE",
+        "NONEPROVIDED",
+        "WITHOUTNRC",
+    }:
         return None
     if len(set(cleaned)) == 1:  # e.g. "000000" / "999999" placeholders
         return None

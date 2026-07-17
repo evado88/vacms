@@ -1,0 +1,43 @@
+concept,de_field,who_ids,vasa_names,label_de,label_who,confidence,rule,status
+deceased_name,DE_03,Id10017;Id10018,A4001;C3012;N2023;Q1202,DE-03 Name of the deceased,(Id10017) What was the first or given name(s) of the deceased?,100.0,name token-set; VA value is Id10017 + Id10018 concatenated,confirmed
+deceased_nickname,DE_03A,Id10017;Id10018,A4001;C3012;N2023;Q1202,,(Id10017) What was the first or given name(s) of the deceased?,0.0,supporting name evidence only,absent_in_form
+household_head_name,DE_02,Id10061,Q1209,DE-02 What is the name of the head of the household?,(Id10061) What was the name of the father?,79.0,supporting evidence; Id10061 is 'name of the father' (often the household head); VASA carries it as Q1209 (WHO_name Id10061),confirmed
+household_head_nickname,DE_02A,Id10061,Q1209,,(Id10061) What was the name of the father?,0.0,supporting name evidence only,absent_in_form
+mother_name,,Id10062,Q1208,,(Id10062) What was the name of the mother?,0.0,derived: parse 'Baby of <mother>' out of DE-03 and compare against Id10062 (neonate/child deaths),confirmed
+sex,DE_05,Id10019,Q1601,DE-05 Sex of the deceased,(Id10019) What was the sex of the deceased?,100.0,choice-map category; disagreement is a hard contradiction,confirmed
+dob,DE_04,Id10021;Id10020,Q1602;Q1603,DE-04 Date of Birth of the deceased,(Id10021) When was the deceased born?,89.0,date with partial precision; Id10020 gates whether DOB is known,confirmed
+dod,DE_06,Id10023;Id10023_a;Id10023_b;Id10024,Id10024;Q1606;Q1606_a;Q1606_b,DE-06 Date of death of the deceased,(Id10023) When did (s)he die?,80.0,date distance bands; Id10024 provides year-only precision,confirmed
+age,,ageInDays;ageInYears;age_group,ageInDays;ageInYears;age_group,,[What age group corresponds to the deceased?],0.0,derived age-in-days at death; compared with relative tolerance,confirmed
+place_of_death,DE_07,Id10058,Q1604,DE-07 Place of death,(Id10058) Where did the deceased die?,35.0,choice-map category (facility/community/transit),confirmed
+usual_residence,DE_22,Id10055,,DE-22 Residential Address of Informant,(Id10055) What was her/his place of usual residence? (The place where the person lived most of the year) (Village),47.0,"DE-22 is the INFORMANT's residential address, not the deceased's — needs data-owner confirmation before use",proposed
+nrc,DE_08,Id10073,,DE-08 NRC NUMBER for the Deceased,(Id10073) [National identification number of deceased],76.0,exact identifier block gated by exact or thresholded component name agreement; NRC-only and duplicate-NRC pairs require review,confirmed
+ssn,DE_10,,,DE-10 What is ${DE-03}'s Social Security Number?,,0.0,no WHO counterpart found by label analysis,proposed
+nationality,DE_09,Id10052,,DE-09 Nationality status?,(Id10052) What was her/his citizenship/nationality?,81.0,choice-map category (citizen/foreign); low weight,confirmed
+marital_status,DE_11,Id10059,A4002,DE-11 Marital status of the deceased,(Id10059) What was her/his marital status?,71.0,choice-map category; low weight,confirmed
+occupation,DE_12,Id10066,A4007_1;C3018_1,DE-12 Occupation of the deceased,"(Id10066) What was her/his occupation, that is, what kind of work did (s)he mainly do?",72.0,free-text token overlap; low weight,confirmed
+education,DE_13,Id10063,A4004;C3015,DE-13 What was ${DE-03}'s highest level of education?,(Id10063) What was her/his highest level of schooling?,81.0,choice-map category; low weight,confirmed
+died_pregnant,DE_16,Id10305;Id10310,A4167;A4178_2,DE-16 Did  ${DE-03} die Pregnant?,(Id10305)Was she pregnant or in labour at the time of death,72.0,pregnancy flag (Id10310 is the negation); female adults only,confirmed
+died_childbirth,DE_17,Id10312,A4168_1,DE-17 Did  ${DE-03} die during childbirth?,(Id10312) Did she die during labour or delivery?,72.0,pregnancy flag; female adults only,confirmed
+died_postpartum42,DE_18,Id10306;Id10315,A4168,DE-18 Did  ${DE-03} die within 42 days after the end of a Pregnancy or childbirth?,"(Id10306) Did she die within 6 weeks of delivery, abortion or miscarriage?",82.0,pregnancy flag (42 days / 6 weeks); female adults only,confirmed
+informant_name,DE_19,Id10007,Q1401,DE-19 Name of Informant,(Id10007) [What is the name of VA respondent?],63.0,supporting evidence only (same informant strengthens a match),confirmed
+informant_relationship,DE_25,Id10008,Q1403,DE-25 What is your relationship to the deceased?,(Id10008) What is your/the respondent's relationship to the deceased?,100.0,supporting evidence only,confirmed
+death_registered,DE_30,Id10069_a;Id10462,A4351;A4363;C3351;C3363;N2271,DE-30 Did you register  ${DE-03}'s death with DNRPC ?,(Id10069_a) Do you have a death registration certificate?,56.0,yes/no agreement; weak supporting evidence,confirmed
+death_reg_no,,Id10070,A4364;C3364;N2284,,(Id10070) [Death registration number/certificate],0.0,deterministic when both sides present; currently inert (no E_DEATH source field),confirmed
+gps,DE_34,geopoint,,DE-34 Capture GPS Cordinates for the Household,(geopoint)Gps Location,40.0,haversine distance bands,confirmed
+province,province,province,,[Select province],[Select province],100.0,blocking + scoring,confirmed
+district,district,district,,[Select district],[Select district],100.0,blocking + scoring; facility VA derives district from location FK,confirmed
+constituency,constituency,constituency,,[Select Constituency],[Select Constituency],100.0,blocking,confirmed
+ward,ward,ward,,[Select Ward],[Select Ward],100.0,blocking + scoring,confirmed
+ea,ea,ea,,[Select Enumeration Area],[Select Enumeration Area],100.0,blocking + scoring (digit-normalised exact),confirmed
+,DE_01,Id10455,,DE-01 Household ID,(Id10455) Does it take more than 2 hours to get to the nearest hospital or health facility from the deceased's household?,86.0,label_match,proposed
+,DE_14,Id10131,,DE-14 Briefly write a 10 word summary of circumstances around death (provide examples),(Id10131) Was there any diagnosis by a health professional of measles?,54.0,label_match,proposed
+,DE_15,Id10019,,DE-15 What was the cause of death?,(Id10019) What was the sex of the deceased?,80.0,label_match,proposed
+,DE_31,Id10071,,DE-31 Do you know the procedure for death Registration and/or Certification as required by DNRPC ?,(Id10071) [Date of registration],75.0,label_match,proposed
+,DE_20,,,,,,informant date of birth (not the deceased),excluded
+,DE_21,,,,,,informant sex (not the deceased),excluded
+,DE_23,,,,,,informant NRC — NOT the deceased's NRC (that is DE-08),excluded
+,DE_24,,,,,,informant nationality (deceased nationality is DE-09),excluded
+,DE_26,,,,,,informant telephone number,excluded
+,DE_27,,,,,,VA interview scheduling date,excluded
+,DE_28,,,,,,contact person name,excluded
+,DE_29,,,,,,contact person telephone number,excluded

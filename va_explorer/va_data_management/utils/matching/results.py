@@ -77,6 +77,11 @@ class CandidateScore:
             "death_id": self.death_id,
             "score": round(self.score, 2),
             "method": self.method,
+            "supporting_fields": self.supporting_fields,
+            "contradictory_fields": self.contradictory_fields,
+            "missing_fields": self.missing_fields,
+            "comparisons": [comparison.as_dict() for comparison in self.comparisons],
+            "block_sources": self.block_sources,
         }
 
 
@@ -100,8 +105,13 @@ class MatchResult:
     alternatives: List[dict] = field(default_factory=list)
     comparisons: List[dict] = field(default_factory=list)
     block_sources: List[str] = field(default_factory=list)
+    block_stats: dict = field(default_factory=dict)
     config_name: str = ""
+    config_snapshot: dict = field(default_factory=dict)
+    crosswalk_version: str = ""
     algorithm_version: str = ""
+    review_reason: Optional[str] = None
+    review_mode: Optional[str] = None
     source: str = ""
     changed: bool = False
     previously_linked: bool = False
@@ -130,6 +140,10 @@ class MatchResult:
                 for a in self.alternatives
             ),
             "block_sources": ";".join(self.block_sources),
+            "review_reason": self.review_reason or "",
+            "review_mode": self.review_mode or "",
+            "config_version": self.config_name,
+            "crosswalk_version": self.crosswalk_version,
             "changed": self.changed,
             "previously_linked": self.previously_linked,
             "previous_was_manual": self.previous_was_manual,

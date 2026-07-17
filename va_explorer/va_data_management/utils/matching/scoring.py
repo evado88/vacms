@@ -44,7 +44,7 @@ def _name_similarity(a_raw, b_raw):
         s
         for s in (
             N.name_similarity(a_raw, b_raw),
-            N.best_token_alignment_similarity(a_raw, b_raw),
+            N.one_to_one_token_alignment(a_raw, b_raw)["similarity"],
         )
         if s is not None
     ]
@@ -123,6 +123,16 @@ def _cmp_dod(va_p, d_p, tol_days):
         if va_p.dod.year == d_p.dod.year:
             return COMPATIBLE, DOD_YEAR_ONLY_FRACTION, None, False
         return CONTRADICTORY, 0.0, None, False  # soft: precision too low for hard
+    month_only = "month" in {va_p.dod_precision, d_p.dod_precision}
+    if month_only:
+        if (va_p.dod.year, va_p.dod.month) == (d_p.dod.year, d_p.dod.month):
+            return COMPATIBLE, 0.7, None, False
+        diff = abs((va_p.dod - d_p.dod).days)
+        if diff <= 31:
+            return FUZZY, 0.4, None, False
+        if diff <= 90:
+            return FUZZY, 0.2, None, False
+        return CONTRADICTORY, 0.0, None, True
     diff = abs((va_p.dod - d_p.dod).days)
     if diff <= tol_days:
         return (
@@ -144,6 +154,14 @@ def _cmp_dob_or_age(va_p, d_p, age_tol_years):
         if year_only:
             if va_p.dob.year == d_p.dob.year:
                 return COMPATIBLE, 0.4, None, False
+            return CONTRADICTORY, 0.0, None, False
+        month_only = "month" in {va_p.dob_precision, d_p.dob_precision}
+        if month_only:
+            if (va_p.dob.year, va_p.dob.month) == (d_p.dob.year, d_p.dob.month):
+                return COMPATIBLE, 0.6, None, False
+            diff = abs((va_p.dob - d_p.dob).days)
+            if diff <= 366:
+                return FUZZY, 0.3, None, False
             return CONTRADICTORY, 0.0, None, False
         diff = abs((va_p.dob - d_p.dob).days)
         if diff == 0:
@@ -274,6 +292,11 @@ def score_candidate(
     def add(fieldname, weight, outcome, va_value, death_value):
         nonlocal hard
         classification, fraction, similarity, h = outcome
+        awarded = weight * fraction
+        if classification == CONTRADICTORY:
+            awarded = -weight * float(
+                thresholds.get("contradiction_penalty_fraction", 0.5)
+            )
         comps.append(
             FieldComparison(
                 field=fieldname,
@@ -281,7 +304,7 @@ def score_candidate(
                 death_value=death_value,
                 classification=classification,
                 weight=weight,
-                awarded=weight * fraction,
+                awarded=awarded,
                 similarity=similarity,
             )
         )
@@ -383,20 +406,39 @@ def score_candidate(
         d_p.nationality_category,
     )
 
-    # Score = agreement over comparable (non-missing) fields only; a missing
-    # field contributes zero and is excluded from the denominator.
-    denom = sum(c.weight for c in comps if c.classification != MISSING)
-    num = sum(c.awarded for c in comps)
-    raw = (100.0 * num / denom) if denom > 0 else 0.0
+    # Fixed core denominator: missing identity evidence is neutral (zero) but
+    # cannot inflate a sparse pair by shrinking the denominator. Contextual
+    # fields are capped supporting bonuses rather than mandatory evidence.
+    core_fields = {
+        "name",
+        "dod",
+        "dob_or_age",
+        "sex",
+        "ea",
+        "ward",
+        "gps",
+        "place_of_death",
+        "district",
+    }
+    denom = sum(c.weight for c in comps if c.field in core_fields)
+    core_num = sum(c.awarded for c in comps if c.field in core_fields)
+    supporting_bonus = min(
+        5.0,
+        sum(max(0.0, c.awarded) for c in comps if c.field not in core_fields),
+    )
+    supporting_penalty = sum(
+        min(0.0, c.awarded) for c in comps if c.field not in core_fields
+    )
+    num = core_num + supporting_bonus + supporting_penalty
+    raw = max(0.0, (100.0 * num / denom) if denom > 0 else 0.0)
 
     review_threshold = float(thresholds["review"])
-    # Coverage guard: a single strong field is not enough to auto-link. Require
-    # the name plus at least one other strong identifier to agree before a
-    # score can exceed the review band.
+    # Coverage guard: name + sex alone is not enough to auto-link. Require a
+    # temporal or geographic identity signal in addition to name.
     strong_present = {
         c.field
         for c in comps
-        if c.field in {"name", "dod", "dob_or_age", "sex"}
+        if c.field in {"name", "dod", "dob_or_age", "ea", "ward", "gps", "district"}
         and c.classification not in {MISSING, CONTRADICTORY}
         and c.awarded > 0
     }

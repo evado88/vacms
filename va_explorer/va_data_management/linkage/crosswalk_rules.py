@@ -103,8 +103,8 @@ SEED_CROSSWALK = {
         "de_field": "DE-08",
         "who_ids": ["Id10073"],
         "status": "confirmed",
-        "rule": "deterministic when valid + unique; DE-23 (informant NRC) is "
-        "explicitly excluded",
+        "rule": "exact identifier block gated by exact or thresholded component "
+        "name agreement; NRC-only and duplicate-NRC pairs require review",
     },
     "ssn": {
         "de_field": "DE-10",
@@ -262,8 +262,8 @@ CATEGORY_MAPS = {
     "education": {
         "none": ["not been to school", "no formal education"],
         "primary": ["primary"],
-        "secondary": ["secondary"],
         "higher": ["tertiary", "higher than secondary"],
+        "secondary": ["secondary"],
     },
     "nationality": {
         "foreign": ["non zambian", "foreign national"],

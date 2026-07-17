@@ -79,13 +79,14 @@ def choice_maps(xlsform: Path):
     field_kind: dict = {}
     for _, row in survey.iterrows():
         raw_type = str(row[sc["type"]]).strip()
-        parts = raw_type.split()
         name = str(row[sc["name"]]).strip()
-        if len(parts) >= 2 and parts[0].startswith("select"):
-            field_list[name] = parts[1]
+        list_name = select_list_name(raw_type)
+        if list_name:
+            field_list[name] = list_name
             field_kind[name] = (
                 "select_multiple"
-                if parts[0].lower().startswith("select_multiple")
+                if "multiple" in raw_type.lower().split()
+                or raw_type.lower().startswith("select_multiple")
                 else "select_one"
             )
 
@@ -104,8 +105,8 @@ def survey_fields(xlsform: Path) -> list:
 
     Each dict: ``name``, ``type`` (raw), ``base_type``, ``list_name`` (selects),
     ``label`` (English), ``who_name`` (empty unless the form has the column),
-    ``in_repeat`` (bool). ``note``/group rows are skipped; repeat contents are
-    kept but flagged so callers can exclude them.
+    ``in_repeat`` (bool), and ``group_path``. ``note``/group rows are skipped;
+    repeat contents are kept but flagged so callers can exclude them.
     """
     survey = pd.read_excel(xlsform, sheet_name="survey", dtype=str).fillna("")
     cols = {str(c).strip().lower(): c for c in survey.columns}
@@ -114,15 +115,28 @@ def survey_fields(xlsform: Path) -> list:
 
     fields = []
     repeat_depth = 0
+    group_stack = []
     for _, row in survey.iterrows():
         raw_type = str(row[cols["type"]]).strip()
         low_type = raw_type.lower()
         name = str(row[cols["name"]]).strip()
+        if low_type.startswith(("begin group", "begin_group")):
+            if name:
+                group_stack.append(name)
+            continue
+        if low_type.startswith(("end group", "end_group")):
+            if group_stack:
+                group_stack.pop()
+            continue
         if low_type.startswith(REPEAT_BEGIN):
             repeat_depth += 1
+            if name:
+                group_stack.append(name)
             continue
         if low_type.startswith(REPEAT_END):
             repeat_depth = max(0, repeat_depth - 1)
+            if group_stack:
+                group_stack.pop()
             continue
         bt = base_type(raw_type)
         if low_type.startswith(GROUP_MARKERS) or bt == "note" or not name:
@@ -136,6 +150,7 @@ def survey_fields(xlsform: Path) -> list:
                 "label": str(row[label_col]).strip() if label_col else "",
                 "who_name": str(row[who_col]).strip() if who_col else "",
                 "in_repeat": repeat_depth > 0,
+                "group_path": "/".join(group_stack),
             }
         )
     return fields

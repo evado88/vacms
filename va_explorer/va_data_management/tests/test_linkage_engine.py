@@ -2,11 +2,14 @@
 rejected-pair exclusion and previous-link demotion."""
 
 import pytest
+from django.core.exceptions import ImproperlyConfigured, ValidationError
 
 from va_explorer.va_data_management.models import (
     MatchingConfig,
     MatchMethod,
     MatchStatus,
+    ReviewMode,
+    ReviewReason,
     VADeathMatch,
     VADeathMatchRejection,
 )
@@ -16,6 +19,7 @@ from va_explorer.va_data_management.utils.matching import (
     build_va_profile,
     evaluate_va,
     resolve_config,
+    run_matching,
 )
 from va_explorer.va_data_management.utils.matching.candidate_selection import (
     union_block_candidates,
@@ -35,7 +39,7 @@ def test_nrc_rule_links_deterministically():
     va = _make_va(Id10073="123456789")
     result = evaluate_va(va)
     assert result.status == MatchStatus.MATCHED_AUTO
-    assert result.method == MatchMethod.NRC
+    assert result.method == MatchMethod.NAME_NRC_EXACT
     assert result.death_pk == death.pk
 
 
@@ -45,8 +49,65 @@ def test_nrc_rule_requires_uniqueness():
     va = _make_va(Id10073="123456789")
     result = evaluate_va(va)
     # Two register entries share the NRC: never a deterministic link.
-    assert result.method != MatchMethod.NRC
-    assert result.status in {MatchStatus.AMBIGUOUS, MatchStatus.PENDING_REVIEW}
+    assert result.status == MatchStatus.PENDING_REVIEW
+    assert result.review_reason == ReviewReason.NRC_DUPLICATE
+    assert result.review_mode == ReviewMode.IN_PERSON
+
+
+def test_nrc_exact_name_matches_when_name_order_is_swapped():
+    death = _make_death(DE_03="Banda John", DE_08="123456/78/9")
+    va = _make_va(Id10073="123456789")
+    result = evaluate_va(va)
+    assert result.status == MatchStatus.MATCHED_AUTO
+    assert result.method == MatchMethod.NAME_NRC_EXACT
+    assert result.death_pk == death.pk
+
+
+def test_nrc_probabilistic_name_auto_link_uses_component_thresholds():
+    config_row = MatchingConfig.objects.get(name="default", is_active=True)
+    config_row.thresholds = {
+        **config_row.thresholds,
+        "name_nrc_probabilistic_auto_enabled": True,
+        "name_nrc_auto_similarity": 90,
+        "name_nrc_surname_min_similarity": 95,
+        "name_nrc_given_min_similarity": 90,
+    }
+    config_row.save()
+    death = _make_death(DE_03="Jhon Banda", DE_08="123456/78/9")
+    va = _make_va(Id10073="123456789")
+
+    result = evaluate_va(va)
+
+    assert result.status == MatchStatus.MATCHED_AUTO
+    assert result.method == MatchMethod.NAME_NRC_PROBABILISTIC
+    assert result.death_pk == death.pk
+    evidence = next(
+        comparison["evidence"]
+        for comparison in result.comparisons
+        if comparison["field"] == "nrc_name_components"
+    )
+    assert evidence["given_name_min_similarity"] >= 90
+
+
+def test_nrc_fuzzy_name_remains_review_only_until_enabled():
+    _make_death(DE_03="Jhon Banda", DE_08="123456/78/9")
+    va = _make_va(Id10073="123456789")
+    result = evaluate_va(va)
+    assert result.status == MatchStatus.PENDING_REVIEW
+    assert result.method == MatchMethod.NAME_NRC_PROBABILISTIC
+    assert result.review_mode == ReviewMode.IN_PERSON
+
+
+def test_same_nrc_and_surname_but_different_given_name_requires_in_person_review():
+    death = _make_death(DE_03="Peter Banda", DE_08="123456/78/9")
+    va = _make_va(Id10073="123456789", Id10017="John", Id10018="Banda")
+
+    result = evaluate_va(va)
+
+    assert result.status == MatchStatus.PENDING_REVIEW
+    assert result.death_pk == death.pk
+    assert result.review_reason == ReviewReason.NRC_GIVEN_NAME_CONFLICT
+    assert result.review_mode == ReviewMode.IN_PERSON
 
 
 def test_nrc_with_dod_year_conflict_routes_to_review():
@@ -55,7 +116,7 @@ def test_nrc_with_dod_year_conflict_routes_to_review():
     result = evaluate_va(va)
     # Key matched; DOD only 10 days apart but the year differs -> review.
     assert result.status == MatchStatus.PENDING_REVIEW
-    assert result.method == MatchMethod.NRC
+    assert result.method == MatchMethod.NAME_NRC_EXACT
 
 
 def test_exact_composite_rule():
@@ -175,6 +236,27 @@ def test_facility_va_falls_back_to_province_block():
     assert blocks == ["province"]
 
 
+def test_phonetic_block_handles_death_name_order():
+    death = _make_death(DE_03="Banda Jon", DE_06="2022-01-01")
+    va = _make_va(Id10017="John", Id10018="Banda", Id10023="2024-09-05")
+    blocks, _ = _blocks_for(va, death)
+    assert "phonetic_surname_district" in blocks
+
+
+def test_sex_conflict_is_retained_as_candidate_evidence():
+    death = _make_death(DE_05="female")
+    va = _make_va(Id10019="male")
+    blocks, _ = _blocks_for(va, death)
+    assert blocks
+
+
+def test_community_exact_composite_requires_nonempty_districts():
+    _make_death(DE_08="", district="", province="", ward="")
+    va = _make_va(district="", province="", ward="", constituency="", ea="")
+    result = evaluate_va(va)
+    assert result.method != MatchMethod.EXACT_COMPOSITE
+
+
 # --------------------------------------------------------------------------
 # Scoring bands + config overrides
 # --------------------------------------------------------------------------
@@ -214,6 +296,17 @@ def test_near_miss_lands_in_review_band():
     va = _make_va(Id10023="2024-01-10")
     result = evaluate_va(va)
     assert result.status == MatchStatus.PENDING_REVIEW
+
+
+def test_review_only_mode_never_asserts_automatic_link():
+    death = _make_death()
+    va = _make_va()
+    summary = run_matching([va], apply=True, review_only=True, source="test")
+    match = VADeathMatch.objects.get(verbal_autopsy=va)
+    assert summary[MatchStatus.PENDING_REVIEW] == 1
+    assert match.status == MatchStatus.PENDING_REVIEW
+    assert match.death_id == death.pk
+    assert va.linked_death is None
 
 
 # --------------------------------------------------------------------------
@@ -262,7 +355,8 @@ def test_previous_auto_link_is_demoted_not_silently_unlinked():
     assert match.alternatives[0].get("previous_link") is True
 
 
-def test_manual_link_is_never_touched():
+@pytest.mark.parametrize("force_recheck", [False, True])
+def test_manual_link_is_never_touched(force_recheck):
     death = _make_death()
     va = _make_va()
     VADeathMatch.objects.create(
@@ -273,7 +367,9 @@ def test_manual_link_is_never_touched():
         method=MatchMethod.MANUAL,
         score=100.0,
     )
-    result = auto_link_verbal_autopsy_to_death(va, save=True)
+    result = auto_link_verbal_autopsy_to_death(
+        va, save=True, force_recheck=force_recheck
+    )
     assert result.status == MatchStatus.SKIPPED
     match = VADeathMatch.objects.get(verbal_autopsy=va)
     assert match.status == MatchStatus.MATCHED_MANUAL
@@ -288,3 +384,22 @@ def test_active_matching_config_overrides_settings():
     config.thresholds = {"auto": 99, "review": 99}
     config.save()
     assert resolve_config()["thresholds"]["auto"] == 99
+
+
+def test_config_rejects_unknown_keys():
+    config = resolve_config()
+    config["thresholds"]["typo_threshold"] = 10
+    from va_explorer.va_data_management.utils.matching.config import validate_config
+
+    with pytest.raises(ImproperlyConfigured, match="unknown thresholds"):
+        validate_config(config)
+
+
+def test_referenced_config_revision_is_immutable():
+    _make_death()
+    va = _make_va()
+    auto_link_verbal_autopsy_to_death(va, save=True)
+    config = MatchingConfig.objects.get(name="default")
+    config.thresholds = {**config.thresholds, "review": 55}
+    with pytest.raises(ValidationError, match="immutable"):
+        config.save()

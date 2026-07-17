@@ -2,7 +2,7 @@
 
 typed field definitions for VASASocialAutopsy + repeat models
 
-Regenerate after any VASA XLSForm revision; the generator is idempotent
+Regenerate after any XLSForm revision; the generator is idempotent
 and `--check` fails if this file drifts from the form."""
 
 SA_FIELD_DEFS = [

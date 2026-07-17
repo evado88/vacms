@@ -23,6 +23,7 @@ missing to ``absent_in_form``).
 import csv
 import io
 import re
+from collections import Counter
 from pathlib import Path
 
 from django.conf import settings
@@ -126,11 +127,17 @@ def _tokens_subset(pattern: str, label_tokens: set) -> bool:
 
 
 def _categorise(label: str, category_patterns: dict):
+    matches = _matching_categories(label, category_patterns)
+    return matches[0] if matches else None
+
+
+def _matching_categories(label: str, category_patterns: dict):
     tokens = set(norm_label(label).split())
-    for category, patterns in category_patterns.items():
-        if any(_tokens_subset(p, tokens) for p in patterns):
-            return category
-    return None
+    return [
+        category
+        for category, patterns in category_patterns.items()
+        if any(_tokens_subset(pattern, tokens) for pattern in patterns)
+    ]
 
 
 class Command(BaseCommand):
@@ -174,14 +181,38 @@ class Command(BaseCommand):
             if not path.exists():
                 raise CommandError(f"XLSForm not found: {path}")
 
-        de_fields = {f["name"]: f for f in survey_fields(e_death)}
-        who_fields = {f["name"]: f for f in survey_fields(who) if not f["in_repeat"]}
+        de_rows = survey_fields(e_death)
+        who_rows = [field for field in survey_fields(who) if not field["in_repeat"]]
+        vasa_rows = survey_fields(vasa)
+        duplicate_fields = {
+            label: sorted(
+                name
+                for name, count in Counter(row["name"] for row in rows).items()
+                if count > 1
+            )
+            for label, rows in {
+                "E_DEATH": de_rows,
+                "WHO": who_rows,
+                "VASA": vasa_rows,
+            }.items()
+        }
+        duplicate_fields = {
+            label: names for label, names in duplicate_fields.items() if names
+        }
+        if duplicate_fields:
+            raise CommandError(
+                f"Duplicate XLSForm field names are ambiguous: {duplicate_fields}"
+            )
+        de_fields = {field["name"]: field for field in de_rows}
+        who_fields = {field["name"]: field for field in who_rows}
+        vasa_field_names = {field["name"] for field in vasa_rows}
         who_to_vasa = self._who_to_vasa_names()
 
         death_attrs = {f.name for f in Death._meta.fields}
 
         concepts: dict = {}
         warnings: list = []
+        errors: list = []
         seeded_de_fields: set = set()
 
         seeds = {**rules.SEED_CROSSWALK}
@@ -199,15 +230,16 @@ class Command(BaseCommand):
                 if de_field not in de_fields:
                     status = "absent_in_form"
                 elif attr not in death_attrs:
-                    warnings.append(
+                    errors.append(
                         f"{concept}: E_DEATH has '{de_field}' but the Death "
                         f"model has no '{attr}' column — loader gap?"
                     )
 
             missing_who = [w for w in who_ids if w not in who_fields]
             if missing_who and status == "confirmed":
-                warnings.append(
-                    f"{concept}: WHO form is missing {missing_who} — verify"
+                errors.append(
+                    f"{concept}: active mapping references missing WHO fields "
+                    f"{missing_who}"
                 )
 
             label_de = de_fields.get(de_field, {}).get("label", "") if de_field else ""
@@ -230,6 +262,12 @@ class Command(BaseCommand):
             vasa_names = sorted(
                 {name for w in who_ids for name in who_to_vasa.get(w, [])}
             )
+            missing_vasa = [name for name in vasa_names if name not in vasa_field_names]
+            if missing_vasa and status == "confirmed":
+                errors.append(
+                    f"{concept}: generated VASA mapping references missing fields "
+                    f"{missing_vasa}"
+                )
             concepts[concept] = {
                 # "" (not None) so the generated module stays JSON-renderable.
                 "de_field": attr or "",
@@ -242,8 +280,15 @@ class Command(BaseCommand):
                 "status": status,
             }
 
+        if errors:
+            raise CommandError(
+                "Active linkage crosswalk is invalid:\n  - " + "\n  - ".join(errors)
+            )
+
         proposals = self._propose_unseeded(de_fields, who_fields, seeded_de_fields)
-        choice_category_maps = self._choice_category_maps(concepts, e_death, who)
+        choice_category_maps = self._choice_category_maps(
+            concepts, e_death, who, warnings
+        )
         geo_code_maps = self._geo_code_maps(e_death, who)
         facility_columns, facility_header_sha = self._facility_columns(facility_csv)
 
@@ -255,11 +300,17 @@ class Command(BaseCommand):
                 f"facility CSV header lacks expected columns: {missing_facility_geo}"
             )
 
+        from va_explorer.va_data_management.vasa import field_map
+
+        vasa_mapping_path = Path(field_map.__file__)
         hashes = {
             "e_death": sha256_file(e_death),
             "who": sha256_file(who),
             "vasa": sha256_file(vasa),
             "facility_csv_header": facility_header_sha,
+            "crosswalk_rules": sha256_file(Path(rules.__file__)),
+            "vasa_field_map": sha256_file(vasa_mapping_path),
+            "vasa_mapping_version": field_map.CROSSWALK_VERSION,
         }
         linkage_map = {
             "CONCEPTS": concepts,
@@ -268,7 +319,9 @@ class Command(BaseCommand):
             "FACILITY_VA_COLUMNS": sorted(facility_columns & _FACILITY_GEO),
             "XLSFORM_HASHES": hashes,
             "CROSSWALK_VERSION": (
-                f"{hashes['e_death'][:8]}-{hashes['who'][:8]}-{hashes['vasa'][:8]}"
+                f"{hashes['e_death'][:8]}-{hashes['who'][:8]}-"
+                f"{hashes['vasa'][:8]}-{hashes['crosswalk_rules'][:8]}-"
+                f"{hashes['vasa_field_map'][:8]}-{facility_header_sha[:8]}"
             ),
         }
         csv_text = self._render_csv(concepts, proposals)
@@ -330,7 +383,9 @@ class Command(BaseCommand):
             )
         return proposals
 
-    def _choice_category_maps(self, concepts, e_death: Path, who: Path) -> dict:
+    def _choice_category_maps(
+        self, concepts, e_death: Path, who: Path, warnings: list
+    ) -> dict:
         de_field_list, de_list_choices, _ = choice_maps(e_death)
         who_field_list, who_list_choices, _ = choice_maps(who)
 
@@ -345,6 +400,12 @@ class Command(BaseCommand):
             form_name = de_field.replace("_", "-") if de_field else None
             list_name = de_field_list.get(form_name) if form_name else None
             for code, label in de_list_choices.get(list_name, {}).items():
+                collisions = _matching_categories(label, patterns)
+                if len(collisions) > 1:
+                    warnings.append(
+                        f"{concept}: Death choice {code!r} ({label!r}) matches "
+                        f"multiple categories {collisions}; using {collisions[0]!r}"
+                    )
                 category = _categorise(label, patterns)
                 if category:
                     death_map[code] = category
@@ -354,6 +415,13 @@ class Command(BaseCommand):
                 if not list_name:
                     continue
                 for code, label in who_list_choices.get(list_name, {}).items():
+                    collisions = _matching_categories(label, patterns)
+                    if len(collisions) > 1:
+                        warnings.append(
+                            f"{concept}: WHO choice {code!r} ({label!r}) matches "
+                            f"multiple categories {collisions}; using "
+                            f"{collisions[0]!r}"
+                        )
                     category = _categorise(label, patterns)
                     if category:
                         # WHO choice *names* are the stored VA values.

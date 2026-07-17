@@ -11,8 +11,6 @@ trading the geography-free DOD block for a small working set.
 
 from datetime import timedelta
 
-from django.db.models import Q
-
 from . import normalization as N
 from .profiles import build_death_profile
 
@@ -75,28 +73,15 @@ class DeathIndex:
 
     @classmethod
     def build_for_profile(cls, profile, cap=5000) -> "DeathIndex":
-        """Bounded index for a single VA: geography-prefiltered via SQL.
+        """Build the same logical index used by a batch for a single VA.
 
-        Loses the geography-free DOD block for records whose geography doesn't
-        overlap the VA's; the batch pathway (full index) does not.
+        Death dates and names are free text, so database prefilters cannot
+        reproduce every normalized block without false negatives. Correctness
+        takes precedence until normalized/indexed register columns are added.
         """
         from va_explorer.va_data_management.models import Death
 
-        filters = Q()
-        if profile.ea:
-            filters |= Q(ea__icontains=profile.ea)
-        if profile.ward:
-            filters |= Q(ward__iexact=profile.ward)
-        if profile.district:
-            filters |= Q(district__iexact=profile.district)
-        if profile.province:
-            filters |= Q(province__iexact=profile.province)
-        if profile.death_id:
-            filters |= Q(death_id__iexact=profile.death_id)
-        if profile.nrc:
-            filters |= Q(DE_08__isnull=False)
-        qs = Death.objects.filter(filters) if filters else Death.objects.none()
-        return cls.build(qs.order_by("pk")[:cap])
+        return cls.build(Death.objects.order_by("pk"))
 
     def add(self, death):
         profile = build_death_profile(death)
@@ -136,10 +121,11 @@ class DeathIndex:
                 self.by_initials_year.setdefault(
                     (profile.initials, profile.dod.year), []
                 ).append(pk)
-        if profile.surname_phonetic and district:
-            self.by_phonetic_district.setdefault(
-                (profile.surname_phonetic, district), []
-            ).append(pk)
+        if district:
+            for phonetic in profile.name_phonetics:
+                self.by_phonetic_district.setdefault((phonetic, district), []).append(
+                    pk
+                )
 
     # ----------------------------------------------------------------- lookup
     def dod_window_pks(self, day, window_days) -> list:

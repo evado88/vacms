@@ -30,6 +30,8 @@ _CHILD_MAX_DAYS = int(12 * 365.25)
 class LinkageProfile:
     tool: str  # "community_va" | "facility_va" | "vasa" | "death"
     name_raw: Optional[str] = None
+    given_name_raw: Optional[str] = None
+    surname_raw: Optional[str] = None
     name_tokens: frozenset = frozenset()
     nickname_tokens: frozenset = frozenset()
     household_head: Optional[str] = None
@@ -60,6 +62,7 @@ class LinkageProfile:
     ward: Optional[str] = None
     ea: Optional[str] = None
     surname_phonetic: Optional[str] = None
+    name_phonetics: frozenset = frozenset()
     initials: Optional[str] = None
 
     @property
@@ -105,6 +108,7 @@ def _finish(profile: LinkageProfile) -> LinkageProfile:
     profile.name_tokens = N.name_token_set(profile.name_raw)
     profile.baby_of = N.parse_baby_of(profile.name_raw)
     profile.surname_phonetic = N.surname_phonetic(profile.name_raw)
+    profile.name_phonetics = N.name_phonetics(profile.name_raw)
     profile.initials = N.name_initials(profile.name_raw)
     if (
         profile.age_days is None
@@ -127,7 +131,12 @@ def _finish(profile: LinkageProfile) -> LinkageProfile:
 def _va_tool(va) -> str:
     if va._meta.model_name == "vasa":
         return "vasa"
-    return "community_va" if getattr(va, "is_community_va", True) else "facility_va"
+    classification = getattr(va, "community_va_normalized", None)
+    if classification == "yes":
+        return "community_va"
+    if classification == "no":
+        return "facility_va"
+    return "unknown"
 
 
 def _va_dod(cx, va):
@@ -185,6 +194,8 @@ def build_va_profile(va) -> LinkageProfile:
 
     first = N.norm_text(getattr(va, "Id10017", None)) or ""
     surname = N.norm_text(getattr(va, "Id10018", None)) or ""
+    p.given_name_raw = first or None
+    p.surname_raw = surname or None
     p.name_raw = f"{first} {surname}".strip() or None
     p.household_head = cx.who("household_head_name", va)
     p.mother_name = cx.who("mother_name", va)

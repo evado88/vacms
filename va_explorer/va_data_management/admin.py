@@ -5,6 +5,7 @@ from .models.srs_ea_population_target import SRSEAPopulationTarget
 from .models.va_death_match import (
     MatchingConfig,
     VADeathMatch,
+    VADeathMatchDecision,
     VADeathMatchRejection,
 )
 from .models.vasa import (
@@ -41,11 +42,7 @@ class DataQualityIssueAdmin(admin.ModelAdmin):
 
 @admin.register(VADeathMatch)
 class VADeathMatchAdmin(admin.ModelAdmin):
-    """Read-mostly review surface for VA -> Death matches (Phase 1).
-
-    A richer manual-review workflow is a documented future phase; for now this
-    exposes the audit trail and lets an admin flag/confirm from the change form.
-    """
+    """Read-only evidence surface; decisions use the locked review workflow."""
 
     list_display = (
         "id",
@@ -62,22 +59,15 @@ class VADeathMatchAdmin(admin.ModelAdmin):
     list_filter = ("status", "method", "is_manual", "source")
     search_fields = ("death_id_snapshot",)
     raw_id_fields = ("verbal_autopsy", "vasa", "death", "confirmed_by", "reviewed_by")
-    readonly_fields = (
-        "score",
-        "score_separation",
-        "algorithm_version",
-        "supporting_fields",
-        "contradictory_fields",
-        "missing_fields",
-        "alternatives",
-        "comparisons",
-        "block_sources",
-        "config_version",
-        "matched_at",
-        "last_evaluated_at",
-        "created",
-        "updated",
-    )
+
+    def get_readonly_fields(self, request, obj=None):
+        return [field.name for field in self.model._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(MatchingConfig)
@@ -97,7 +87,31 @@ class MatchingConfigAdmin(admin.ModelAdmin):
 class VADeathMatchRejectionAdmin(admin.ModelAdmin):
     list_display = ("id", "va", "death", "rejected_by", "created")
     raw_id_fields = ("verbal_autopsy", "vasa", "death", "rejected_by")
-    readonly_fields = ("created",)
+
+    def get_readonly_fields(self, request, obj=None):
+        return [field.name for field in self.model._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(VADeathMatchDecision)
+class VADeathMatchDecisionAdmin(admin.ModelAdmin):
+    list_display = ("id", "action", "va_model", "va_pk", "actor", "created")
+    list_filter = ("action", "va_model", "created")
+    search_fields = ("va_identifier", "reason", "prior_death_id_snapshot")
+
+    def get_readonly_fields(self, request, obj=None):
+        return [field.name for field in self.model._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(SRSEAPopulationTarget)

@@ -19,7 +19,10 @@ from .va_death_match import (
     MatchingConfig,
     MatchMethod,
     MatchStatus,
+    ReviewMode,
+    ReviewReason,
     VADeathMatch,
+    VADeathMatchDecision,
     VADeathMatchRejection,
 )
 from .vasa import (
@@ -73,9 +76,12 @@ __all__ = [
     "SRSEAPopulationTarget",
     "BaselineCensusProvince",
     "VADeathMatch",
+    "VADeathMatchDecision",
     "VADeathMatchRejection",
     "MatchingConfig",
     "LinkageReview",
     "MatchStatus",
     "MatchMethod",
+    "ReviewMode",
+    "ReviewReason",
 ]

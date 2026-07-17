@@ -167,6 +167,9 @@ ODK_PULL_FORMS = [
 # retrospective command and sweeper are the initial operating mode; nothing
 # auto-links on ingest until an operator turns this on.
 VA_DEATH_MATCH_ENABLED = env.bool("VA_DEATH_MATCH_ENABLED", default=False)
+VA_DEATH_MATCH_MODE = env(
+    "VA_DEATH_MATCH_MODE", default=None
+)  # off | shadow | review_only | auto
 # Confidence thresholds (percent). Auto-link requires score STRICTLY greater
 # than the auto threshold; the review band is [review, auto] inclusive.
 VA_DEATH_MATCH_AUTO_THRESHOLD = env.int("VA_DEATH_MATCH_AUTO_THRESHOLD", default=90)

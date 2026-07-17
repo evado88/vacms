@@ -164,7 +164,8 @@ def test_fuzzy_name_match_with_consistent_demographics():
     death = _make_death(DE_03="Jon Banda")  # slight spelling variation
     va = _make_va(Id10017="John", Id10018="Banda")
     result = evaluate_va(va)
-    assert result.status == MatchStatus.MATCHED_AUTO
+    # Fixed-scale heuristic scores remain review-only until calibrated.
+    assert result.status == MatchStatus.PENDING_REVIEW
     assert result.method == MatchMethod.PROBABILISTIC
     assert result.death_pk == death.pk
 
@@ -233,6 +234,8 @@ def test_apply_persists_match_and_sets_linked_death(valid_death_id):
     match = VADeathMatch.objects.get(vasa=vasa)
     assert match.status == MatchStatus.MATCHED_AUTO
     assert match.death_id == death.pk
+    assert match.config_snapshot
+    assert match.crosswalk_version
     vasa.refresh_from_db()
     assert vasa.linked_death == death
 
@@ -283,6 +286,30 @@ def test_manual_link_not_overwritten(valid_death_id):
     assert result.status == MatchStatus.SKIPPED
     match = VADeathMatch.objects.get(vasa=vasa)
     assert match.death_id == other.pk  # unchanged
+
+
+def test_matcher_error_preserves_existing_authoritative_link(monkeypatch):
+    death = _make_death()
+    va = _make_va()
+    auto_link_verbal_autopsy_to_death(va, save=True, source="test")
+    match = VADeathMatch.objects.get(verbal_autopsy=va)
+    assert match.is_linked
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("synthetic matching failure")
+
+    monkeypatch.setattr(
+        "va_explorer.va_data_management.utils.matching.service._evaluate", fail
+    )
+    result = auto_link_verbal_autopsy_to_death(
+        va, save=True, force_recheck=True, source="test_error"
+    )
+
+    assert result.status == MatchStatus.ERROR
+    match.refresh_from_db()
+    assert match.status == MatchStatus.MATCHED_AUTO
+    assert match.death_id == death.pk
+    assert match.last_error["message"] == "synthetic matching failure"
 
 
 # --------------------------------------------------------------------------

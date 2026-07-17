@@ -1,94 +1,620 @@
-# Death↔VA Linkage Hardening (v2)
+# Death<->VA Linkage Hardening: Audit and Remaining Plan
 
-## Context
+Last audited: 2026-07-17 against commit `4cdfe46` and the local database.
 
-`docs/death_va_linkage_hardenning.md` specifies v2 of the death↔VA/VASA linkage: a generated E_DEATH↔WHO-Id crosswalk, a recall-oriented two-stage (deterministic + probabilistic) matcher tuned against a ≥75% link-rate prior, a config table with audit, calibration reporting, and a human-review workflow. A v1 already exists (engine `va_explorer/va_data_management/utils/matching/`, `VADeathMatch` model, `link_verbal_autopsies` command, hourly Celery sweeper gated on `VA_DEATH_MATCH_ENABLED`). v2 is an iteration on v1, not a rebuild.
+## Implementation Update
 
-**User decisions (locked):** extend `VADeathMatch` (no new RecordLink model); add `jellyfish` dependency for Jaro-Winkler/soundex/metaphone; **rename** `link_verbal_autopsies` → `link_deaths_to_vas` and extend it.
+Implemented on 2026-07-17 after the baseline audit below:
 
-**Spec-vs-reality resolutions (verified against files):**
-- `DE-08` **is** the deceased NRC — E_DEATH.xlsx label is "DE-08 NRC NUMBER for the Deceased"; the model verbose name ([death.py:54](va_explorer/va_data_management/models/death.py#L54)) dropped "NRC". `DE_23` is the **informant's** NRC (DE-19..DE-25 informant block) — must be excluded from deceased-identity comparison. Crosswalk: `DE_08 ↔ Id10073`; flag in report/docs (note `Death.__str__` prints DE_23).
-- `DE-03A`/`DE-02A` nicknames **do not exist** in E_DEATH v1.2.4 — comparators are crosswalk-driven so they self-activate on a future form revision; generator emits these seed concepts as `absent_in_form`.
-- **No death-registration-number field** on E_DEATH/Death (`DE_30` is a yes/no flag). Implement the `death_reg_no` rule keyed off the crosswalk concept; it stays inert; calibration report prints "unavailable (no E_DEATH source field)".
-- Facility form `zm_va_who_v1_5_2_7` exists only as CSV (`va_explorer/static/data/zm_va_who_v1_5_2_7.csv` — has data rows, not header-only as spec claims; use header only, take semantics from `znphi_va_who_v1_5_2_7.xlsx`; flag file provenance to data owner).
-- VASA→WHO crosswalk is **already done** (`vasa/field_map.py`: `PSEUDO_TO_WHO`, `COMBINED_WHO` incl. `Q1202→[Id10017,Id10018]`); reuse it, never re-derive.
-- Geography: VA stores codes, Death stores names — bridged by `ClusterLocationCodes` + `normalization.resolve_ward_name`/`normalize_ea` (exists). No hospital→district table; use `va.location` FK / `resolve_location_context()` for facility VAs.
+- Added migration `0054_vadeathmatchdecision_and_more` with review routing,
+  reproducible config/crosswalk snapshots, protected error state, optimistic
+  decision versions, matched-link invariants, and immutable human decision
+  events.
+- Made manual links authoritative under every matcher flag. Added locked,
+  location-scoped confirm/reject/unlink/reassign services, alternative rescoring,
+  durable rejection/decision history, read-only linkage admin, and safe local
+  redirects.
+- Replaced NRC-only linking with `name_nrc_exact` and
+  `name_nrc_probabilistic`. Exact NRC plus complete exact name auto-links one
+  unique Death. Fuzzy name auto-linking is thresholded per overall/given/surname
+  component and remains disabled by default until the labelled precision gate
+  passes. NRC/name conflicts and duplicate NRCs route to in-person review.
+- Removed sex pruning, added non-unique identifier blocks, fixed community
+  district and unknown-tool handling, made single/batch indexing logically
+  identical, made phonetic blocks name-order independent, and replaced first-PK
+  truncation with deterministic ranking plus retained/dropped metrics.
+- Changed heuristic scoring to a fixed core denominator with capped supporting
+  evidence, explicit contradiction penalties, one-to-one name alignment, and
+  separate month/year date precision. The score is still a heuristic, not a
+  probability.
+- Versioned evaluations with full effective config and crosswalk snapshots,
+  validated unknown/invalid config keys, protected referenced config revisions,
+  and separated authoritative link rate from diagnostic candidate coverage.
+- Tracked the generated CSV, bound crosswalk versions to forms/rules/VASA
+  mapping/facility header, added group paths and fail-closed source validation,
+  and added both artifact drift checks to pre-commit.
+- Added `off`, `shadow`, `review_only`, and `auto` operating modes, stale/revision
+  re-evaluation, apply-mode block metrics, safer command validation, and expanded
+  review filters.
+- Added focused regression coverage for NRC/name decisions, sparse/conflicting
+  evidence, manual/error preservation, location scope, stale decisions,
+  alternative evidence, rejection, unlinking, config revision safety, command
+  modes, and crosswalk drift.
 
-**Key v1 gaps being closed:** narrowest-block-wins blocking → union of blocks; missing comparators (mother/"Baby of", household head, NRC, age-in-days — `MAX_AGE_TOLERANCE_YEARS` setting exists but unused — place/choice maps, pregnancy flags, GPS, low-weight demographics); hardcoded weights → config table; no calibration/75%-prior report; no review UI (pending_review/ambiguous rows accumulate silently, admin-only); `confirmed_by`/`reviewed_by`/`rejected` fields exist but nothing writes them.
+The following are rollout gates rather than code-complete claims:
 
-## Phases (dependency order; each shippable)
+- Obtain and approve an authoritative facility-VA XLSForm and the
+  facility/area/hospital-to-district mapping.
+- Build the dual-reviewed, adjudicated, de-identified calibration/holdout set;
+  select tool-specific thresholds and enable probabilistic NRC-name auto-linking
+  only after its independent precision gate passes.
+- Export the production v1 baseline, resolve existing demotions/duplicates, and
+  execute shadow, review-only, canary, reconciliation, and auto rollout in that
+  order.
+- Profile normalized database indexes or a revisioned Death-index cache at 10x
+  volume before replacing the correctness-first full single-record index.
 
-### Phase 1 — Crosswalk layer
-- New `va_explorer/va_data_management/linkage/` package:
-  - `crosswalk_rules.py` (hand-maintained): `SEED_CROSSWALK` (spec table with resolutions above), `MANUAL_OVERRIDES` (human-confirmation mechanism — only `confirmed` rows drive linking; `proposed` rows emitted for review only), `CATEGORY_MAPS` alias rules (sex: E_DEATH `01/02` ↔ `male/female`; place: `01`→facility/`02`→community ↔ `Id10058` categories; marital/education/nationality category-level).
-  - Generated artifacts (version-controlled): `linkage_map.py` (`CONCEPTS`, `CHOICE_CATEGORY_MAPS`, `XLSFORM_HASHES`, `CROSSWALK_VERSION`) + `linkage_crosswalk.csv` (reviewable artifact: `de_field, who_id, vasa_names, label_de, label_who, confidence, rule, status`).
-- New command `generate_linkage_crosswalk` modeled on [generate_vasa_mapping.py](va_explorer/va_data_management/management/commands/generate_vasa_mapping.py) (same `--check` drift guard via hashes, `--quiet`); factor shared helpers (`_sha256`, `_norm_label`, choices parsing, module rendering) into `va_explorer/va_data_management/utils/xlsform.py` used by both.
-- Pipeline: parse survey+choices sheets of E_DEATH.xlsx + znphi_va_who xlsx + VASA xlsx (skip note/group rows); normalize labels (strip `DE-xx`/`(Idxxxxx)` prefixes, `${…}`, bracketed notes; lowercase); token-overlap + `fuzz.token_set_ratio` + concept-keyword scoring of DE↔WHO labels; merge with seeds/overrides; VASA names resolved via existing `field_map.PSEUDO_TO_WHO`/`COMBINED_WHO`; verify facility columns against zm CSV header. Report: proposed vs confirmed, failed seed verifications, absent-in-form seeds, facility columns missing.
+The remaining sections preserve the pre-implementation audit evidence and the
+rollout gates against which this implementation must be validated.
 
-### Phase 2 — Config + rejection models (migrations 0051–0053)
-In [va_death_match.py](va_explorer/va_data_management/models/va_death_match.py) (+ `models/__init__.py` exports, register in admin read-mostly):
-- `MatchingConfig`: `name`, `is_active` (partial unique on True), `weights` JSON, `thresholds` JSON (auto, review, min_sep, tie_margin, dod window, max_candidates_per_block), `algorithm_version="2.0"`, `notes`, `updated_by`, `HistoricalRecords()`. `MatchingConfig.active()` → merged dict falling back to `settings.VA_DEATH_MATCH_*` + module defaults; passed explicitly through the engine (like `_thresholds()` today). Data migration seeds initial active row.
-- `VADeathMatchRejection` (rejected-pair memory — required because `VADeathMatch` is OneToOne-per-VA and only holds the current proposal): `verbal_autopsy` XOR `vasa` (CheckConstraint like `vadeathmatch_exactly_one_va`), `death` FK, `rejected_by`, `reason`, `created`; unique on (va, death) / (vasa, death).
-- `VADeathMatch` additions: method choices `nrc`, `death_reg_no`, `exact_composite`, `probabilistic` (keep v1 values); fields `comparisons` JSON (per-field contributions — v1 computes but discards in `_persist`), `block_sources` JSON, `config_version`.
+## Purpose
 
-### Phase 3 — Stage 0: profiles + normalization
-- New `utils/matching/profiles.py`: `LinkageProfile` dataclass (name/nickname/household-head/mother token sets, "Baby of" mother, sex, dob/dod with precision, age_days, age_group, place/marital/education/occupation/nationality categories, pregnancy flags, nrc, death_id, gps, geo dict, tool ∈ {community_va, facility_va, vasa, death}, surname_phonetic, initials); `build_death_profile()` / `build_va_profile()` crosswalk-driven via `linkage_map.CONCEPTS` (confirmed rows only) — replaces hardcoded accessor dicts in scoring.py. Community vs facility via existing `is_community_va`.
-- Extend [normalization.py](va_explorer/va_data_management/utils/matching/normalization.py) (keep all existing helpers): `name_token_set`, `parse_baby_of`, `name_initials`, `surname_phonetic` (jellyfish soundex, metaphone fallback), `jaro_winkler`, `best_token_alignment_similarity` (greedy JW token pairing), `parse_partial_date` (text/partial dates with precision, extends `dq.parse_when`), `normalize_nrc`, `parse_gps` + `gps_distance_km` (haversine), `category_for(concept, side, code)` via `CHOICE_CATEGORY_MAPS` (rewire `normalize_sex` to consult it first), `age_in_days_at_death`.
-- Add `jellyfish==1.0.3` to `requirements/base.txt`.
+This document is the implementation plan for
+`docs/death_va_linkage_hardenning.md`. The first v2 implementation is already in
+the repository, so this is no longer a greenfield phase list. It records what is
+actually implemented, identifies gaps against the requirement, and orders the
+remaining work by data-integrity risk.
 
-### Phase 4 — Stage 1: deterministic rules
-In [candidate_selection.py](va_explorer/va_data_management/utils/matching/candidate_selection.py) + [service.py](va_explorer/va_data_management/utils/matching/service.py):
-- `deterministic_candidate()` precedence: (1) `death_id` — existing VASA `social_autopsy.DeathID` match, now **format-validated** via `death_ids.is_valid_death_id`; keep `event_bridge`; (2) `nrc` — normalized `Id10073` == `DE_08`, require validity + **unique** hit (multiple deaths sharing NRC ⇒ review); (3) `death_reg_no` — coded, inert; (4) `exact_composite` — name token-set equality AND sex AND exact DOD AND same district (district skipped for facility VA).
-- Generalize the contradiction guard: after any deterministic hit run the full scorer; sex disagreement or **DOD-year** conflict ⇒ `pending_review` with method preserved. Drop v1's unconditional `score=100.0` except for `death_id`.
+The following prior decisions remain in force:
 
-### Phase 5 — Stage 2: probabilistic engine
-- Replace `fuzzy_candidates` with `union_block_candidates(profile, va, config, death_index)` — union of blocks, each capped, dedup with per-death block provenance: `district_year`, `constituency_ward` (add constituency resolver from `ClusterLocationCodes`), `dod_60d` (±60d regardless of geography), `initials_year`, `phonetic_surname_district`, `ea` (v1's finest block), facility: `province` + location-FK-derived district. Excludes pairs in `VADeathMatchRejection`. Returns per-block candidate counts.
-- New `utils/matching/death_index.py`: `DeathIndex.build(queryset)` — per-run in-memory indexes (by district, (district,year), dod buckets, initials+year, phonetic+district, ea, normalized NRC), since Death fields are free text and un-SQL-able. Built once per `run_matching`; single-VA ingestion path falls back to bounded per-block SQL like v1.
-- Rewrite [scoring.py](va_explorer/va_data_management/utils/matching/scoring.py) around profile pairs with **config-driven weights**. Comparison vector: name (max of JW best-token-alignment and token_set_ratio; nickname + household-head `DE_02↔Id10061/Q1209` as capped supporting bonus), mother_name (`Id10062` vs `parse_baby_of(DE_03)`, neonate/child only), sex (hard on disagree), dod bands (exact/≤7d/≤30d/≤90d; year-only precision at reduced weight), dob_or_age (uses `MAX_AGE_TOLERANCE_YEARS` — finally wired), age_group, place_category (choice maps), ward/ea/district, gps bands (<1/<5/<15 km), pregnancy-flag consistency (female adults only), marital/education/occupation/nationality at weight 1. Missing ⇒ zero, never negative. Initial v2 weights in the seeded MatchingConfig row (name 28, dod 22, dob_or_age 12, sex 10, mother 8, ea 8, ward 6, gps 5, place 4, district 3, pregnancy 3, head 3, demographics 1 each) — calibration finalizes.
-- Decision (in `service._evaluate`): ≥auto + no hard contradiction + separation ≥ min_sep ⇒ `MATCHED_AUTO`/`probabilistic`; ties within `tie_margin` ⇒ `AMBIGUOUS` with ranked alternatives; review ≤ score < auto ⇒ `PENDING_REVIEW`; else `UNMATCHED`. Recall bias: initial config review≈60/auto≈88 (final from calibration; config table, not settings).
-- `_persist` also writes `comparisons`, `block_sources`, `config_version`; keep the no-history-churn idempotency invariant. Same-tool duplicates (one death, >1 linked VA of same model) reported in run summary + review-UI "Duplicates" tab (query-derived, no schema change).
+- Keep `VADeathMatch` as the authoritative link model; do not introduce a second
+  authoritative `RecordLink` model.
+- Keep `jellyfish` for Jaro-Winkler and phonetic helpers.
+- Keep the command name `link_deaths_to_vas`.
+- A VA/VASA may link to at most one Death. A Death may link to more than one
+  VA-type record.
+- Use exact NRC equality as a strong candidate block, then evaluate the deceased
+  name with dedicated name thresholds. Auto-link one unique, non-rejected Death
+  when the valid normalized NRC matches and the name is either exact or clears
+  the calibrated NRC-name auto threshold with no component-level name conflict.
+  Record exact and fuzzy outcomes as `name_nrc_exact` and
+  `name_nrc_probabilistic`. NRC matches with a materially different given name
+  (for example, the same surname but a different first name), duplicate Death
+  candidates, or hard sex/DOD-year contradictions require in-person review.
 
-### Phase 6 — Legacy-link reconciliation (no destructive migration)
-`service.reconcile_v1()` used by the command's `--reconcile-v1` flag: `matched_manual`/`is_manual` never touched; v1 auto + v2 same death ⇒ refresh in place; v1 auto + v2 different/below-auto ⇒ **never silently unlink** — set `pending_review`, keep v1 death as `alternatives[0]` tagged `{"v1_link": true}`, `source="v2_reconcile"`, and list row-by-row in the calibration diff (spec: every lost v1 link explained or fixed); other v1 statuses ⇒ plain re-evaluation.
+Supporting candidate/decision tables may be added if needed, but they must not
+become a competing source of truth for the authoritative link.
 
-### Phase 7 — Command rename + calibration
-- **Rename** `management/commands/link_verbal_autopsies.py` → `link_deaths_to_vas.py` (git mv). Add spec-named flags: `--tool {community|facility|vasa|all}` (extends `--model` with `is_community_va` split), `--since` (alias of `--from-date`), `--rebuild` (alias of `--recheck`), plus `--calibrate` (report-only, forbids `--apply`), `--reconcile-v1`, `--config <name>`. Keep dry-run-by-default/`--apply`, `--export-report`, batch streaming. Update references: `tests/test_va_death_matching.py` call_command names, `docs/death_va_linkage.md`, `docs/death_va_linkage_implementation.md`.
-- Calibration report (stdout + JSON export): per-method counts, queue/ambiguous/unmatched sizes, contradiction-guard triggers, **link-rate (auto + review-queued-likely) vs 75% prior with PASS/INVESTIGATE line**, per-block candidate stats (min/median/p95/max), per-tool breakdown, same-tool duplicates, v1-vs-v2 diff table.
+## Baseline Current State
 
-### Phase 8 — Review workflow UI (can ship after Phase 2)
-Follow the `va_data_cleanup` precedent ([views.py](va_explorer/va_data_cleanup/views.py) tab/`_paginate` pattern, unmanaged permission model):
-- `models/linkage_review.py`: `LinkageReview(managed=False, default_permissions=("view",), permissions=(("review_linkage", …),))`; migration 0054.
-- `views/linkage_review.py`: `LinkageReviewIndexView(CustomAuthMixin, PermissionRequiredMixin, ListView)` — tabs Pending / Ambiguous / Recently confirmed / Rejected / Duplicates, evidence chips from `comparisons`, ranked alternatives, district/tool/date filters; `LinkageReviewDetailView` (VA vs candidate deaths field-by-field); `ConfirmLinkView` POST (sets `matched_manual`, `is_manual`, `confirmed_by`/`reviewed_by`/`matched_at`, `UserActivity.log("va_death_link_confirmed", …)`); `RejectLinkView` POST (creates `VADeathMatchRejection`, sets `rejected`+`rejected_reason`, immediately re-evaluates so next-best surfaces, logs). Unlink of a confirmed link = same view with revert, audited.
-- Routes in existing `va_data_management/urls.py`; templates `va_explorer/templates/va_data_management/linkage_review/{index,detail}.html` + evidence partial; nav entry beside Data Cleanup.
-- Permissions: add `LinkageReview: ["view_linkagereview", "review_linkage"]` for Admin/Data Manager tiers in [initialize_groups.py](va_explorer/users/management/commands/initialize_groups.py) `GROUPS_PERMISSIONS` + `users/fixtures/group.json`.
+The repository already contains:
 
-### Phase 9 — Scheduled hook + docs
-- [tasks.py](va_explorer/va_data_management/tasks.py): sweeper unchanged structurally (stays gated on `VA_DEATH_MATCH_ENABLED`); pass active MatchingConfig; add weekly `linkage_calibration_report` task (crontab Monday) logging summary, warning when link-rate < prior-derived floor.
-- Extend `va_analytics/views.py::_build_death_va_timeline` (~L4149) with review-queue size + contradiction counts (backward-compatible keys).
-- Docs: new `docs/linkage_pipeline.md` — crosswalk regeneration + `--check` in CI, recalibration procedure (edit MatchingConfig → `--calibrate` → compare), 75%-prior monitoring, DE-08/DE-23 + death_reg_no + nickname discrepancies.
+- A generated linkage map, crosswalk generator, normalisation/profile layer,
+  deterministic and probabilistic matching, `MatchingConfig`, rejection memory,
+  review views, a retrospective command, Celery hooks, and v2 migrations
+  `0051`-`0053`.
+- A version-controlled Python map at
+  `va_explorer/va_data_management/linkage/linkage_map.py`.
+- A generated CSV at
+  `va_explorer/va_data_management/linkage/linkage_crosswalk.csv`, but the CSV is
+  currently ignored by the repository-wide `*.csv` rule and is not tracked.
+- Passing focused tests: 73 tests across the linkage and legacy matching test
+  modules.
 
-### Phase 10 — Tests (all in `va_explorer/va_data_management/tests/`)
-**Always create Deaths via the `_make_death` bulk_create helper** ([test_va_death_matching.py:23-42](va_explorer/va_data_management/tests/test_va_death_matching.py#L23-L42)) — Death post_save queues Celery to an unreachable broker.
-- `test_linkage_crosswalk.py`: `Q1209→Id10061→DE_02` chain; `Id10017/18` combined via `COMBINED_WHO`; DE-08→Id10073 with DE-23 exclusion; absent-in-form seeds reported not confirmed; `--check` drift; facility CSV header verification.
-- `test_linkage_normalization.py`: "Baby of", nicknames, text/partial dates with precision, choice-code maps, NRC, GPS, age-in-days.
-- `test_linkage_deterministic.py`: each rule links; sex/DOD-year guards route to review; non-unique NRC ⇒ review; invalid death_id format rejected.
-- `test_linkage_blocking.py`: recall property — every synthetic true pair shares ≥1 block (incl. facility VA, missing DOD, misspelled surname via phonetic block); block stats emitted.
-- `test_linkage_scoring.py`: clear-match/near-miss/tie fixtures hit the right bands; missing⇒zero; config weight override changes outcome; pregnancy flags female-adult only.
-- Extend `test_va_death_matching.py`: facility end-to-end, idempotency (no history churn), rejected-pair exclusion + next-best, one-death-per-VA, duplicate flagging.
-- `test_linkage_legacy_migration.py`: manual untouched; same-death refresh; changed outcome ⇒ pending_review with v1 death in alternatives + in calibration diff.
-- `test_linkage_review_views.py`: 403 without `review_linkage`; confirm writes `confirmed_by` + UserActivity; reject writes rejection row + re-eval.
-- `test_linkage_command.py`: `--calibrate` forbids `--apply`; `--tool vasa --since` mapping; report contains 75%-prior line and v1-diff table.
+The local database has 3,252 Deaths and 2,681 VA-type records (2,665 VA and 16
+VASA). All 2,681 have a persisted v1 `VADeathMatch`; no v2 reconciliation has
+been applied. Persisted outcomes are 313 auto-linked, 95 pending review, 3
+ambiguous, and 2,270 unmatched. There are no manual confirmations or rejection
+rows in this database.
 
-## Verification
-1. `pytest va_explorer/va_data_management/tests/test_linkage_*.py va_explorer/va_data_management/tests/test_va_death_matching.py` (venv: `/srv/vacms/shared/venv`). Full suite has known pre-existing failures (see memory) — compare against baseline, not zero.
-2. `python manage.py generate_linkage_crosswalk` then `--check` (idempotent, no drift); eyeball `linkage_crosswalk.csv` — DE-08 row maps to Id10073, DE-23 row status `excluded/informant`.
-3. `python manage.py link_deaths_to_vas --calibrate --export-report /tmp/…/calib` on real data: confirm link-rate line vs 75% prior, per-block stats, empty "v1 links missing" table (or each row explained).
-4. `--reconcile-v1` dry-run: assert zero `matched_manual` rows changed (`VADeathMatch.objects.filter(is_manual=True)` before/after identical).
-5. Review UI: as Data Manager confirm + reject a pending row; verify `confirmed_by`, `UserActivity` rows, rejection excluded on re-run (`link_deaths_to_vas --va-id <pk> --apply` never re-proposes).
-6. `coverage run -m pytest && coverage report` ≥60%; `pre-commit run --all-files`.
+A fresh v2 dry-run produced:
 
-## Risks
-- **Performance/memory** of `DeathIndex` on a large register — measure in calibration; fallback to filtered builds.
-- **Queue growth** from recall-biased thresholds — review UI must ship before loosening thresholds in the active config.
-- **Facility VA district coverage** unknown (`va.location` FK) — calibration breaks out facility block coverage; a seeded facility→district table is explicitly deferred.
-- One-time history volume when v1 rows re-bucket under v2 — run off-peak with tuned `--batch-size`.
+| Metric | Result |
+|---|---:|
+| Auto-linked | 805 (30.0% of all VA/VASA) |
+| Pending review | 926 |
+| Ambiguous | 11 |
+| Unmatched | 939 |
+| Auto + queued candidate coverage | 65.0% |
+| Community VA candidate coverage | 80.0% |
+| Facility VA candidate coverage | 40.0% |
+| VASA candidate coverage | 81.2% |
+| Existing v1 links demoted for review | 2 |
+| Same-model duplicate links reported | 8 |
+
+The overall result does not satisfy the 75% prior. More importantly, the 65%
+number is candidate coverage, not an achieved or validated link rate. It must
+not be used as evidence that precision or recall is acceptable.
+
+## Requirement Traceability
+
+| Requirement area | Status | Audit result |
+|---|---|---|
+| Generated canonical crosswalk | Partial | Python artifact exists, but the reviewable CSV is untracked; the facility XLSForm is absent; VASA is hashed but not parsed/verified by this generator; group paths are not captured. |
+| Human-confirmed mappings only | Partial | Proposed rows are inactive, but an absent seed marked `confirmed` can self-activate after a form change without a new sign-off. Missing WHO/model fields only warn in several cases. |
+| Crosswalk-driven profiles | Partial | Core fields are mapped, but some active concepts are unused (`informant_relationship`, `death_registered`) and several accessors remain special-cased. |
+| Deterministic rules and guards | Partial | Death ID, event, NRC, inert registration number, and exact composite exist. NRC currently auto-links without the required dedicated name decision path. The explicit `name_nrc_exact` / `name_nrc_probabilistic` rules, name thresholds, in-person name-conflict review, and duplicate-NRC review are not yet implemented. |
+| Recall-oriented union blocking | Partial | Union blocks exist, but sex-disagreeing candidates are removed before scoring, single-record matching loses the geography-free DOD block, and arbitrary caps discard large blocks. |
+| Probabilistic/Fellegi-Sunter-style scoring | Partial | The engine is an explainable weighted heuristic, not a calibrated probability or fitted FS model. Missingness can inflate scores because only present fields form the denominator. |
+| 75% prior monitoring | Not met | Reports show the prior, but PASS is based on all queued rows as if they were likely true. There is no labelled-sample precision/recall estimate. |
+| Preserve existing confirmed links | Not met | Normal runs skip manual links, but `--recheck/--rebuild --apply` can overwrite them. An evaluation error can also replace an existing auto-link with `ERROR`. |
+| Auditable and reversible review | Partial | Confirm/reject and history exist, but there is no explicit unlink action; alternative confirmation retains stale evidence; rejection history is not what the Rejected tab displays. |
+| Scheduled re-evaluation | Partial | New/updated ingestions are queued, but the sweeper only selects never-evaluated records. An unmatched VA is not reconsidered when a Death arrives later. |
+| Command/reporting | Partial | The command is dry-run by default and has the required filters, but it loads the full Death index and all report rows, silently falls back for an unknown config, and has no resume checkpoint. |
+| Tests | Partial | Focused synthetic tests pass, but cap recall, manual-link immutability under force, error preservation, location scoping, concurrency, unlinking, and real labelled precision/recall are not covered. |
+
+## Critical Findings
+
+### P0 - Link integrity and review safety
+
+1. Manually confirmed links are not immutable to automation.
+   `service.py` skips them only when `force_recheck=False`; the command maps
+   `--recheck/--rebuild` directly to `force_recheck`, including in apply mode.
+   A forced run can change the Death/status while leaving `is_manual=True` and
+   stale reviewer metadata. This conflicts with the requirement that confirmed
+   links are never clobbered.
+2. Evaluation failures can destroy an existing auto-link. The exception path
+   persists an `ERROR` result with no Death over the current row. Errors must be
+   recorded without changing the last authoritative link.
+3. Confirming a ranked alternative only changes the Death and method. The score,
+   comparisons, block sources, and alternatives remain snapshots of the
+   previously proposed Death, producing an incorrect audit record.
+4. Rejection is not represented consistently. The action briefly writes status
+   `REJECTED`, then immediately re-evaluates and overwrites that status. The
+   Rejected tab queries `VADeathMatch.status=REJECTED` instead of
+   `VADeathMatchRejection`, so it does not show durable rejection history.
+5. There is no explicit unlink/revoke workflow despite the reversibility
+   requirement. The generic admin remains editable and can bypass workflow audit
+   semantics.
+6. Confirm/reject actions do not lock the match row. Concurrent reviewers or a
+   matcher task can overwrite one another. The `next` redirect is not restricted
+   to local hosts.
+7. Review querysets are not restricted with the existing user-location access
+   helpers, even though Data Managers can be location-scoped elsewhere in VACMS.
+
+### P0 - Candidate recall and false-negative risk
+
+1. `union_block_candidates()` removes known sex disagreements before scoring.
+   This loses data-entry-error matches and prevents contradiction evidence from
+   reaching review.
+2. Per-block results are sliced to 200 in insertion/PK order and the union is
+   hard-capped at 300. The live dry-run had a median DOD block of 751 candidates
+   (p95 835) and a facility province block of 1,322. The report does not expose
+   how many candidates each per-block cap discarded. This is a direct and hidden
+   recall loss.
+3. A duplicate NRC does not create an NRC candidate block. It reaches review in
+   the current synthetic test only because the fixture also shares date and
+   geography; an isolated duplicate NRC can be missed entirely.
+4. `DeathIndex.build_for_profile()` uses geography SQL filters and explicitly
+   drops the geography-independent DOD block. Evaluation behavior therefore
+   differs between single-record/review paths and batch/calibration paths.
+5. Facility matching is not sufficiently resolved. Of 1,008 facility VAs, only
+   534 currently derive a district; 474 point at the `Unknown` location while
+   1,003 carry a hospital. The plan cannot defer a hospital/area-to-district
+   crosswalk while facility candidate coverage is 40%.
+6. Unresolved VA tool type is treated as facility, which skips the district term
+   in exact composite matching and can broaden candidates incorrectly.
+7. Community exact composite accepts two missing districts as equal. A community
+   composite should require a non-empty district on both records.
+
+### P1 - Score validity and calibration
+
+1. The displayed 0-100 score is not a probability. It is agreement divided by
+   the weights of fields present on both records. Two agreeing fields can produce
+   100 even when most identifying evidence is absent; the current coverage guard
+   permits name plus sex as the two fields.
+2. Disagreements generally award zero rather than an evidence-based negative
+   likelihood. This is not a fitted Fellegi-Sunter model.
+3. Month-precision dates are represented as the first day of a month but can
+   receive day-exact weight. Only year precision is discounted.
+4. The seeded `auto=88` threshold has not been justified by a labelled precision
+   study. The 75% population prior is a recall expectation and cannot justify
+   lowering an auto-link precision threshold.
+5. The calibration PASS condition counts every pending/ambiguous candidate as a
+   likely true pair. Lowering the review threshold can therefore improve the
+   reported PASS metric without improving linkage quality.
+6. One global config is used for community VA, facility VA, and VASA despite
+   materially different field availability and blocking behavior.
+7. `config_version` stores a mutable config name, not an immutable revision or
+   snapshot. The crosswalk version is not persisted on a match. An old result
+   cannot be reproduced reliably after config/rule edits.
+
+### P1 - Crosswalk correctness and provenance
+
+1. `.gitignore` ignores `linkage_crosswalk.csv`; the required reviewable,
+   version-controlled artifact was not included in commit `4cdfe46`.
+2. The requirement names four authoritative XLSForms, but the facility form is
+   only present as a data-bearing CSV. This is an unresolved source-provenance
+   gap, not a completed verification.
+3. `generate_linkage_crosswalk` hashes the VASA XLSForm but derives VASA names
+   from the existing `field_map.py`; it does not independently parse and compare
+   `WHO_name` values. The separate VASA generator helps, but neither command
+   enforces both artifacts as one atomic drift check.
+4. The shared survey parser does not emit group paths as required.
+5. Crosswalk versioning hashes form files but not the rule table, generator
+   version, choice-map rules, or facility header. Behavior can change while the
+   stored crosswalk version remains unchanged.
+6. Confirmed rows with missing WHO/model fields can remain active after only a
+   warning. Regeneration must fail closed.
+7. Category matching is order-sensitive. For example,
+   `higher_than_secondary_school` is currently classified as `secondary` because
+   the broad pattern is evaluated before the more specific `higher` pattern.
+8. The generated proposal list demonstrates that label similarity alone is not
+   safe (`DE_15` cause of death proposes `Id10019` sex at score 80). Proposed rows
+   are correctly inactive, but approvals need reviewer/date/form-hash metadata.
+
+### P2 - Operations, performance, and observability
+
+1. Each Celery link batch builds a full Death index. Parallel batches duplicate
+   the same CPU and memory work. The management command also retains every report
+   row in memory even when no export is requested.
+2. The hourly sweeper selects only `va_death_match__isnull=True`, not stale
+   unmatched/error rows, so new Death records do not trigger re-evaluation.
+3. Apply-mode runs discard per-block statistics, while dry-runs collect them.
+4. Candidate metrics show pre-cap block sizes but not retained/dropped counts,
+   candidate rank, zero-block rate, or candidate recall against known links.
+5. Duplicate reporting groups all `VerbalAutopsy` rows together rather than
+   distinguishing community and facility tools.
+6. Dashboard review counts are global even when the Death timeline queryset is
+   filtered by location/date.
+7. `--config <missing-name>` silently falls back to defaults. `--dry-run` and
+   `--apply` are not mutually exclusive, and `--va-id` does not implement the
+   documented VASA `key` lookup.
+
+## Revised Implementation Plan
+
+Each phase below has an explicit exit gate. Do not start v2 apply/reconciliation
+until Phases 0-4 pass.
+
+### Phase 0 - Freeze and Baseline
+
+- Keep `VA_DEATH_MATCH_ENABLED=False`; do not run v2 with `--apply`.
+- Export the current v1 `VADeathMatch` rows and status/method counts, including
+  history IDs, before any reconciliation.
+- Save the current v2 dry-run JSON report as the comparison baseline without PII
+  in version control.
+- Agree with the data owner on:
+  - the eligible denominator for the 75% prior, especially facility VAs;
+  - the minimum acceptable auto-link precision (recommendation: at least 99%,
+    with a reported confidence interval);
+  - valid Zambia NRC formats/placeholders;
+  - whether VASA DeathID and CMS Event are authoritative keys or strong evidence;
+  - whether same-tool duplicate links can ever be legitimate.
+- Obtain the authoritative facility XLSForm, or record a signed decision that
+  community-WHO semantics plus the facility CSV header are the approved
+  temporary surrogate.
+
+Exit gate: baseline artifacts exist, production auto-linking remains disabled,
+and the five data-owner decisions above are recorded.
+
+### Phase 1 - Protect Authoritative Links and Decisions
+
+- Make manual confirmation immutable to all matcher paths. `--recheck` may
+  evaluate a manual link in shadow/report mode but must never persist over it.
+  Replacing it requires an explicit reviewer unlink/reassign action.
+- Preserve the last authoritative link on evaluation errors. Store error status
+  and traceback metadata in a separate evaluation/audit record or error fields
+  that do not clear the linked Death.
+- Add explicit, POST-only confirm, reject, unlink, and reassign service methods.
+  Require reason text for unlink/reassign and optionally for rejection according
+  to the agreed policy.
+- Add queryable `review_reason` and `review_mode` fields (or equivalent typed
+  fields on the supporting evaluation model). Include `in_person` as a review
+  mode and `nrc_match_given_name_conflict` as a reason; do not bury these only in
+  free-text evidence JSON.
+- Wrap each review action in `transaction.atomic()` and lock the match row with
+  `select_for_update()`. Reject stale forms using the row version/evaluated time.
+- When an alternative is selected, re-score it under the recorded config and
+  crosswalk, then store that candidate's comparisons, score, and snapshot before
+  confirmation.
+- Make the Rejected tab query `VADeathMatchRejection`; keep the current proposal
+  status independent of rejection history. Re-evaluate after rejection in
+  review-only mode so the next candidate cannot auto-link without review.
+- Add immutable decision events (confirm/reject/unlink/reassign, actor, reason,
+  prior/new Death snapshots, config revision, crosswalk revision, timestamp).
+  This may be a supporting model; `VADeathMatch` remains authoritative.
+- Add database/application invariants for matched status -> non-null Death,
+  manual status -> `is_manual=True` + reviewer, and no impossible VA-side state.
+- Restrict review index/detail/actions to the reviewer's allowed VA/Death
+  locations using existing location access utilities. Validate `next` with
+  `url_has_allowed_host_and_scheme`.
+- Make the generic admin read-only for match/rejection state, or route admin
+  changes through the same decision services.
+
+Exit gate: regression tests prove forced commands, exceptions, concurrent
+actions, and admin access cannot overwrite a confirmed link; unlink/reassign is
+audited and reversible.
+
+### Phase 2 - Make the Crosswalk Reproducible and Fail Closed
+
+- Add a narrow `.gitignore` exception and commit
+  `linkage/linkage_crosswalk.csv`.
+- Extend `survey_fields()` to capture group path, raw type, list name, English
+  label, `WHO_name`, and repeat/instrument context.
+- Parse E_DEATH, community WHO VA, VASA, and the authoritative facility form in
+  the linkage generator. Compare VASA-derived mappings with
+  `PSEUDO_TO_WHO`/`COMBINED_WHO`; fail `--check` on disagreement.
+- If the facility XLSForm remains unavailable, mark that source explicitly
+  `provisional` in the artifact and prevent silent claims that all four forms
+  were verified.
+- Replace implicit `confirmed` seeds with approvals bound to the current source
+  hashes. New fields, changed labels/types/choice lists, and previously absent
+  nickname fields must return to `proposed` until re-approved.
+- Treat missing WHO IDs, missing model fields, conflicting duplicate WHO IDs,
+  and unresolved choice lists as generator errors for active concepts.
+- Fix choice parsing to use `select_list_name()` consistently, including the
+  non-standard `select one` syntax.
+- Make category rules most-specific-first and add collision diagnostics. Correct
+  the education mapping and review assumptions such as mapping `other` place of
+  death to community.
+- Add an active-concept coverage report: `used_for_blocking`, `used_for_scoring`,
+  `derived`, `unavailable`, or `unused`. Either wire active unused concepts into
+  the vector or mark them inactive.
+- Compute one immutable behavior revision from all form/header hashes, rule and
+  override content, category rules, VASA map revision, and generator version.
+  Persist this crosswalk revision on every evaluation/match.
+- Add both generator `--check` commands to CI/pre-commit so artifact drift fails
+  before merge.
+
+Exit gate: a clean checkout regenerates byte-identical tracked artifacts; every
+active row has current approval metadata and all source/mapping drift fails
+closed.
+
+### Phase 3 - Correct Candidate Generation and Scoring
+
+NRC-gated name matching:
+
+- Add `MatchMethod.NAME_NRC_EXACT = "name_nrc_exact"` and
+  `MatchMethod.NAME_NRC_PROBABILISTIC = "name_nrc_probabilistic"`. Evaluate this
+  path after format-valid DeathID and the guarded CMS Event bridge, but before
+  the general probabilistic candidate path. Remove NRC-only automatic linking;
+  NRC without sufficient name agreement must be reviewed, not asserted as a
+  link.
+- Build the NRC block from canonical profiles on both sides:
+  `normalize_nrc(VA.Id10073) == normalize_nrc(Death.DE_08)`. The same canonical
+  WHO field applies to VASA. Both values must be non-empty and pass the
+  data-owner-approved NRC validity and placeholder rules.
+- For each exact-NRC candidate, compare
+  `VA.Id10017 + VA.Id10018` with `Death.DE_03` using normalized exact token-set
+  equality plus a one-to-one name-component alignment. Persist at least:
+  `overall_name_similarity`, `given_name_similarity`, `surname_similarity`,
+  token pairs, unpaired tokens, and whether the result was exact or fuzzy.
+- `name_nrc_exact`: auto-link without applying the general probabilistic score
+  threshold when the normalized non-empty name token sets are equal and the NRC
+  identifies one unique, non-rejected Death.
+- `name_nrc_probabilistic`: auto-link a likely spelling variation only when all
+  of the following are true:
+  - the NRC identifies one unique, non-rejected Death;
+  - overall name similarity is at or above `name_nrc_auto_similarity`;
+  - surname similarity is at or above `name_nrc_surname_min_similarity`;
+  - every required given-name component is at or above
+    `name_nrc_given_min_similarity`;
+  - there are no unexplained conflicting name tokens and no hard sex/DOD-year
+    contradiction.
+- Seed conservative shadow-mode values in `MatchingConfig` (provisional starting
+  point: overall 95, surname 95, given name 90 on a 0-100 scale), then replace
+  them with thresholds selected from labelled holdout precision. Do not activate
+  fuzzy NRC-name auto-linking merely because these provisional values exist.
+- Treat phonetic/Jaro-Winkler similarity as spelling evidence, not identity by
+  itself. A close form such as a one-character transposition may qualify for
+  auto-linking when every component clears its threshold. A matching surname
+  must never compensate for a given name below the configured component
+  threshold.
+- Route every exact-NRC pair that is not safe to auto-link to
+  `PENDING_REVIEW`, retaining the NRC evidence. Specifically, same surname plus
+  a materially different first name must be tagged
+  `review_reason="nrc_match_given_name_conflict"` and
+  `review_mode="in_person"`. Low overall name similarity, a single-token name,
+  ambiguous token alignment, duplicate Deaths sharing the NRC, and hard
+  sex/DOD-year contradictions also require in-person review rather than an
+  automatic link.
+- Add `by_nrc` lookup support to the full and single-record Death indexes. If
+  normalized fields are materialized in the database later, index normalized
+  NRC and retain identical single-record and batch behavior.
+
+Candidate generation:
+
+- Remove sex as a candidate prune. Keep disagreement as scored contradiction
+  evidence, and route deterministic-key conflicts to review.
+- Add NRC and registration-number blocks even when values are non-unique, so all
+  exact identifier collisions are ranked for review.
+- Require non-empty equal districts for community exact composite; keep the
+  facility exception only for records positively classified as facility.
+- Introduce an explicit `unknown` tool classification. Unknown records must not
+  inherit the looser facility rule.
+- Make single-record and batch evaluation use the same logical blocks. Implement
+  bounded DOD/name/identifier lookups rather than dropping geography-free blocks.
+- Build a reviewed facility/area/hospital -> canonical Location/district map and
+  instrument unmapped/ambiguous facilities. Use `resolve_location_context()` and
+  preload location ancestry to avoid N+1 queries.
+- Replace first-PK truncation with deterministic cheap pre-ranking inside broad
+  blocks (identifier, name-token/phonetic similarity, DOD proximity, geography),
+  then apply configurable caps. Record pre-cap, retained, and dropped counts per
+  block. A known true pair must not be dropped by a cap.
+- Make phonetic blocking robust to name order by indexing suitable name tokens,
+  not only the last token of a free-text Death name.
+
+Scoring:
+
+- Treat missing evidence as neutral without renormalising a sparse pair into a
+  high confidence. Until a fitted model exists, use a fixed score scale plus a
+  minimum-evidence policy requiring a strong temporal/identifier/geographic
+  signal in addition to name; name + sex alone must not auto-link.
+- Give contradictions explicit, configurable negative evidence while retaining
+  hard guards for deterministic sex/DOD-year conflicts.
+- Handle day, month, and year date precision separately. Month/month agreement
+  must not receive day-exact weight.
+- Validate NRC using the data-owner-approved format and reject known placeholder
+  patterns. NRC equality selects the strong candidate block; exact or
+  threshold-qualified component-safe name agreement controls auto-linking. All
+  other NRC matches go to in-person review.
+- Revisit greedy name alignment so one token cannot satisfy multiple tokens;
+  retain token-order permutations and `Baby of` behavior.
+- Add or remove the active but unused relationship/death-registration concepts.
+- Split weights/thresholds by tool, or include tool-specific missingness and
+  calibration in a single explicit model.
+
+Exit gate: candidate recall is 100% for preserved manual links and the labelled
+gold set before and after caps; synthetic tests cover missing/contradictory data,
+all tools, broad blocks, name order, partial dates, and duplicate identifiers.
+
+### Phase 4 - Build Defensible Calibration
+
+- Create a versioned, de-identified gold set of candidate pairs sampled by tool,
+  site, score band, deterministic method, duplicates, and unmatched cases.
+  Require two reviewers and adjudication for disagreements.
+- Split calibration and holdout sets. Do not tune and report final metrics on the
+  same labels.
+- Report, by tool and overall:
+  - candidate-pair recall (true Death appears anywhere in the candidate set);
+  - post-cap candidate recall;
+  - auto-link precision and recall with confidence intervals;
+  - review-band precision/yield and reviewer disagreement;
+  - authoritative achieved link rate (`matched_auto + matched_manual`);
+  - candidate coverage as a separate diagnostic, never a PASS substitute;
+  - queue backlog/age, no-candidate rate, truncation rate, and duplicate rate.
+- Report `name_nrc_exact` and `name_nrc_probabilistic` separately, including the
+  fuzzy rule's auto-link precision, similarity distribution, in-person-review
+  yield, and false-positive examples. The fuzzy NRC-name rule must meet the
+  approved auto-link precision gate independently of the overall engine.
+- Fit Fellegi-Sunter m/u weights with smoothing when the labelled sample is large
+  enough, or explicitly retain a heuristic score and stop calling it probability
+  or confidence. Calibrate any displayed probability on the holdout set.
+- Validate `MatchingConfig` JSON against a schema: allowed keys, numeric ranges,
+  non-negative base weights, ordered thresholds, candidate limits, and per-tool
+  sections. Include and validate `name_nrc_auto_similarity`,
+  `name_nrc_surname_min_similarity`, and `name_nrc_given_min_similarity`.
+  Unknown config names must fail the command.
+- Make configs immutable revisions. Activation creates/selects a revision; a
+  match stores the revision ID/hash and full effective config snapshot needed for
+  reproduction.
+- Change the 75% report to show two lines:
+  - achieved authoritative link rate versus the prior;
+  - candidate coverage versus the prior as an investigation diagnostic.
+  Queued rows count as links only after reviewer confirmation.
+- Do not activate the seeded `auto=88` value unless the holdout precision gate is
+  met. Use the approved precision target to select the auto threshold and use the
+  review threshold to pursue recall.
+
+Exit gate: holdout metrics meet the agreed precision gate, candidate recall is
+documented, and the 75% comparison cannot be gamed by widening the review queue.
+
+### Phase 5 - Complete the Review Workflow
+
+- Show current candidate and each ranked alternative with its own field-by-field
+  evidence and immutable evaluation revision.
+- Add filters for tool, location, status, method, score band, contradiction,
+  review reason/mode, evaluation version, and age in queue. Preserve filters
+  safely through actions.
+- Show durable rejection and decision history, including unlinks/reassignments.
+- Calculate duplicate groups by actual tool (`community_va`, `facility_va`,
+  `vasa`), not only by Django model. Let reviewers resolve a duplicate group
+  without losing either record's history.
+- Add explicit `no credible candidate` / `no death expected` decisions if the
+  data owner approves their semantics; do not infer them solely from low score.
+- Add queue ownership/SLA metrics if review volume remains near the current 937
+  records.
+
+Exit gate: a location-scoped reviewer can safely resolve every queue state,
+including reject-next-candidate, duplicate, unlink, and reassign, with complete
+evidence and audit history.
+
+### Phase 6 - Scheduling, Performance, and Monitoring
+
+- Replace the binary feature flag with explicit modes such as `off`, `shadow`,
+  `review_only`, and `auto`. Shadow mode evaluates and reports without asserting
+  links.
+- Re-evaluate unmatched/error/stale records when relevant VA data, Death data,
+  crosswalk revision, or active config revision changes. Use timestamps/revision
+  markers and rejection exclusions to avoid churn.
+- Avoid rebuilding the full Death index in every parallel Celery batch. Build it
+  once per orchestrated run, use a revisioned cache, or use database-backed
+  indexes/materialised normalized fields after profiling both approaches.
+- Stream CSV/JSONL report rows instead of retaining all rows in memory. Add
+  checkpoint/resume by stable VA PK and config/crosswalk revision.
+- Collect the same block metrics in dry-run and apply mode. Surface errors and
+  truncation as task failures/warnings rather than returning only total/changed.
+- Scope dashboard queue metrics to the active dashboard filters and add per-tool
+  achieved link rate, review backlog, truncation, and stale-evaluation metrics.
+- Validate command option combinations and positive limits/batch sizes. Support
+  both `instanceid` and VASA `key` for `--va-id`.
+- Benchmark query count, wall time, and peak memory on at least 10x current data;
+  define task timeouts and safe batch/concurrency settings from the result.
+
+Exit gate: shadow runs are resumable, bounded in memory, behaviorally identical
+to single-record evaluation, and observable by tool/block/revision.
+
+### Phase 7 - Reconcile and Roll Out
+
+1. Deploy Phases 1-6 with mode `off`; run migrations and both crosswalk drift
+   checks.
+2. Run a full shadow calibration and compare every existing v1 authoritative
+   link. Every missing/changed v1 link must have a machine-readable reason and a
+   review disposition. Manual links must be byte-for-byte unchanged.
+3. Resolve the two currently demoted v1 links and eight duplicate groups before
+   broad apply.
+4. Canary in `review_only` by tool. Start with community VA and VASA only after
+   their holdout gates pass. Keep facility VA review-only until facility mapping
+   and its separate precision/recall gates pass.
+5. Apply reconciliation in resumable batches. Persist run ID, config revision,
+   crosswalk revision, before/after counts, failures, and reviewer queue delta.
+6. Enable `auto` only for a tool whose holdout precision gate passed. Monitor
+   daily initially, then weekly after stable review yield and link rates.
+7. Roll back by switching mode/config revision and reversing explicit decision
+   events where required. Do not delete match/history tables as an operational
+   rollback mechanism.
+
+Exit gate: authoritative link rate and precision meet the approved targets for
+each enabled tool, no confirmed link was overwritten, and rollback has been
+rehearsed on a production-like snapshot.
+
+## Required Test Additions
+
+- Crosswalk: tracked CSV, all source hashes, VASA-map mismatch, group paths,
+  fail-closed missing fields, approval invalidation on form drift, category-rule
+  collision/specificity, and both generator checks in CI.
+- NRC-gated name matching: VA and VASA exact success cases, swapped name order,
+  punctuation/case normalization, high-similarity misspellings above/below each
+  configured threshold, invalid/placeholder NRC, blank/single-token names,
+  rejected-pair exclusion, duplicate NRC ambiguity, and sex/DOD-year
+  contradiction review. Include a mandatory same-surname/different-first-name
+  fixture that asserts `PENDING_REVIEW`, `review_mode="in_person"`, and no
+  authoritative link even when aggregate name similarity exceeds the review
+  threshold.
+- Candidate generation: sex contradiction retained, isolated duplicate NRC,
+  single-vs-batch parity, broad-block cap retention, cap metrics, community
+  missing-district composite, unknown tool, facility hospital mapping, and
+  name-order phonetics.
+- Scoring: sparse name+sex cannot auto-link, explicit contradiction penalties,
+  day/month/year precision, one-to-one token alignment, identifier validity, and
+  per-tool config behavior.
+- Persistence: manual link unchanged under every command flag, evaluation error
+  preserves existing link, config/crosswalk snapshots, no history churn on truly
+  identical evaluation, and database state constraints.
+- Review: alternative evidence updated, rejection history tab, next candidate is
+  review-only, unlink/reassign audit, stale/concurrent POST protection, local-only
+  redirect, location scoping, and read-only admin.
+- Scheduling/command: stale unmatched re-evaluation after new Death, no duplicate
+  task churn, apply-mode block metrics, missing config failure, mutually exclusive
+  modes, VASA key lookup, streaming report, and resume checkpoint.
+- Calibration: fixed labelled fixtures, holdout split, confidence intervals,
+  achieved-vs-candidate coverage separation, per-tool metrics, and a regression
+  test proving a lower review threshold cannot by itself turn the authoritative
+  75% verdict into PASS.
+
+## Verification Commands
+
+```bash
+/srv/vacms/shared/venv/bin/python manage.py generate_vasa_mapping --check
+/srv/vacms/shared/venv/bin/python manage.py generate_linkage_crosswalk --check
+/srv/vacms/shared/venv/bin/pytest -q \
+  va_explorer/va_data_management/tests/test_linkage_*.py \
+  va_explorer/va_data_management/tests/test_va_death_matching.py
+/srv/vacms/shared/venv/bin/python manage.py link_deaths_to_vas \
+  --calibrate --config <immutable-revision> --export-report /tmp/linkage-calibration.csv
+pre-commit run --all-files
+```
+
+Run the broader VA/VASA ingestion, location-scoping, task, analytics, and user
+permission suites before rollout. Compare full-suite failures against the
+pre-change baseline rather than accepting newly introduced failures as known.

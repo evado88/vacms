@@ -231,7 +231,7 @@ CONCEPTS = {
         "de_field": "DE_08",
         "label_de": "DE-08 NRC NUMBER for the Deceased",
         "label_who": "(Id10073) [National identification number of deceased]",
-        "rule": "deterministic when valid + unique; DE-23 (informant NRC) is explicitly excluded",
+        "rule": "exact identifier block gated by exact or thresholded component name agreement; NRC-only and duplicate-NRC pairs require review",
         "status": "confirmed",
         "vasa_names": [],
         "who_ids": ["Id10073"],
@@ -328,7 +328,7 @@ CHOICE_CATEGORY_MAPS = {
     "education": {
         "death": {"01": "none", "02": "primary", "03": "secondary", "04": "higher"},
         "who": {
-            "higher_than_secondary_school": "secondary",
+            "higher_than_secondary_school": "higher",
             "no_formal_education": "none",
             "primary_school": "primary",
             "secondary_school": "secondary",
@@ -3212,10 +3212,13 @@ GEO_CODE_MAPS = {
 FACILITY_VA_COLUMNS = ["area", "hospital", "province"]
 
 XLSFORM_HASHES = {
+    "crosswalk_rules": "edde8ee829ca18818845f6804ba6db03fab44426b38d3de19c70a9ddfb6534ce",
     "e_death": "84292d5d288ae0472242a2bf3a3efefc61fb311fefc5a9a2e766ec2b1e236e5f",
     "facility_csv_header": "0e904e6c635baefabc289dca9f73dafa8d62c5e91d8c26989323034d4e1b42ef",
     "vasa": "ea398d8a1fd5c2b23fc695e9b4f681e01382914f5e771c46562b00961ad4bfc6",
+    "vasa_field_map": "c77d4202aa9adbaf0e664f13dcd795da9975a1d15642ca022d261af225437d7e",
+    "vasa_mapping_version": "ea398d8a-38ab5638",
     "who": "38ab56380533b6d147191246f04f7b8f1494d723153f5b3ea6ccdba8f48e07f8",
 }
 
-CROSSWALK_VERSION = "84292d5d-38ab5638-ea398d8a"
+CROSSWALK_VERSION = "84292d5d-38ab5638-ea398d8a-edde8ee8-c77d4202-0e904e6c"

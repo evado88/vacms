@@ -16,6 +16,7 @@ import statistics
 from pathlib import Path
 
 from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured, ObjectDoesNotExist
 from django.core.management.base import BaseCommand, CommandError
 from django.db.models import Q
 from django.utils import timezone
@@ -41,6 +42,10 @@ _REPORT_FIELDS = [
     "missing_fields",
     "alternatives",
     "block_sources",
+    "review_reason",
+    "review_mode",
+    "config_version",
+    "crosswalk_version",
     "changed",
     "previously_linked",
     "previous_was_manual",
@@ -146,6 +151,13 @@ class Command(BaseCommand):
         )
         parser.add_argument("--source", default="retrospective_command")
         parser.add_argument("--batch-size", dest="batch_size", type=int, default=500)
+        parser.add_argument(
+            "--mode",
+            choices=["shadow", "review_only", "auto"],
+            default=None,
+            help="Override decision mode. Shadow never writes; review_only "
+            "persists candidates but asserts no automatic links.",
+        )
 
     def _build_queryset(self, model, opts):
         qs = model.objects.all()
@@ -154,7 +166,7 @@ class Command(BaseCommand):
             if va_id.isdigit():
                 qs = qs.filter(pk=int(va_id))
             else:
-                qs = qs.filter(instanceid=va_id)
+                qs = qs.filter(Q(instanceid=va_id) | Q(key=va_id))
         if opts["tool"] and model is VerbalAutopsy:
             # community_va is normalised to yes/no on save.
             if opts["tool"] == "community":
@@ -210,7 +222,16 @@ class Command(BaseCommand):
     def handle(self, *args, **opts):
         if opts["calibrate"] and opts["apply"]:
             raise CommandError("--calibrate is report-only; drop --apply.")
-        apply = opts["apply"]
+        if opts["dry_run"] and opts["apply"]:
+            raise CommandError("--dry-run and --apply are mutually exclusive.")
+        if opts["batch_size"] < 1:
+            raise CommandError("--batch-size must be positive.")
+        if opts["limit"] is not None and opts["limit"] < 1:
+            raise CommandError("--limit must be positive.")
+        if opts["mode"] == "shadow" and opts["apply"]:
+            raise CommandError("--mode shadow cannot be combined with --apply.")
+        apply = opts["apply"] and opts["mode"] != "shadow"
+        review_only = opts["mode"] == "review_only"
         rows = []
 
         def collect(result):
@@ -222,14 +243,20 @@ class Command(BaseCommand):
             else self.style.SUCCESS("APPLY — links will be persisted.")
         )
 
-        summary = run_matching(
-            self._iter_vas(opts),
-            apply=apply,
-            force_recheck=opts["recheck"],
-            source=opts["source"],
-            on_result=collect,
-            config_name=opts["config_name"],
-        )
+        try:
+            summary = run_matching(
+                self._iter_vas(opts),
+                apply=apply,
+                force_recheck=opts["recheck"],
+                source=opts["source"],
+                on_result=(
+                    collect if opts["calibrate"] or opts["export_report"] else None
+                ),
+                config_name=opts["config_name"],
+                review_only=review_only,
+            )
+        except (ImproperlyConfigured, ObjectDoesNotExist) as exc:
+            raise CommandError(str(exc)) from exc
 
         self._print_summary(summary)
         if opts["calibrate"]:
@@ -287,11 +314,11 @@ class Command(BaseCommand):
         )
         self.stdout.write(f"Expected prior:                >= {prior:.0f}%")
         verdict = (
-            self.style.SUCCESS("PASS — coverage is consistent with the prior.")
-            if coverage >= prior
+            self.style.SUCCESS("PASS — confirmed linkage rate meets the prior.")
+            if link_rate >= prior
             else self.style.ERROR(
-                "INVESTIGATE — coverage below the prior: blocking, thresholds "
-                "or the crosswalk are losing true matches."
+                "INVESTIGATE — confirmed linkage rate is below the prior. "
+                "Candidate coverage is diagnostic only; queued records are not links."
             )
         )
         self.stdout.write(verdict)
@@ -308,10 +335,12 @@ class Command(BaseCommand):
                 bucket["queued"] += 1
         self.stdout.write("Per-tool:")
         for tool, b in sorted(by_tool.items()):
-            pct = 100.0 * (b["linked"] + b["queued"]) / (b["total"] or 1)
+            linked_pct = 100.0 * b["linked"] / (b["total"] or 1)
+            coverage_pct = 100.0 * (b["linked"] + b["queued"]) / (b["total"] or 1)
             self.stdout.write(
                 f"  {tool:14s} total={b['total']:<6} linked={b['linked']:<6} "
-                f"queued={b['queued']:<6} coverage={pct:.1f}%"
+                f"queued={b['queued']:<6} linked_rate={linked_pct:.1f}% "
+                f"coverage={coverage_pct:.1f}%"
             )
 
         # Per-block candidate statistics.
@@ -360,15 +389,26 @@ class Command(BaseCommand):
                 continue
             if not row["death_pk"]:
                 continue
-            key = (row["va_model"], row["death_pk"])
+            key = (row.get("va_tool") or row["va_model"], row["death_pk"])
             if key in seen:
                 duplicates.append((key, seen[key], row["va_pk"]))
             else:
                 seen[key] = row["va_pk"]
         self.stdout.write(f"Same-tool duplicate links:     {len(duplicates)}")
-        for (model, death_pk), first_pk, second_pk in duplicates[:20]:
+        for (tool, death_pk), first_pk, second_pk in duplicates[:20]:
             self.stdout.write(
-                f"  death#{death_pk} linked by {model}#{first_pk} and #{second_pk}"
+                f"  death#{death_pk} linked by {tool}#{first_pk} and #{second_pk}"
+            )
+
+        for method in ("name_nrc_exact", "name_nrc_probabilistic"):
+            method_rows = [row for row in rows if row["method"] == method]
+            auto_count = sum(row["status"] == "matched_auto" for row in method_rows)
+            review_count = sum(
+                row["status"] in {"pending_review", "ambiguous"} for row in method_rows
+            )
+            self.stdout.write(
+                f"{method}: total={len(method_rows)} auto={auto_count} "
+                f"review={review_count}"
             )
 
     def _write_report(self, path, rows, summary):

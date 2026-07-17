@@ -1,5 +1,7 @@
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.utils import OperationalError, ProgrammingError
 from simple_history.models import HistoricalRecords
 
 
@@ -23,11 +25,35 @@ class MatchMethod(models.TextChoices):
     EXACT_DEATH_ID = "exact_death_id", "Exact Death ID"
     EVENT_BRIDGE = "event_bridge", "Case Management event"
     NRC = "nrc", "National ID (NRC)"
+    NAME_NRC_EXACT = "name_nrc_exact", "Exact name + NRC"
+    NAME_NRC_PROBABILISTIC = (
+        "name_nrc_probabilistic",
+        "Probabilistic name + NRC",
+    )
     DEATH_REG_NO = "death_reg_no", "Death registration number"
     EXACT_COMPOSITE = "exact_composite", "Exact composite (name+sex+DOD+district)"
     FUZZY_DEMOGRAPHIC = "fuzzy_demographic", "Fuzzy demographic"  # legacy (v1)
     PROBABILISTIC = "probabilistic", "Probabilistic score"
     MANUAL = "manual", "Manual"
+
+
+class ReviewMode(models.TextChoices):
+    DESK = "desk", "Desk review"
+    IN_PERSON = "in_person", "In-person review"
+
+
+class ReviewReason(models.TextChoices):
+    NRC_NAME_MISSING = "nrc_match_name_missing", "NRC match with missing name"
+    NRC_NAME_CONFLICT = "nrc_match_name_conflict", "NRC match with name conflict"
+    NRC_GIVEN_NAME_CONFLICT = (
+        "nrc_match_given_name_conflict",
+        "NRC and surname match with given-name conflict",
+    )
+    NRC_DUPLICATE = "nrc_duplicate", "NRC appears on multiple Death records"
+    HARD_CONTRADICTION = "hard_contradiction", "Hard demographic contradiction"
+    CLOSE_CANDIDATES = "close_candidates", "Top candidates are too close"
+    SCORE_REVIEW_BAND = "score_review_band", "Score is in the review band"
+    PREVIOUS_LINK_CHANGED = "previous_link_changed", "Previous link changed"
 
 
 class VADeathMatch(models.Model):
@@ -96,6 +122,22 @@ class VADeathMatch(models.Model):
     block_sources = models.JSONField(default=list, blank=True)
     # Name of the MatchingConfig row the evaluation ran under.
     config_version = models.CharField(max_length=64, blank=True, null=True)
+    # Effective config and generated-crosswalk revision make an evaluation
+    # reproducible after mutable admin configuration changes.
+    config_snapshot = models.JSONField(default=dict, blank=True)
+    crosswalk_version = models.CharField(max_length=128, blank=True, null=True)
+    review_reason = models.CharField(
+        max_length=64,
+        choices=ReviewReason.choices,
+        blank=True,
+        null=True,
+        db_index=True,
+    )
+    review_mode = models.CharField(
+        max_length=32, choices=ReviewMode.choices, blank=True, null=True, db_index=True
+    )
+    last_error = models.JSONField(default=dict, blank=True)
+    decision_version = models.PositiveIntegerField(default=0)
 
     # --- Lifecycle ---
     matched_at = models.DateTimeField(null=True, blank=True)
@@ -128,6 +170,10 @@ class VADeathMatch(models.Model):
         indexes = [
             models.Index(fields=["death"], name="vadeathmatch_death_idx"),
             models.Index(fields=["status"], name="vadeathmatch_status_idx"),
+            models.Index(
+                fields=["review_mode", "review_reason"],
+                name="vadeathmatch_review_idx",
+            ),
         ]
         constraints = [
             # Exactly one VA side must be set.
@@ -137,6 +183,18 @@ class VADeathMatch(models.Model):
                     | models.Q(verbal_autopsy__isnull=True, vasa__isnull=False)
                 ),
                 name="vadeathmatch_exactly_one_va",
+            ),
+            models.CheckConstraint(
+                check=(
+                    ~models.Q(
+                        status__in=[
+                            MatchStatus.MATCHED_AUTO,
+                            MatchStatus.MATCHED_MANUAL,
+                        ]
+                    )
+                    | models.Q(death__isnull=False)
+                ),
+                name="vadeathmatch_linked_has_death",
             ),
         ]
 
@@ -222,8 +280,10 @@ class MatchingConfig(models.Model):
                 else cls.objects.filter(is_active=True)
             )
             row = qs.first()
-        except Exception:  # pragma: no cover - pre-migration / broken DB
+        except (OperationalError, ProgrammingError):  # pragma: no cover - pre-migration
             row = None
+        if name and row is None:
+            raise cls.DoesNotExist(f"MatchingConfig '{name}' does not exist.")
         if row is not None:
             merged["name"] = row.name
             merged["weights"].update(row.weights or {})
@@ -234,6 +294,27 @@ class MatchingConfig(models.Model):
     def __str__(self):
         flag = " (active)" if self.is_active else ""
         return f"MatchingConfig {self.name}{flag} v{self.algorithm_version}"
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            prior = type(self).objects.filter(pk=self.pk).first()
+            changed_revision = prior and any(
+                (
+                    prior.name != self.name,
+                    prior.weights != self.weights,
+                    prior.thresholds != self.thresholds,
+                    prior.algorithm_version != self.algorithm_version,
+                )
+            )
+            if (
+                changed_revision
+                and VADeathMatch.objects.filter(config_version=prior.name).exists()
+            ):
+                raise ValidationError(
+                    "A matching config referenced by evaluations is immutable; "
+                    "create and activate a new named revision instead."
+                )
+        return super().save(*args, **kwargs)
 
 
 class VADeathMatchRejection(models.Model):
@@ -310,3 +391,75 @@ class VADeathMatchRejection(models.Model):
 
     def __str__(self):
         return f"Rejected: {self.va} -x-> {self.death}"
+
+
+class VADeathMatchDecision(models.Model):
+    """Immutable audit event for a human linkage decision."""
+
+    class Action(models.TextChoices):
+        CONFIRM = "confirm", "Confirm"
+        REJECT = "reject", "Reject"
+        UNLINK = "unlink", "Unlink"
+        REASSIGN = "reassign", "Reassign"
+
+    match = models.ForeignKey(
+        VADeathMatch,
+        related_name="decisions",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    va_model = models.CharField(max_length=32)
+    va_pk = models.PositiveIntegerField()
+    va_identifier = models.TextField(blank=True, null=True)
+    action = models.CharField(max_length=16, choices=Action.choices)
+    prior_death = models.ForeignKey(
+        "va_data_management.Death",
+        related_name="va_link_decisions_from",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    new_death = models.ForeignKey(
+        "va_data_management.Death",
+        related_name="va_link_decisions_to",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    prior_death_id_snapshot = models.TextField(blank=True, null=True)
+    new_death_id_snapshot = models.TextField(blank=True, null=True)
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="va_death_match_decisions",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    reason = models.TextField(blank=True, null=True)
+    evidence = models.JSONField(default=dict, blank=True)
+    config_snapshot = models.JSONField(default=dict, blank=True)
+    config_version = models.CharField(max_length=64, blank=True, null=True)
+    crosswalk_version = models.CharField(max_length=128, blank=True, null=True)
+    created = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "VA-Death match decision"
+        ordering = ["-created", "-pk"]
+        indexes = [
+            models.Index(fields=["va_model", "va_pk"], name="vadeathdecision_va_idx"),
+            models.Index(
+                fields=["action", "created"], name="vadeathdecision_action_idx"
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.action}: {self.va_model}#{self.va_pk}"
+
+    def save(self, *args, **kwargs):
+        if self.pk and type(self).objects.filter(pk=self.pk).exists():
+            raise ValidationError("VA-Death match decisions are immutable.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("VA-Death match decisions are immutable.")

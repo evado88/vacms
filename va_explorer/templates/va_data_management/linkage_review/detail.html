@@ -6,7 +6,7 @@
 
 {% block content %}
   <p>
-    <a href="{% url 'va_data_management:linkage_review_index' %}">&larr; Back to queue</a>
+    <a href="{{ back_target }}">&larr; Back to queue</a>
   </p>
 
   <div class="card mb-3">
@@ -19,6 +19,9 @@
       (separation {{ match.score_separation|floatformat:1 }})
       {% if match.block_sources %}
         <br><small class="text-muted">Surfaced by: {{ match.block_sources|join:", " }}</small>
+      {% endif %}
+      {% if match.review_reason %}
+        <br><small>Review: {{ match.get_review_reason_display }}{% if match.review_mode %} ({{ match.get_review_mode_display }}){% endif %}</small>
       {% endif %}
     </div>
     <div class="card-body table-responsive">
@@ -78,12 +81,19 @@
                   {% if alt.previous_link %}<span class="badge badge-warning">previous link</span>{% endif %}
                 </td>
                 <td>{{ alt.score }}</td>
-                <td>{{ alt.method|default:"—" }}</td>
+                <td>
+                  {{ alt.method|default:"—" }}
+                  {% if alt.supporting_fields %}<br><small class="text-success">Supports: {{ alt.supporting_fields|join:", " }}</small>{% endif %}
+                  {% if alt.contradictory_fields %}<br><small class="text-danger">Conflicts: {{ alt.contradictory_fields|join:", " }}</small>{% endif %}
+                </td>
                 <td>
                   {% if can_review and alt.death %}
                     <form method="post" action="{% url 'va_data_management:linkage_review_confirm' match.pk %}">
                       {% csrf_token %}
                       <input type="hidden" name="death_pk" value="{{ alt.death.pk }}">
+                      <input type="hidden" name="decision_version" value="{{ match.decision_version }}">
+                      <input type="hidden" name="next" value="{{ back_target }}">
+                      <input class="form-control form-control-sm my-1" type="text" name="reason" placeholder="Reassignment reason" required>
                       <button class="btn btn-sm btn-outline-success" type="submit">Confirm this one</button>
                     </form>
                   {% endif %}
@@ -101,19 +111,48 @@
     <div class="d-flex">
       <form method="post" action="{% url 'va_data_management:linkage_review_confirm' match.pk %}" class="mr-2">
         {% csrf_token %}
+        <input type="hidden" name="decision_version" value="{{ match.decision_version }}">
+        <input type="hidden" name="next" value="{{ back_target }}">
         <button class="btn btn-success" type="submit" {% if not match.death %}disabled{% endif %}>
           Confirm link
         </button>
       </form>
       <form method="post" action="{% url 'va_data_management:linkage_review_reject' match.pk %}" class="form-inline">
         {% csrf_token %}
+        <input type="hidden" name="decision_version" value="{{ match.decision_version }}">
+        <input type="hidden" name="next" value="{{ back_target }}">
         <input class="form-control mr-2" type="text" name="reason" placeholder="Rejection reason">
         <button class="btn btn-outline-danger" type="submit" {% if not match.death %}disabled{% endif %}>
           Reject link
         </button>
       </form>
+      {% if match.is_linked %}
+        <form method="post" action="{% url 'va_data_management:linkage_review_unlink' match.pk %}" class="form-inline ml-2">
+          {% csrf_token %}
+          <input type="hidden" name="decision_version" value="{{ match.decision_version }}">
+          <input type="hidden" name="next" value="{{ back_target }}">
+          <input class="form-control mr-2" type="text" name="reason" placeholder="Unlink reason" required>
+          <button class="btn btn-outline-danger" type="submit">Unlink</button>
+        </form>
+      {% endif %}
     </div>
   {% else %}
     <p class="text-muted">You can view this queue but need the review permission to confirm or reject.</p>
+  {% endif %}
+
+  {% if decisions or rejections %}
+    <div class="card mt-3">
+      <div class="card-header">Decision history</div>
+      <div class="card-body">
+        <ul class="mb-0">
+          {% for decision in decisions %}
+            <li>{{ decision.created }}: {{ decision.get_action_display }} by {{ decision.actor|default:"system" }}{% if decision.reason %} — {{ decision.reason }}{% endif %}</li>
+          {% endfor %}
+          {% for rejection in rejections %}
+            <li>{{ rejection.created }}: rejected {{ rejection.death }} by {{ rejection.rejected_by|default:"system" }}{% if rejection.reason %} — {{ rejection.reason }}{% endif %}</li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
   {% endif %}
 {% endblock %}

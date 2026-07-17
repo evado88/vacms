@@ -2,7 +2,7 @@
 
 pseudo-name -> WHO-field map, instrument sections, repeat groups
 
-Regenerate after any VASA XLSForm revision; the generator is idempotent
+Regenerate after any XLSForm revision; the generator is idempotent
 and `--check` fails if this file drifts from the form."""
 
 VASA_FORM_ID = "znphi_vasa_who_2016"

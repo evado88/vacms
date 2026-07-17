@@ -128,4 +128,9 @@ urlpatterns = [
         view=views_linkage.RejectLinkView.as_view(),
         name="linkage_review_reject",
     ),
+    path(
+        "linkage-review/<int:pk>/unlink",
+        view=views_linkage.UnlinkView.as_view(),
+        name="linkage_review_unlink",
+    ),
 ]
