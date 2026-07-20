@@ -12,6 +12,7 @@ OpenVAFiles
 
 .env
 .save
+.env.save
 .envs/*
 pgdata
 celerybeat-schedule

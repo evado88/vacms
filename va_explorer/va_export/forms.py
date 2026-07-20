@@ -1,4 +1,6 @@
 from django import forms
+from django.core.exceptions import ValidationError
+from django.db.models import Q
 from django.forms import (
     DateField,
     ModelMultipleChoiceField,
@@ -11,6 +13,22 @@ from va_explorer.users.forms import LocationRestrictionsSelectMultiple
 from va_explorer.va_data_management.models import CauseOfDeath, SRSClusterLocation
 
 EXPORT_LOCATION_LEVELS = ("province", "district", "constituency", "ward")
+
+DATASET_CHOICES = (
+    ("verbalautopsy", "Verbal Autopsy"),
+    ("household", "Household"),
+    ("pregnancy", "Pregnancy"),
+    ("pregnancy_outcome", "Pregnancy Outcome"),
+    ("death", "Death"),
+    ("rumor_surveillance", "Rumor Surveillance"),
+)
+
+VA_RECORD_TYPE_CHOICES = (
+    ("abridged", "Abridged VA (Location, Demographics, CoD, PII)"),
+    ("full", "Full VA Record"),
+)
+
+EXPORT_FORMAT_CHOICES = (("csv", "csv"), ("json", "json"))
 
 
 # load COD options for export form
@@ -26,17 +44,122 @@ class DateInput(forms.DateInput):
     input_type = "date"
 
 
+class _TokenListField(forms.Field):
+    def to_python(self, value):
+        if value in self.empty_values:
+            return []
+
+        values = value if isinstance(value, (list, tuple)) else [value]
+        tokens = []
+        for raw_value in values:
+            tokens.extend(
+                token.strip() for token in str(raw_value).split(",") if token.strip()
+            )
+        return tokens
+
+
+class _IntegerTokenListField(_TokenListField):
+    default_error_messages = {"invalid": "Enter a valid list of IDs."}
+
+    def validate(self, value):
+        super().validate(value)
+        if any(not token.isdigit() or int(token) <= 0 for token in value):
+            raise ValidationError(self.error_messages["invalid"], code="invalid")
+
+    def clean(self, value):
+        return [int(token) for token in super().clean(value)]
+
+
+class ExportRequestForm(forms.Form):
+    """Strict validation for the download endpoint's public request contract."""
+
+    dataset = forms.ChoiceField(choices=DATASET_CHOICES)
+    va_record_type = forms.ChoiceField(choices=VA_RECORD_TYPE_CHOICES, required=False)
+    format = forms.ChoiceField(choices=EXPORT_FORMAT_CHOICES, required=False)
+    start_date = DateField(required=False)
+    end_date = DateField(required=False)
+    locations = _IntegerTokenListField(required=False)
+    causes = _TokenListField(required=False)
+    ids = _IntegerTokenListField(required=False)
+
+    def clean_locations(self):
+        location_ids = self.cleaned_data["locations"]
+        if not location_ids:
+            return []
+        found_ids = set(
+            SRSClusterLocation.objects.filter(pk__in=location_ids).values_list(
+                "pk", flat=True
+            )
+        )
+        if found_ids != set(location_ids):
+            raise ValidationError("One or more selected locations do not exist.")
+        return list(dict.fromkeys(location_ids))
+
+    def clean_causes(self):
+        tokens = self.cleaned_data["causes"]
+        if not tokens:
+            return []
+
+        cause_ids = [int(token) for token in tokens if token.isdigit()]
+        cause_names = [token for token in tokens if not token.isdigit()]
+        matches = CauseOfDeath.objects.filter(
+            Q(pk__in=cause_ids) | Q(cause__in=cause_names)
+        ).values("pk", "cause")
+        matched_ids = set()
+        matched_names = set()
+        resolved_names = []
+        for match in matches:
+            if match["pk"] in cause_ids:
+                matched_ids.add(match["pk"])
+            matched_names.add(match["cause"])
+            if match["cause"] not in resolved_names:
+                resolved_names.append(match["cause"])
+
+        if matched_ids != set(cause_ids) or not set(cause_names).issubset(
+            matched_names
+        ):
+            raise ValidationError("One or more selected causes do not exist.")
+        return resolved_names
+
+    def clean(self):
+        cleaned_data = super().clean()
+        dataset = cleaned_data.get("dataset")
+        ids = cleaned_data.get("ids") or []
+        start_date = cleaned_data.get("start_date")
+        end_date = cleaned_data.get("end_date")
+
+        if bool(start_date) != bool(end_date):
+            missing_field = "end_date" if start_date else "start_date"
+            self.add_error(
+                missing_field,
+                "Both Earliest Date and Latest Date are required.",
+            )
+        elif not ids and not start_date and not end_date:
+            self.add_error("start_date", "Earliest Date is required.")
+            self.add_error("end_date", "Latest Date is required.")
+        elif start_date and end_date and start_date > end_date:
+            self.add_error("end_date", "Latest Date must be on or after Earliest Date.")
+
+        if ids and dataset != "verbalautopsy":
+            self.add_error("ids", "Record IDs are only supported for VA exports.")
+
+        if dataset != "verbalautopsy":
+            cleaned_data["va_record_type"] = None
+            cleaned_data["causes"] = []
+            cleaned_data["format"] = "csv"
+        else:
+            cleaned_data["va_record_type"] = (
+                cleaned_data.get("va_record_type") or "full"
+            )
+            cleaned_data["format"] = cleaned_data.get("format") or "csv"
+
+        return cleaned_data
+
+
 class VADownloadForm(forms.Form):
     dataset = forms.ChoiceField(
         label="Dataset",
-        choices=(
-            ("verbalautopsy", "Verbal Autopsy"),
-            ("household", "Household"),
-            ("pregnancy", "Pregnancy"),
-            ("pregnancy_outcome", "Pregnancy Outcome"),
-            ("death", "Death"),
-            ("rumor_surveillance", "Rumor Surveillance"),
-        ),
+        choices=DATASET_CHOICES,
         initial="verbalautopsy",
         widget=Select(),
         required=True,
@@ -47,10 +170,7 @@ class VADownloadForm(forms.Form):
         # Label is intentionally blank: the field is rendered inside a fieldset
         # "group box" whose <legend> ("VA Record Type") provides the title.
         label="",
-        choices=(
-            ("abridged", "Abridged VA (Location, Demographics, CoD, PII)"),
-            ("full", "Full VA Record"),
-        ),
+        choices=VA_RECORD_TYPE_CHOICES,
         initial="abridged",
         widget=RadioSelect(),
         required=False,
@@ -68,16 +188,16 @@ class VADownloadForm(forms.Form):
 
     start_date = DateField(
         label="Earliest Date",
-        required=False,
+        required=True,
         widget=DateInput(attrs={"class": "datepicker"}),
-        help_text="Earliest VA date to download",
+        help_text="Earliest record date to download",
     )
 
     end_date = DateField(
         label="Latest Date",
-        required=False,
+        required=True,
         widget=DateInput(attrs={"class": "datepicker"}),
-        help_text="Latest VA date to download",
+        help_text="Latest record date to download",
     )
 
     locations = ModelMultipleChoiceField(
@@ -117,7 +237,7 @@ class VADownloadForm(forms.Form):
 
     format = forms.ChoiceField(
         label="Data Format",
-        choices=(("csv", "csv"), ("json", "json")),
+        choices=EXPORT_FORMAT_CHOICES,
         initial="csv",
         widget=Select(),
         required=False,
@@ -129,6 +249,11 @@ class VADownloadForm(forms.Form):
         Normal cleanup
         """
         cleaned_data = super().clean(*args, **kwargs)
+
+        start_date = cleaned_data.get("start_date")
+        end_date = cleaned_data.get("end_date")
+        if start_date and end_date and start_date > end_date:
+            self.add_error("end_date", "Latest Date must be on or after Earliest Date.")
 
         # Convert location objects back to ids for API
         locs = cleaned_data.get("locations", [])
@@ -148,8 +273,8 @@ class VADownloadForm(forms.Form):
         else:
             cleaned_data["causes"] = None
 
-        # The VA record-type option is currently a UI choice only. Keep it out
-        # of non-VA requests and default it for VA requests when disabled/missing.
+        # Keep the VA-only option out of non-VA requests and use the UI default
+        # when the field is disabled or missing.
         if cleaned_data.get("dataset") == "verbalautopsy":
             cleaned_data["va_record_type"] = (
                 cleaned_data.get("va_record_type") or "abridged"

@@ -18,9 +18,11 @@ from va_explorer.users.models import User
 from va_explorer.va_data_management.constants import REDACTED_STRING
 from va_explorer.va_data_management.models import (
     CauseOfDeath,
+    CSADailyTracker,
     Death,
     Household,
     Location,
+    ODKFormChoice,
     Pregnancy,
     PregnancyOutcome,
     SRSClusterLocation,
@@ -37,6 +39,22 @@ CSV_FILE_NAME = "va_download.csv"
 JSON_FILE_NAME = "va_download.json"
 FILE_CONTENT_TYPE = "application/zip"
 POST_URL = "/va_export/verbalautopsy/"
+DEFAULT_EXPORT_DATES = {
+    "start_date": "1901-01-01",
+    "end_date": "9999-12-31",
+}
+
+
+@pytest.fixture
+def user() -> User:
+    user = UserFactory.create()
+    user.can_download_data = True
+    return user
+
+
+def _post_export(client, data=None):
+    payload = {**DEFAULT_EXPORT_DATES, **(data or {})}
+    return client.post(POST_URL, data=payload)
 
 
 def build_test_db():
@@ -115,11 +133,25 @@ def build_test_db():
         "srs_facility_b": srs_facility_b,
         "srs_facility_c": srs_facility_c,
         "srs_empty": srs_empty,
+        "va1": va1,
+        "va2": va2,
+        "va3": va3,
+        "va4": va4,
     }
 
 
+def _response_content(response):
+    if not hasattr(response, "_export_test_content"):
+        response._export_test_content = (
+            b"".join(response.streaming_content)
+            if response.streaming
+            else response.content
+        )
+    return response._export_test_content
+
+
 def _read_csv_text(response):
-    f = io.BytesIO(response.content)
+    f = io.BytesIO(_response_content(response))
     try:
         zipped_file = zipfile.ZipFile(f, "r")
         return zipped_file.read(CSV_FILE_NAME).decode()
@@ -137,6 +169,12 @@ def _csv_rows(response):
     return list(csv.DictReader(io.StringIO(text)))
 
 
+def _zip_csv_rows(response, member_name):
+    with zipfile.ZipFile(io.BytesIO(_response_content(response))) as archive:
+        text = archive.read(member_name).decode()
+    return list(csv.DictReader(io.StringIO(text)))
+
+
 class TestAPIView:
     def test_download_form_renders_split_export_configuration_panels(self):
         permission = Permission.objects.filter(codename="download_data").first()
@@ -149,6 +187,9 @@ class TestAPIView:
 
         assert response.status_code == 200
         body = response.content.decode()
+        assert f'action="{reverse("va_export:download_form")}"' in body
+        assert 'id="exportValidationWarning"' in body
+        assert 'id="submit-form" class="btn btn-primary hidden"' not in body
         assert "va-export-config-panels" in body
         assert body.count("va-export-config-panel") >= 2
         for wrapper_id in (
@@ -199,6 +240,7 @@ class TestAPIView:
                 "dataset": "verbalautopsy",
                 "action": "download",
                 "format": "csv",
+                **DEFAULT_EXPORT_DATES,
             }
         )
 
@@ -212,11 +254,87 @@ class TestAPIView:
                 "action": "download",
                 "format": "csv",
                 "va_record_type": "full",
+                **DEFAULT_EXPORT_DATES,
             }
         )
 
         assert form.is_valid()
         assert form.cleaned_data["va_record_type"] is None
+
+    def test_api_requires_download_permission(self):
+        client = Client()
+        client.force_login(user=UserFactory.create())
+
+        response = _post_export(client, data={"format": "csv"})
+
+        assert response.status_code == 403
+
+    def test_api_requires_csrf_token(self, user: User):
+        client = Client(enforce_csrf_checks=True)
+        client.force_login(user=user)
+
+        response = client.post(POST_URL, data=DEFAULT_EXPORT_DATES)
+
+        assert response.status_code == 403
+
+    def test_api_rejects_invalid_dataset_and_date_range(self, user: User):
+        client = Client()
+        client.force_login(user=user)
+
+        invalid_dataset = _post_export(client, data={"dataset": "not-a-dataset"})
+        reversed_dates = _post_export(
+            client,
+            data={"start_date": "2026-02-01", "end_date": "2026-01-01"},
+        )
+        missing_dates = client.post(POST_URL, data={"format": "csv"})
+
+        assert invalid_dataset.status_code == 400
+        assert "dataset" in invalid_dataset.json()["errors"]
+        assert reversed_dates.status_code == 400
+        assert "end_date" in reversed_dates.json()["errors"]
+        assert missing_dates.status_code == 400
+        assert {"start_date", "end_date"}.issubset(missing_dates.json()["errors"])
+
+    def test_html_form_post_downloads_without_javascript(self, user: User):
+        client = Client()
+        client.force_login(user=user)
+
+        response = client.post(
+            reverse("va_export:download_form"),
+            data={
+                "dataset": "verbalautopsy",
+                "va_record_type": "abridged",
+                "action": "download",
+                "format": "csv",
+                **DEFAULT_EXPORT_DATES,
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.streaming
+        assert response.headers["content-disposition"].startswith("attachment;")
+        with zipfile.ZipFile(io.BytesIO(_response_content(response))) as archive:
+            assert CSV_FILE_NAME in archive.namelist()
+
+    def test_html_form_post_renders_validation_errors(self, user: User):
+        client = Client()
+        client.force_login(user=user)
+
+        response = client.post(
+            reverse("va_export:download_form"),
+            data={
+                "dataset": "verbalautopsy",
+                "va_record_type": "abridged",
+                "action": "download",
+                "format": "csv",
+                "start_date": "2026-02-01",
+                "end_date": "2026-01-01",
+            },
+        )
+
+        assert response.status_code == 200
+        assert not response.streaming
+        assert b"Latest Date must be on or after Earliest Date." in response.content
 
     def test_household_csv_download(self, user: User):
         build_test_db()
@@ -227,7 +345,7 @@ class TestAPIView:
         c = Client()
         c.force_login(user=user)
 
-        response = c.post(POST_URL, data={"dataset": "household", "format": "csv"})
+        response = _post_export(c, data={"dataset": "household", "format": "csv"})
         assert response.status_code == 200
         assert response.headers["content-type"] == FILE_CONTENT_TYPE
         assert (
@@ -236,13 +354,201 @@ class TestAPIView:
         )
 
         try:
-            f = io.BytesIO(response.content)
+            f = io.BytesIO(_response_content(response))
             zipped_file = zipfile.ZipFile(f, "r")
             assert "household_download.csv" in zipped_file.namelist()
             assert len(zipped_file.open("household_download.csv").readlines()) >= 2
         finally:
             zipped_file.close()
             f.close()
+
+    def test_explicit_location_filter_uses_full_tree_lineage(self, user: User):
+        province = SRSClusterLocation.add_root(
+            name="Lineage Province", location_type="province"
+        )
+        district_a = province.add_child(
+            name="Lineage District A", location_type="district"
+        )
+        district_b = province.add_child(
+            name="Lineage District B", location_type="district"
+        )
+        ward_a = district_a.add_child(name="Shared Ward", location_type="ward")
+        district_b.add_child(name="Shared Ward", location_type="ward")
+        Household.objects.create(
+            key="hh-lineage-a",
+            today="2026-01-01",
+            province="Lineage Province",
+            district="Lineage District A",
+            ward="Shared Ward",
+        )
+        Household.objects.create(
+            key="hh-lineage-b",
+            today="2026-01-01",
+            province="Lineage Province",
+            district="Lineage District B",
+            ward="Shared Ward",
+        )
+        client = Client()
+        client.force_login(user=user)
+
+        response = _post_export(
+            client,
+            data={"dataset": "household", "locations": ward_a.pk},
+        )
+
+        rows = _zip_csv_rows(response, "household_download.csv")
+        assert [row["key"] for row in rows] == ["hh-lineage-a"]
+
+    def test_user_location_scope_uses_full_tree_lineage(self, user: User):
+        province = LocationFactory.create(
+            name="Scoped Province", location_type="province"
+        )
+        district_a = province.add_child(
+            name="Scoped District A", location_type="district"
+        )
+        district_b = province.add_child(
+            name="Scoped District B", location_type="district"
+        )
+        district_a.add_child(name="Shared Ward", location_type="ward")
+        district_b.add_child(name="Shared Ward", location_type="ward")
+        Household.objects.create(
+            key="hh-scope-a",
+            today="2026-01-01",
+            province="Scoped Province",
+            district="Scoped District A",
+            ward="Shared Ward",
+        )
+        Household.objects.create(
+            key="hh-scope-b",
+            today="2026-01-01",
+            province="Scoped Province",
+            district="Scoped District B",
+            ward="Shared Ward",
+        )
+        user.location_restrictions.set([district_a])
+        client = Client()
+        client.force_login(user=user)
+
+        response = _post_export(client, data={"dataset": "household"})
+
+        rows = _zip_csv_rows(response, "household_download.csv")
+        assert [row["key"] for row in rows] == ["hh-scope-a"]
+
+    def test_non_va_download_redacts_pii(self, user: User):
+        Household.objects.create(
+            key="hh-pii",
+            today="2026-01-01",
+            respondent="Private Name",
+            hh_gps="-15.4000 28.3000",
+        )
+        client = Client()
+        client.force_login(user=user)
+
+        response = _post_export(client, data={"dataset": "household", "format": "csv"})
+
+        with zipfile.ZipFile(io.BytesIO(_response_content(response))) as archive:
+            text = archive.read("household_download.csv").decode()
+        rows = list(csv.DictReader(io.StringIO(text)))
+        assert rows[0]["respondent"] == REDACTED_STRING
+        assert rows[0]["hh_gps"] == REDACTED_STRING
+
+    def test_non_va_download_preserves_pii_for_authorized_user(self, user: User):
+        user.can_view_pii = True
+        Household.objects.create(
+            key="hh-pii-authorized",
+            today="2026-01-01",
+            respondent="Visible Name",
+            hh_gps="-15.4000 28.3000",
+        )
+        client = Client()
+        client.force_login(user=user)
+
+        response = _post_export(client, data={"dataset": "household"})
+
+        with zipfile.ZipFile(io.BytesIO(_response_content(response))) as archive:
+            text = archive.read("household_download.csv").decode()
+        rows = list(csv.DictReader(io.StringIO(text)))
+        assert rows[0]["respondent"] == "Visible Name"
+        assert rows[0]["hh_gps"] == "-15.4000 28.3000"
+
+    def test_rumor_surveillance_download_decodes_location_and_redacts_gps(
+        self, user: User
+    ):
+        ODKFormChoice.objects.create(
+            form_name="csa_daily_tracker",
+            field_name="province",
+            value="5",
+            label="Central Province",
+        )
+        CSADailyTracker.objects.create(
+            key="rumor-export-1",
+            today="2026-01-05",
+            province="05",
+            desci="A test report",
+            hh_gps_latitude="-15.4000",
+            hh_gps_longitude="28.3000",
+            hh_gps_altitude="1200",
+            hh_gps_accuracy="4",
+        )
+        client = Client()
+        client.force_login(user=user)
+
+        response = _post_export(
+            client,
+            data={"dataset": "rumor_surveillance", "format": "json"},
+        )
+
+        assert response.status_code == 200
+        assert response.streaming
+        assert response.headers["content-disposition"] == (
+            "attachment; filename=rumor_surveillance.csv.zip"
+        )
+        with zipfile.ZipFile(io.BytesIO(_response_content(response))) as archive:
+            text = archive.read("rumor_surveillance_download.csv").decode()
+        rows = list(csv.DictReader(io.StringIO(text)))
+        assert len(rows) == 1
+        assert rows[0]["province"] == "Central Province"
+        assert rows[0]["hh_gps_latitude"] == REDACTED_STRING
+        assert rows[0]["hh_gps_longitude"] == REDACTED_STRING
+
+    def test_rumor_location_filter_uses_full_tree_lineage(self, user: User):
+        province = SRSClusterLocation.add_root(
+            name="Rumor Province", location_type="province"
+        )
+        district_a = province.add_child(
+            name="Rumor District A", location_type="district"
+        )
+        district_b = province.add_child(
+            name="Rumor District B", location_type="district"
+        )
+        ward_a = district_a.add_child(name="Shared Ward", location_type="ward")
+        district_b.add_child(name="Shared Ward", location_type="ward")
+        CSADailyTracker.objects.create(
+            key="rumor-lineage-a",
+            today="2026-01-05",
+            province="Rumor Province",
+            district="Rumor District A",
+            ward="Shared Ward",
+            desci="Included report",
+        )
+        CSADailyTracker.objects.create(
+            key="rumor-lineage-b",
+            today="2026-01-05",
+            province="Rumor Province",
+            district="Rumor District B",
+            ward="Shared Ward",
+            desci="Excluded report",
+        )
+        client = Client()
+        client.force_login(user=user)
+
+        response = _post_export(
+            client,
+            data={"dataset": "rumor_surveillance", "locations": ward_a.pk},
+        )
+
+        rows = _zip_csv_rows(response, "rumor_surveillance_download.csv")
+        assert [row["key"] for row in rows] == ["rumor-lineage-a"]
 
     def test_pregnancy_csv_download(self, user: User):
         build_test_db()
@@ -253,7 +559,7 @@ class TestAPIView:
         c = Client()
         c.force_login(user=user)
 
-        response = c.post(POST_URL, data={"dataset": "pregnancy", "format": "csv"})
+        response = _post_export(c, data={"dataset": "pregnancy", "format": "csv"})
         assert response.status_code == 200
         assert response.headers["content-type"] == FILE_CONTENT_TYPE
         assert (
@@ -262,7 +568,7 @@ class TestAPIView:
         )
 
         try:
-            f = io.BytesIO(response.content)
+            f = io.BytesIO(_response_content(response))
             zipped_file = zipfile.ZipFile(f, "r")
             assert "pregnancy_download.csv" in zipped_file.namelist()
             assert len(zipped_file.open("pregnancy_download.csv").readlines()) >= 2
@@ -279,8 +585,8 @@ class TestAPIView:
         c = Client()
         c.force_login(user=user)
 
-        response = c.post(
-            POST_URL, data={"dataset": "pregnancy_outcome", "format": "csv"}
+        response = _post_export(
+            c, data={"dataset": "pregnancy_outcome", "format": "csv"}
         )
         assert response.status_code == 200
         assert response.headers["content-type"] == FILE_CONTENT_TYPE
@@ -290,7 +596,7 @@ class TestAPIView:
         )
 
         try:
-            f = io.BytesIO(response.content)
+            f = io.BytesIO(_response_content(response))
             zipped_file = zipfile.ZipFile(f, "r")
             assert "pregnancy_outcome_download.csv" in zipped_file.namelist()
             assert (
@@ -300,14 +606,18 @@ class TestAPIView:
             zipped_file.close()
             f.close()
 
-    def test_death_csv_download(self, user: User):
+    def test_death_csv_download(self, user: User, monkeypatch):
         build_test_db()
+        monkeypatch.setattr(
+            "va_explorer.va_data_management.tasks.assign_death_ids_task.delay",
+            lambda: None,
+        )
         Death.objects.create(key="death-export-1", today="2026-01-04", DE_03="Decedent")
 
         c = Client()
         c.force_login(user=user)
 
-        response = c.post(POST_URL, data={"dataset": "death", "format": "csv"})
+        response = _post_export(c, data={"dataset": "death", "format": "csv"})
         assert response.status_code == 200
         assert response.headers["content-type"] == FILE_CONTENT_TYPE
         assert (
@@ -316,7 +626,7 @@ class TestAPIView:
         )
 
         try:
-            f = io.BytesIO(response.content)
+            f = io.BytesIO(_response_content(response))
             zipped_file = zipfile.ZipFile(f, "r")
             assert "death_download.csv" in zipped_file.namelist()
             assert len(zipped_file.open("death_download.csv").readlines()) >= 2
@@ -330,8 +640,11 @@ class TestAPIView:
         c = Client()
         c.force_login(user=user)
 
-        response = c.post(POST_URL, data={"format": "csv"})
+        response = _post_export(c, data={"format": "csv"})
         assert response.status_code == 200
+        assert response.streaming
+        assert response.headers["x-accel-buffering"] == "no"
+        assert response.headers["cache-control"] == "private, no-store"
 
         # Django 3.2 has response.headers. For now, we'll access them per below
         # See https://docs.djangoproject.com/en/4.0/ref/request-response/#django.http.HttpResponse.headers
@@ -342,7 +655,7 @@ class TestAPIView:
         )
 
         try:
-            f = io.BytesIO(response.content)
+            f = io.BytesIO(_response_content(response))
             zipped_file = zipfile.ZipFile(f, "r")
             # Add one for the variable name header in the csv
             assert len(zipped_file.open(CSV_FILE_NAME).readlines()) == 5
@@ -356,7 +669,7 @@ class TestAPIView:
         c = Client()
         c.force_login(user=user)
 
-        response = c.post(POST_URL, data={"format": "json"})
+        response = _post_export(c, data={"format": "json"})
         assert response.status_code == 200
 
         # Django 3.2 has response.headers. For now, we'll access them per below
@@ -368,11 +681,12 @@ class TestAPIView:
         )
 
         try:
-            f = io.BytesIO(response.content)
+            f = io.BytesIO(_response_content(response))
             zipped_file = zipfile.ZipFile(f, "r")
 
             json_data = json.loads(zipped_file.read(JSON_FILE_NAME))
             assert json_data["count"] == 4
+            assert len(json.loads(json_data["records"])) == 4
         finally:
             zipped_file.close()
             f.close()
@@ -385,8 +699,8 @@ class TestAPIView:
         c = Client()
         c.force_login(user=user)
 
-        response = c.post(
-            POST_URL,
+        response = _post_export(
+            c,
             data={"format": "csv", "locations": test_data["srs_empty"].pk},
         )
         assert response.status_code == 200
@@ -400,7 +714,7 @@ class TestAPIView:
         )
 
         try:
-            f = io.BytesIO(response.content)
+            f = io.BytesIO(_response_content(response))
             zipped_file = zipfile.ZipFile(f, "r")
             # The single line is the variable name header in the csv
             assert len(zipped_file.open(CSV_FILE_NAME).readlines()) == 1
@@ -416,8 +730,8 @@ class TestAPIView:
         c = Client()
         c.force_login(user=user)
 
-        response = c.post(
-            POST_URL,
+        response = _post_export(
+            c,
             data={"format": "json", "locations": test_data["srs_empty"].pk},
         )
         assert response.status_code == 200
@@ -431,7 +745,7 @@ class TestAPIView:
         )
 
         try:
-            f = io.BytesIO(response.content)
+            f = io.BytesIO(_response_content(response))
             zipped_file = zipfile.ZipFile(f, "r")
 
             json_data = json.loads(zipped_file.read(JSON_FILE_NAME))
@@ -451,8 +765,8 @@ class TestAPIView:
         c = Client()
         c.force_login(user=user)
 
-        response = c.post(
-            POST_URL,
+        response = _post_export(
+            c,
             data={"format": "csv", "locations": test_data["srs_facility_a"].pk},
         )
         assert response.status_code == 200
@@ -466,13 +780,24 @@ class TestAPIView:
         )
 
         try:
-            f = io.BytesIO(response.content)
+            f = io.BytesIO(_response_content(response))
             zipped_file = zipfile.ZipFile(f, "r")
             # Add one for the variable name header in the csv
             assert len(zipped_file.open(CSV_FILE_NAME).readlines()) == 3
         finally:
             zipped_file.close()
             f.close()
+
+    def test_va_export_respects_user_location_tree(self, user: User):
+        test_data = build_test_db()
+        user.location_restrictions.set([test_data["district1"]])
+        client = Client()
+        client.force_login(user=user)
+
+        response = _post_export(client, data={"va_record_type": "abridged"})
+
+        exported_ids = {int(row["id"]) for row in _csv_rows(response)}
+        assert exported_ids == {test_data["va1"].pk, test_data["va4"].pk}
 
     def test_location_filtering_includes_cluster_community_vas(self, user: User):
         test_data = build_test_db()
@@ -500,14 +825,14 @@ class TestAPIView:
         c = Client()
         c.force_login(user=user)
 
-        response = c.post(
-            POST_URL,
+        response = _post_export(
+            c,
             data={"format": "csv", "locations": test_data["srs_district1"].pk},
         )
         assert response.status_code == 200
 
         try:
-            f = io.BytesIO(response.content)
+            f = io.BytesIO(_response_content(response))
             zipped_file = zipfile.ZipFile(f, "r")
             # District1 contains 2 facility VAs in fixtures plus 1 community VA.
             assert len(zipped_file.open(CSV_FILE_NAME).readlines()) == 4
@@ -543,11 +868,11 @@ class TestAPIView:
         c = Client()
         c.force_login(user=user)
 
-        response = c.post(POST_URL, data={"format": "csv", "ids": str(community_va.pk)})
+        response = _post_export(c, data={"format": "csv", "ids": str(community_va.pk)})
         assert response.status_code == 200
 
         try:
-            f = io.BytesIO(response.content)
+            f = io.BytesIO(_response_content(response))
             zipped_file = zipfile.ZipFile(f, "r")
             # Header + one explicitly selected VA.
             assert len(zipped_file.open(CSV_FILE_NAME).readlines()) == 2
@@ -563,7 +888,7 @@ class TestAPIView:
         c = Client()
         c.force_login(user=user)
 
-        response = c.post(POST_URL, data={"format": "csv", "causes": cod_name})
+        response = _post_export(c, data={"format": "csv", "causes": cod_name})
         assert response.status_code == 200
 
         # Django 3.2 has response.headers. For now, we'll access them per below
@@ -575,13 +900,38 @@ class TestAPIView:
         )
 
         try:
-            f = io.BytesIO(response.content)
+            f = io.BytesIO(_response_content(response))
             zipped_file = zipfile.ZipFile(f, "r")
             # Add one for the variable name header in the csv
             assert len(zipped_file.open(CSV_FILE_NAME).readlines()) == 3
         finally:
             zipped_file.close()
             f.close()
+
+    def test_repeated_cause_and_location_values_are_all_applied(self, user: User):
+        test_data = build_test_db()
+        cause_ids = [
+            CauseOfDeath.objects.filter(cause=cause)
+            .values_list("pk", flat=True)
+            .first()
+            for cause in ("cod_a", "cod_b")
+        ]
+        client = Client()
+        client.force_login(user=user)
+
+        response = _post_export(
+            client,
+            data={
+                "causes": cause_ids,
+                "locations": [
+                    test_data["srs_district1"].pk,
+                    test_data["srs_district2"].pk,
+                ],
+            },
+        )
+
+        assert response.status_code == 200
+        assert len(_csv_rows(response)) == 4
 
     def test_time_filter(self, user: User):
         build_test_db()
@@ -591,14 +941,14 @@ class TestAPIView:
         c = Client()
         c.force_login(user=user)
 
-        response = c.post(
-            POST_URL,
+        response = _post_export(
+            c,
             data={"format": "csv", "start_date": start_date, "end_date": end_date},
         )
         assert response.status_code == 200
 
         try:
-            f = io.BytesIO(response.content)
+            f = io.BytesIO(_response_content(response))
             zipped_file = zipfile.ZipFile(f, "r")
             # Add one for the variable name header in the csv
             assert len(zipped_file.open(CSV_FILE_NAME).readlines()) == 2
@@ -627,7 +977,7 @@ class TestAPIView:
         c = Client()
         c.force_login(user=user)
 
-        response = c.post(POST_URL, data=query_data)
+        response = _post_export(c, data=query_data)
         assert response.status_code == 200
 
         # confirm correct number of VAs downloaded
@@ -636,7 +986,7 @@ class TestAPIView:
         ).count()
 
         try:
-            f = io.BytesIO(response.content)
+            f = io.BytesIO(_response_content(response))
             zipped_file = zipfile.ZipFile(f, "r")
             # Add one for the variable name header in the csv
             assert len(zipped_file.open(CSV_FILE_NAME).readlines()) == db_ct + 1
@@ -673,7 +1023,7 @@ class TestAPIView:
             Id10023__lte=end_date, causes__cause=cod_name, location__id=loc_a.pk
         ).count()
 
-        response = c.post(POST_URL, data=query_data)
+        response = _post_export(c, data=query_data)
         assert response.status_code == 200
 
         # Django 3.2 has response.headers. For now, we'll access them per below
@@ -685,7 +1035,7 @@ class TestAPIView:
         )
 
         try:
-            f = io.BytesIO(response.content)
+            f = io.BytesIO(_response_content(response))
             zipped_file = zipfile.ZipFile(f, "r")
 
             json_data = json.loads(zipped_file.read(JSON_FILE_NAME))
@@ -703,11 +1053,11 @@ class TestAPIView:
         c = Client()
         c.force_login(user=user)
 
-        response = c.post(POST_URL, data={"format": "csv"})
+        response = _post_export(c, data={"format": "csv"})
         assert response.status_code == 200
 
         try:
-            f = io.BytesIO(response.content)
+            f = io.BytesIO(_response_content(response))
             zipped_file = zipfile.ZipFile(f, "r")
             # Add one for the variable name header in the csv
             assert len(zipped_file.open(CSV_FILE_NAME).readlines()) == 5
@@ -724,6 +1074,7 @@ class TestAPIView:
                 "dataset": "verbalautopsy",
                 "action": "download",
                 "format": "csv",
+                "start_date": "1901-01-01",
                 "end_date": "2020-01-01",
                 "locations": [str(loc_id)],
             }
@@ -753,6 +1104,7 @@ class TestAPIView:
                 "action": "download",
                 "format": "csv",
                 "locations": [str(ward.id)],
+                **DEFAULT_EXPORT_DATES,
             }
         )
         assert submitted_form.is_valid()
@@ -762,9 +1114,7 @@ class TestAPIView:
         c = Client()
         c.force_login(user=user)
 
-        response = c.post(
-            POST_URL, data={"format": "csv", "va_record_type": "abridged"}
-        )
+        response = _post_export(c, data={"format": "csv", "va_record_type": "abridged"})
         assert response.status_code == 200
 
         header = _csv_header(response)
@@ -780,10 +1130,10 @@ class TestAPIView:
         c.force_login(user=user)
 
         abridged_header = _csv_header(
-            c.post(POST_URL, data={"format": "csv", "va_record_type": "abridged"})
+            _post_export(c, data={"format": "csv", "va_record_type": "abridged"})
         )
         full_header = _csv_header(
-            c.post(POST_URL, data={"format": "csv", "va_record_type": "full"})
+            _post_export(c, data={"format": "csv", "va_record_type": "full"})
         )
 
         # Id10007 is a full questionnaire/PII field outside the abridged profile.
@@ -795,7 +1145,7 @@ class TestAPIView:
         c = Client()
         c.force_login(user=user)
 
-        response = c.post(POST_URL, data={"format": "csv", "va_record_type": "full"})
+        response = _post_export(c, data={"format": "csv", "va_record_type": "full"})
         assert response.status_code == 200
 
         header = _csv_header(response)
@@ -806,7 +1156,7 @@ class TestAPIView:
 
         # Row count is unchanged from the legacy full-record behaviour.
         try:
-            f = io.BytesIO(response.content)
+            f = io.BytesIO(_response_content(response))
             zipped_file = zipfile.ZipFile(f, "r")
             assert len(zipped_file.open(CSV_FILE_NAME).readlines()) == 5
         finally:
@@ -821,8 +1171,8 @@ class TestAPIView:
         # A 2020 date window matches exactly one fixture VA (va4, 2020-04-01).
         row_counts = {}
         for record_type in ("abridged", "full"):
-            response = c.post(
-                POST_URL,
+            response = _post_export(
+                c,
                 data={
                     "format": "csv",
                     "va_record_type": record_type,
@@ -852,8 +1202,8 @@ class TestAPIView:
         c = Client()
         c.force_login(user=user)
 
-        response = c.post(
-            POST_URL,
+        response = _post_export(
+            c,
             data={"format": "csv", "va_record_type": "abridged", "ids": str(va.pk)},
         )
         assert response.status_code == 200
@@ -867,14 +1217,16 @@ class TestAPIView:
         test_data = build_test_db()
         # VA with no related CauseOfDeath record.
         va = VerbalAutopsyFactory.create(
-            location=test_data["facility_a"], Id10023="2021-03-03"
+            location=test_data["facility_a"],
+            Id10023="2021-03-03",
+            geopoint="-15.4000 28.3000",
         )
 
         c = Client()
         c.force_login(user=user)
 
-        response = c.post(
-            POST_URL,
+        response = _post_export(
+            c,
             data={"format": "csv", "va_record_type": "abridged", "ids": str(va.pk)},
         )
         assert response.status_code == 200
@@ -884,18 +1236,22 @@ class TestAPIView:
         # Missing CoD exports cleanly with blank cause cells.
         assert rows[0]["cause"] == ""
         assert rows[0]["cause_algorithm"] == ""
+        assert rows[0]["geopoint"] == REDACTED_STRING
 
-    def test_missing_or_invalid_record_type_defaults_to_full(self, user: User):
+    def test_missing_record_type_defaults_to_full_and_invalid_value_is_rejected(
+        self, user: User
+    ):
         build_test_db()
         c = Client()
         c.force_login(user=user)
 
         # Omitted entirely -> full record (backward compatible).
-        omitted_header = _csv_header(c.post(POST_URL, data={"format": "csv"}))
+        omitted_header = _csv_header(_post_export(c, data={"format": "csv"}))
         assert "Id10007" in omitted_header
 
-        # Unrecognised value -> never silently abridged; falls back to full.
-        invalid_header = _csv_header(
-            c.post(POST_URL, data={"format": "csv", "va_record_type": "garbage"})
+        # An explicit invalid value is rejected rather than silently changing scope.
+        invalid_response = _post_export(
+            c, data={"format": "csv", "va_record_type": "garbage"}
         )
-        assert "Id10007" in invalid_header
+        assert invalid_response.status_code == 400
+        assert "va_record_type" in invalid_response.json()["errors"]

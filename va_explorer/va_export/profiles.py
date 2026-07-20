@@ -5,8 +5,8 @@ record tracking: identifiers, location, demographics and cause-of-death. The lis
 below are intentionally grouped and human-readable so the profile is easy to extend.
 
 The export view (:mod:`va_explorer.va_export.views`) intersects
-``ABRIDGED_VA_EXPORT_COLUMNS`` with the columns actually present on the assembled
-DataFrame, so any field missing from a given record set is silently skipped.
+``ABRIDGED_VA_EXPORT_COLUMNS`` with the model-backed export schema, so any field
+that is not available is silently skipped.
 """
 
 # Identifier / tracking fields needed for linkage and audit.
