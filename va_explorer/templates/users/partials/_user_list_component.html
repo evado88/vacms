@@ -1,0 +1,5 @@
+{% include "partials/card.html" with title="User Directory" body_template="users/partials/_user_list_card_body.html" class_name="ou-mb-3" body_class="p-0" %}
+
+{% if is_paginated %}
+  {% include "partials/_pagination.html" %}
+{% endif %}

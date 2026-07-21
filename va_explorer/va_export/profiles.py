@@ -1,4 +1,4 @@
-"""Export field profiles for Verbal Autopsy downloads.
+"""Export field profiles for combined VA and VASA downloads.
 
 The ``Abridged VA`` export profile keeps only the columns needed for analysis and
 record tracking: identifiers, location, demographics and cause-of-death. The lists
@@ -12,6 +12,8 @@ that is not available is silently skipped.
 # Identifier / tracking fields needed for linkage and audit.
 VA_ABRIDGED_IDENTIFIER_FIELDS = [
     "id",
+    "source",
+    "instrument",
     "instanceid",
     "instancename",
     "deviceid",

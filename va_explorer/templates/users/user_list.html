@@ -1,15 +1,38 @@
 {% extends "base.html" %}
+{% load static %}
 
 {% block title %}Users{% endblock %}
 
 {% block heading %}Users{% endblock %}
 
 {% block content %}
-  {% include "partials/page_header.html" with title="" subtitle="Manage user accounts and access roles." actions_template="users/partials/_user_list_actions.html" class_name="ou-mb-3" %}
+  {% include "partials/page_header.html" with title="" subtitle="Manage user accounts and access roles." class_name="ou-mb-3" %}
 
-  {% include "partials/card.html" with title="User Directory" body_template="users/partials/_user_list_card_body.html" class_name="ou-mb-3" body_class="p-0" %}
+  <div data-list-table>
+    <form method="get" class="ou-user-filter-row ou-mb-3" role="search" data-list-filter>
+      <div class="ou-user-filter-panel ou-user-filter-controls">
+        {% for field in filter_form %}
+          <div class="form-group mb-0 ou-user-filter-field">
+            <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+            {{ field }}
+            {% for error in field.errors %}
+              <div class="invalid-feedback d-block">{{ error }}</div>
+            {% endfor %}
+          </div>
+        {% endfor %}
+      </div>
+      <div class="ou-user-filter-panel ou-user-filter-actions-panel">
+        {% include "users/partials/_user_list_actions.html" %}
+      </div>
+    </form>
 
-  {% if is_paginated %}
-    {% include "partials/_pagination.html" %}
-  {% endif %}
+    <div data-list-slot data-endpoint="{% url 'users:index' %}?component=1">
+      {% include "users/partials/_user_list_component.html" %}
+    </div>
+  </div>
+{% endblock %}
+
+{% block page_scripts %}
+  {{ block.super }}
+  <script src="{% static 'js/list_table.js' %}?v=20260713a"></script>
 {% endblock %}

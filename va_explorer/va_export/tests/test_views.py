@@ -12,6 +12,7 @@ from va_explorer.tests.factories import (
     GroupFactory,
     LocationFactory,
     UserFactory,
+    VASAFactory,
     VerbalAutopsyFactory,
 )
 from va_explorer.users.models import User
@@ -790,14 +791,147 @@ class TestAPIView:
 
     def test_va_export_respects_user_location_tree(self, user: User):
         test_data = build_test_db()
+        allowed_vasa = VASAFactory.create(
+            location=test_data["facility_a"], Id10023="2020-06-01"
+        )
+        VASAFactory.create(location=test_data["facility_b"], Id10023="2020-06-01")
         user.location_restrictions.set([test_data["district1"]])
         client = Client()
         client.force_login(user=user)
 
         response = _post_export(client, data={"va_record_type": "abridged"})
 
-        exported_ids = {int(row["id"]) for row in _csv_rows(response)}
-        assert exported_ids == {test_data["va1"].pk, test_data["va4"].pk}
+        exported_records = {
+            (row["source"], int(row["id"])) for row in _csv_rows(response)
+        }
+        assert exported_records == {
+            ("VA", test_data["va1"].pk),
+            ("VA", test_data["va4"].pk),
+            ("VASA", allowed_vasa.pk),
+        }
+
+    def test_va_export_includes_vasa_records(self, user: User):
+        test_data = build_test_db()
+        vasa = VASAFactory.create(
+            location=test_data["facility_a"],
+            Id10023="2020-06-01",
+            instrument="adult",
+            raw_answers={"values": {"A4001": "1"}},
+        )
+        CauseOfDeath.objects.create(
+            cause="cod_vasa",
+            algorithm="InterVA5",
+            settings={},
+            vasa=vasa,
+        )
+        client = Client()
+        client.force_login(user=user)
+
+        response = _post_export(
+            client, data={"format": "csv", "va_record_type": "abridged"}
+        )
+
+        assert response.status_code == 200
+        header = _csv_header(response)
+        rows = _csv_rows(response)
+        vasa_rows = [row for row in rows if row["source"] == "VASA"]
+        assert len(rows) == 5
+        assert len(vasa_rows) == 1
+        assert int(vasa_rows[0]["id"]) == vasa.pk
+        assert vasa_rows[0]["instrument"] == "adult"
+        assert vasa_rows[0]["cause"] == "cod_vasa"
+        assert "source" in header
+        assert "instrument" in header
+        assert "raw_answers" not in header
+
+        full_response = _post_export(
+            client,
+            data={
+                "format": "csv",
+                "va_record_type": "full",
+                "vasa_ids": str(vasa.pk),
+            },
+        )
+        assert "raw_answers" not in _csv_header(full_response)
+
+    def test_va_export_filters_apply_to_vasa_records(self, user: User):
+        test_data = build_test_db()
+        included = VASAFactory.create(
+            location=test_data["facility_a"], Id10023="2020-06-01"
+        )
+        wrong_location = VASAFactory.create(
+            location=test_data["facility_b"], Id10023="2020-06-01"
+        )
+        wrong_date = VASAFactory.create(
+            location=test_data["facility_a"], Id10023="2019-06-01"
+        )
+        wrong_cause = VASAFactory.create(
+            location=test_data["facility_a"], Id10023="2020-07-01"
+        )
+        for vasa, cause in (
+            (included, "cod_a"),
+            (wrong_location, "cod_a"),
+            (wrong_date, "cod_a"),
+            (wrong_cause, "cod_b"),
+        ):
+            CauseOfDeath.objects.create(cause=cause, settings={}, vasa=vasa)
+
+        client = Client()
+        client.force_login(user=user)
+        response = _post_export(
+            client,
+            data={
+                "format": "csv",
+                "va_record_type": "abridged",
+                "start_date": "2020-01-01",
+                "end_date": "2021-01-01",
+                "locations": test_data["srs_district1"].pk,
+                "causes": "cod_a",
+            },
+        )
+
+        assert response.status_code == 200
+        exported_vasa_ids = {
+            int(row["id"]) for row in _csv_rows(response) if row["source"] == "VASA"
+        }
+        assert exported_vasa_ids == {included.pk}
+
+    def test_source_specific_ids_do_not_collide(self, user: User):
+        test_data = build_test_db()
+        va = test_data["va1"]
+        vasa = VASAFactory.create(
+            id=va.pk,
+            location=test_data["facility_a"],
+            Id10023="2019-01-01",
+        )
+        CauseOfDeath.objects.create(cause="cod_vasa", settings={}, vasa=vasa)
+        assert va.pk == vasa.pk
+
+        client = Client()
+        client.force_login(user=user)
+
+        va_rows = _csv_rows(_post_export(client, data={"ids": str(va.pk)}))
+        vasa_rows = _csv_rows(client.post(POST_URL, data={"vasa_ids": str(vasa.pk)}))
+
+        assert [(row["source"], int(row["id"])) for row in va_rows] == [("VA", va.pk)]
+        assert [(row["source"], int(row["id"])) for row in vasa_rows] == [
+            ("VASA", vasa.pk)
+        ]
+
+    def test_json_va_export_count_includes_vasa_records(self, user: User):
+        test_data = build_test_db()
+        vasa = VASAFactory.create(
+            location=test_data["facility_a"], Id10023="2020-06-01"
+        )
+        CauseOfDeath.objects.create(cause="cod_vasa", settings={}, vasa=vasa)
+        client = Client()
+        client.force_login(user=user)
+
+        response = _post_export(client, data={"format": "json"})
+
+        with zipfile.ZipFile(io.BytesIO(_response_content(response))) as archive:
+            json_data = json.loads(archive.read(JSON_FILE_NAME))
+        assert json_data["count"] == 5
 
     def test_location_filtering_includes_cluster_community_vas(self, user: User):
         test_data = build_test_db()

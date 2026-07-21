@@ -1,8 +1,9 @@
 import logging
 import re
+from itertools import chain
 
 from django.contrib.auth.mixins import PermissionRequiredMixin
-from django.db.models import F, Q
+from django.db.models import F, Q, TextField, Value
 from django.http import JsonResponse
 from django.views.generic import View
 from django.views.generic.edit import FormView
@@ -11,6 +12,7 @@ from va_explorer.users.utils.location_mapping import map_srs_clusters_to_locatio
 from va_explorer.utils.mixins import CustomAuthMixin
 from va_explorer.va_data_management.constants import PII_FIELDS, REDACTED_STRING
 from va_explorer.va_data_management.models import (
+    VASA,
     CSADailyTracker,
     Death,
     Household,
@@ -50,7 +52,9 @@ _VA_ANNOTATION_COLUMNS = [
     "cause_algorithm",
     "cause_created",
 ]
-_VA_QUERY_HELPER_COLUMNS = ["loc_name", "cluster_name"]
+_VA_QUERY_HELPER_COLUMNS = ["loc_name", "cluster_name", "record_source"]
+# VASA raw_answers stores ingestion provenance, not canonical export values.
+_VA_EXPORT_EXCLUDED_COLUMNS = {"location_id", "cluster_id", "raw_answers"}
 
 _RUMOR_SURVEILLANCE_COLUMNS = [
     "id",
@@ -467,12 +471,12 @@ def _export_non_va_dataset(request, dataset, params):
     )
 
 
-def _va_column_sets(record_type):
-    model_columns = _model_export_columns(VerbalAutopsy)
+def _va_output_columns(record_type):
+    va_model_columns = _model_export_columns(VerbalAutopsy)
+    vasa_model_columns = _model_export_columns(VASA)
+    model_columns = list(dict.fromkeys([*va_model_columns, *vasa_model_columns]))
     full_output_columns = [
-        column
-        for column in model_columns
-        if column not in {"location_id", "cluster_id"}
+        column for column in model_columns if column not in _VA_EXPORT_EXCLUDED_COLUMNS
     ]
     full_output_columns.extend(
         column
@@ -482,15 +486,16 @@ def _va_column_sets(record_type):
 
     if record_type == "abridged":
         available = set(full_output_columns)
-        output_columns = [
-            column for column in ABRIDGED_VA_EXPORT_COLUMNS if column in available
-        ]
-        selected_model_columns = [
-            column for column in output_columns if column in model_columns
-        ]
-    else:
-        output_columns = full_output_columns
-        selected_model_columns = model_columns
+        return [column for column in ABRIDGED_VA_EXPORT_COLUMNS if column in available]
+
+    return full_output_columns
+
+
+def _va_query_columns(model, output_columns):
+    model_columns = _model_export_columns(model)
+    selected_model_columns = [
+        column for column in output_columns if column in model_columns
+    ]
 
     for foreign_key in ("location_id", "cluster_id"):
         if foreign_key not in selected_model_columns:
@@ -501,11 +506,14 @@ def _va_column_sets(record_type):
         *_VA_ANNOTATION_COLUMNS,
         *_VA_QUERY_HELPER_COLUMNS,
     ]
-    return output_columns, list(dict.fromkeys(query_columns))
+    return list(dict.fromkeys(query_columns))
 
 
-def _filter_va_queryset(request, params):
-    matching_vas = request.user.verbal_autopsies(
+def _filter_va_queryset(request, params, *, model, id_param, source_label):
+    user_records = (
+        request.user.vasa_records if model is VASA else request.user.verbal_autopsies
+    )
+    matching_vas = user_records(
         date_cutoff="1901-01-01", end_date="9999-12-31"
     ).exclude(Id10023="dk")
     matching_vas = _restrict_va_export_queryset_to_user_locations(
@@ -513,9 +521,16 @@ def _filter_va_queryset(request, params):
         request.user,
     )
 
-    va_ids = params.get("ids") or []
-    if va_ids:
-        matching_vas = matching_vas.filter(pk__in=va_ids)
+    # VA and VASA use independent integer sequences, so targeted exports keep
+    # source-specific ID lists instead of treating an ID as globally unique.
+    selected_ids = params.get(id_param) or []
+    has_id_filter = bool(params.get("ids") or params.get("vasa_ids"))
+    if has_id_filter:
+        matching_vas = (
+            matching_vas.filter(pk__in=selected_ids)
+            if selected_ids
+            else matching_vas.none()
+        )
     else:
         location_ids = params.get("locations") or []
         if location_ids:
@@ -563,10 +578,17 @@ def _filter_va_queryset(request, params):
         cause_created=F("causes__created"),
         loc_name=F("location__name"),
         cluster_name=F("cluster__name"),
+        record_source=Value(source_label, output_field=TextField()),
     )
 
 
-def _transform_va_row(row, can_view_pii, location_geography, cluster_geography):
+def _transform_va_row(
+    row,
+    can_view_pii,
+    location_geography,
+    cluster_geography,
+    output_columns,
+):
     location_id = row.pop("location_id", None)
     cluster_id = row.pop("cluster_id", None)
 
@@ -581,24 +603,46 @@ def _transform_va_row(row, can_view_pii, location_geography, cluster_geography):
     row["location"] = _first_non_empty(
         row.pop("loc_name", None), row.pop("cluster_name", None)
     )
+    row["source"] = row.pop("record_source")
+    for column in output_columns:
+        row.setdefault(column, None)
     return _redact_row(row, can_view_pii)
 
 
 def _export_va_dataset(request, params):
     record_type = params["va_record_type"]
     fmt = params["format"]
-    matching_vas = _filter_va_queryset(request, params)
-    output_columns, query_columns = _va_column_sets(record_type)
-    row_count = matching_vas.count()
+    matching_vas = _filter_va_queryset(
+        request,
+        params,
+        model=VerbalAutopsy,
+        id_param="ids",
+        source_label="VA",
+    )
+    matching_vasa_records = _filter_va_queryset(
+        request,
+        params,
+        model=VASA,
+        id_param="vasa_ids",
+        source_label="VASA",
+    )
+    output_columns = _va_output_columns(record_type)
+    va_row_count = matching_vas.count()
+    vasa_row_count = matching_vasa_records.count()
+    row_count = va_row_count + vasa_row_count
 
     logger.info(
-        "VA export requested: user=%s rows=%s record_type=%s format=%s "
-        "filters={ids:%s, locations:%s, start:%s, end:%s, causes:%s}",
+        "VA export requested: user=%s rows=%s va_rows=%s vasa_rows=%s "
+        "record_type=%s format=%s filters={ids:%s, vasa_ids:%s, locations:%s, "
+        "start:%s, end:%s, causes:%s}",
         getattr(request.user, "email", None),
         row_count,
+        va_row_count,
+        vasa_row_count,
         record_type,
         fmt,
         bool(params.get("ids")),
+        bool(params.get("vasa_ids")),
         params.get("locations") or None,
         params.get("start_date"),
         params.get("end_date"),
@@ -614,13 +658,29 @@ def _export_va_dataset(request, params):
         else {}
     )
     can_view_pii = request.user.can_view_pii
-    rows = _iter_queryset_rows(
-        matching_vas,
-        query_columns,
-        transform=lambda row: _transform_va_row(
-            row, can_view_pii, location_geography, cluster_geography
+
+    def transform(row):
+        return _transform_va_row(
+            row,
+            can_view_pii,
+            location_geography,
+            cluster_geography,
+            output_columns,
+        )
+
+    rows = chain(
+        _iter_queryset_rows(
+            matching_vas,
+            _va_query_columns(VerbalAutopsy, output_columns),
+            transform=transform,
+            chunk_size=100,
         ),
-        chunk_size=100,
+        _iter_queryset_rows(
+            matching_vasa_records,
+            _va_query_columns(VASA, output_columns),
+            transform=transform,
+            chunk_size=100,
+        ),
     )
     audited_rows = _audit_rows(rows, request, "verbal_autopsy", fmt)
 
@@ -659,6 +719,7 @@ def _validate_export_request(params):
         "locations": _request_values(params, "locations"),
         "causes": _request_values(params, "causes"),
         "ids": _request_values(params, "ids"),
+        "vasa_ids": _request_values(params, "vasa_ids"),
     }
     form = ExportRequestForm(data)
     return form.cleaned_data if form.is_valid() else form

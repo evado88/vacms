@@ -9,6 +9,7 @@ from django.contrib.auth.mixins import (
     UserPassesTestMixin,
 )
 from django.contrib.messages.views import SuccessMessageMixin
+from django.db.models import Q
 from django.shortcuts import redirect, render
 from django.urls import reverse, reverse_lazy
 from django.views.generic import (
@@ -20,7 +21,7 @@ from django.views.generic import (
     UpdateView,
 )
 
-from ..utils.mixins import CustomAuthMixin, UserDetailViewMixin
+from ..utils.mixins import AjaxListTableMixin, CustomAuthMixin, UserDetailViewMixin
 from .constants import PERM_FIELD_MAP
 from .forms import (
     ExtendedUserCreationForm,
@@ -28,6 +29,7 @@ from .forms import (
     FeedbackStatusForm,
     UserChangePasswordForm,
     UserImportForm,
+    UserListFilterForm,
     UserPasswordUpdateForm,
     UserSetPasswordForm,
     UserUpdateForm,
@@ -61,13 +63,47 @@ class SystemAdminRequiredMixin(UserPassesTestMixin):
         return user_is_system_admin(self.request.user)
 
 
-class UserIndexView(CustomAuthMixin, PermissionRequiredMixin, ListView):
+class UserIndexView(
+    CustomAuthMixin, PermissionRequiredMixin, AjaxListTableMixin, ListView
+):
     # https://github.com/pennersr/django-allauth/blob/c19a212c6ee786af1bb8bc1b07eb2aa8e2bf531b/allauth/account/urls.py
     login_url = reverse_lazy("account_login")
     permission_required = "users.view_user"
     model = User
     paginate_by = 10
-    queryset = User.objects.all().order_by("name")
+    template_name = "users/user_list.html"
+    component_template = "users/partials/_user_list_component.html"
+
+    def get_filter_form(self):
+        if not hasattr(self, "_filter_form"):
+            self._filter_form = UserListFilterForm(self.request.GET)
+        return self._filter_form
+
+    def get_queryset(self):
+        queryset = User.objects.prefetch_related("groups").order_by("name", "email")
+        form = self.get_filter_form()
+        if not form.is_valid():
+            return queryset
+
+        name = form.cleaned_data.get("name")
+        role = form.cleaned_data.get("role")
+        if name:
+            queryset = queryset.filter(
+                Q(name__icontains=name)
+                | Q(first_name__icontains=name)
+                | Q(last_name__icontains=name)
+            )
+        if role:
+            queryset = queryset.filter(groups=role)
+        return queryset.distinct()
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["filter_form"] = self.get_filter_form()
+        context["filters_active"] = bool(
+            self.request.GET.get("name") or self.request.GET.get("role")
+        )
+        return context
 
 
 user_index_view = UserIndexView.as_view()

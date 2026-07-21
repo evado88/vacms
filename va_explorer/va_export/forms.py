@@ -81,6 +81,7 @@ class ExportRequestForm(forms.Form):
     locations = _IntegerTokenListField(required=False)
     causes = _TokenListField(required=False)
     ids = _IntegerTokenListField(required=False)
+    vasa_ids = _IntegerTokenListField(required=False)
 
     def clean_locations(self):
         location_ids = self.cleaned_data["locations"]
@@ -125,6 +126,7 @@ class ExportRequestForm(forms.Form):
         cleaned_data = super().clean()
         dataset = cleaned_data.get("dataset")
         ids = cleaned_data.get("ids") or []
+        vasa_ids = cleaned_data.get("vasa_ids") or []
         start_date = cleaned_data.get("start_date")
         end_date = cleaned_data.get("end_date")
 
@@ -134,7 +136,7 @@ class ExportRequestForm(forms.Form):
                 missing_field,
                 "Both Earliest Date and Latest Date are required.",
             )
-        elif not ids and not start_date and not end_date:
+        elif not ids and not vasa_ids and not start_date and not end_date:
             self.add_error("start_date", "Earliest Date is required.")
             self.add_error("end_date", "Latest Date is required.")
         elif start_date and end_date and start_date > end_date:
@@ -142,6 +144,10 @@ class ExportRequestForm(forms.Form):
 
         if ids and dataset != "verbalautopsy":
             self.add_error("ids", "Record IDs are only supported for VA exports.")
+        if vasa_ids and dataset != "verbalautopsy":
+            self.add_error(
+                "vasa_ids", "VASA record IDs are only supported for VA exports."
+            )
 
         if dataset != "verbalautopsy":
             cleaned_data["va_record_type"] = None

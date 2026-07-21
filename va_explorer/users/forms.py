@@ -27,6 +27,29 @@ from .models import Feedback
 User = get_user_model()
 
 
+class UserListFilterForm(forms.Form):
+    name = forms.CharField(
+        label="Name",
+        required=False,
+        max_length=100,
+        widget=forms.TextInput(
+            attrs={
+                "type": "search",
+                "class": "form-control",
+                "placeholder": "Search by name",
+                "autocomplete": "off",
+            }
+        ),
+    )
+    role = ModelChoiceField(
+        label="Role",
+        queryset=Group.objects.exclude(name="tmp_va_dbg_grp").order_by("name"),
+        required=False,
+        empty_label="All roles",
+        widget=forms.Select(attrs={"class": "form-control"}),
+    )
+
+
 def get_location_restrictions(cleaned_data):
     """
     Utility method to determine if the user locations are from the location_restrictions
