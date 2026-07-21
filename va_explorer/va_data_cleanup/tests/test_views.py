@@ -4,6 +4,7 @@ from django.test import Client
 
 from va_explorer.tests.factories import GroupFactory, UserFactory, VerbalAutopsyFactory
 from va_explorer.users.models import User
+from va_explorer.va_data_cleanup import views as cleanup_views
 
 pytestmark = pytest.mark.django_db
 
@@ -56,6 +57,28 @@ def test_index_with_valid_permission(
     assert b"cleanup-va-tab" in response.content
     assert b"VAs With Coding Issues" in response.content
     assert b"VAs With Indeterminate Cause of Death" in response.content
+
+
+def test_va_tab_does_not_load_other_cleanup_datasets(
+    settings,
+    view_datacleanup_group,
+    questions_to_autodetect_duplicates,
+    monkeypatch,
+):
+    settings.QUESTIONS_TO_AUTODETECT_DUPLICATES = questions_to_autodetect_duplicates
+    user = UserFactory.create(groups=[view_datacleanup_group])
+    client = Client()
+    client.force_login(user=user)
+
+    def fail_if_called(*args, **kwargs):
+        pytest.fail("VA cleanup loaded an inactive data-quality dataset")
+
+    monkeypatch.setattr(cleanup_views, "_dq_rows_for_model", fail_if_called)
+
+    response = client.get("/va_data_cleanup/")
+
+    assert response.status_code == 200
+    assert b"Household Data Quality Issues" not in response.content
 
 
 # A user must have the view_datacleanup permission to view the index

@@ -7,23 +7,24 @@
 {% block content %}
   <ul class="nav nav-tabs tab-spacing" id="cleanupTabs" role="tablist">
     <li class="nav-item">
-      <a class="nav-link {% if active_cleanup_tab == 'household' %}active{% endif %}" id="cleanup-household-tab" data-toggle="tab" href="#cleanup-household" role="tab" aria-controls="cleanup-household" aria-selected="{% if active_cleanup_tab == 'household' %}true{% else %}false{% endif %}">Household</a>
+      <a class="nav-link {% if active_cleanup_tab == 'household' %}active{% endif %}" id="cleanup-household-tab" href="?tab=household" role="tab" aria-controls="cleanup-household" aria-selected="{% if active_cleanup_tab == 'household' %}true{% else %}false{% endif %}">Household</a>
     </li>
     <li class="nav-item">
-      <a class="nav-link {% if active_cleanup_tab == 'pregnancy' %}active{% endif %}" id="cleanup-pregnancy-tab" data-toggle="tab" href="#cleanup-pregnancy" role="tab" aria-controls="cleanup-pregnancy" aria-selected="{% if active_cleanup_tab == 'pregnancy' %}true{% else %}false{% endif %}">Pregnancy</a>
+      <a class="nav-link {% if active_cleanup_tab == 'pregnancy' %}active{% endif %}" id="cleanup-pregnancy-tab" href="?tab=pregnancy" role="tab" aria-controls="cleanup-pregnancy" aria-selected="{% if active_cleanup_tab == 'pregnancy' %}true{% else %}false{% endif %}">Pregnancy</a>
     </li>
     <li class="nav-item">
-      <a class="nav-link {% if active_cleanup_tab == 'pregnancy-outcome' %}active{% endif %}" id="cleanup-pregnancy-outcome-tab" data-toggle="tab" href="#cleanup-pregnancy-outcome" role="tab" aria-controls="cleanup-pregnancy-outcome" aria-selected="{% if active_cleanup_tab == 'pregnancy-outcome' %}true{% else %}false{% endif %}">Pregnancy Outcome</a>
+      <a class="nav-link {% if active_cleanup_tab == 'pregnancy-outcome' %}active{% endif %}" id="cleanup-pregnancy-outcome-tab" href="?tab=pregnancy-outcome" role="tab" aria-controls="cleanup-pregnancy-outcome" aria-selected="{% if active_cleanup_tab == 'pregnancy-outcome' %}true{% else %}false{% endif %}">Pregnancy Outcome</a>
     </li>
     <li class="nav-item">
-      <a class="nav-link {% if active_cleanup_tab == 'death' %}active{% endif %}" id="cleanup-death-tab" data-toggle="tab" href="#cleanup-death" role="tab" aria-controls="cleanup-death" aria-selected="{% if active_cleanup_tab == 'death' %}true{% else %}false{% endif %}">Death</a>
+      <a class="nav-link {% if active_cleanup_tab == 'death' %}active{% endif %}" id="cleanup-death-tab" href="?tab=death" role="tab" aria-controls="cleanup-death" aria-selected="{% if active_cleanup_tab == 'death' %}true{% else %}false{% endif %}">Death</a>
     </li>
     <li class="nav-item">
-      <a class="nav-link {% if active_cleanup_tab == 'verbal-autopsy' %}active{% endif %}" id="cleanup-va-tab" data-toggle="tab" href="#cleanup-va" role="tab" aria-controls="cleanup-va" aria-selected="{% if active_cleanup_tab == 'verbal-autopsy' %}true{% else %}false{% endif %}">Verbal Autopsy</a>
+      <a class="nav-link {% if active_cleanup_tab == 'verbal-autopsy' %}active{% endif %}" id="cleanup-va-tab" href="?tab=verbal-autopsy" role="tab" aria-controls="cleanup-va" aria-selected="{% if active_cleanup_tab == 'verbal-autopsy' %}true{% else %}false{% endif %}">Verbal Autopsy</a>
     </li>
   </ul>
 
   <div class="tab-content pt-3" id="cleanupTabsContent">
+    {% if active_cleanup_tab == 'household' %}
       <section class="tab-pane fade {% if active_cleanup_tab == 'household' %}show active{% endif %}" id="cleanup-household" role="tabpanel" aria-labelledby="cleanup-household-tab">
         <section class="ou-card ou-mb-3">
           <div class="ou-card-header">
@@ -79,8 +80,12 @@
             </div>
           </div>
         </section>
+        {% if dq_page %}
+          {% include "partials/_pagination_named.html" with page_obj=dq_page page_param="dq_page" %}
+        {% endif %}
       </section>
 
+    {% elif active_cleanup_tab == 'pregnancy' %}
       <section class="tab-pane fade {% if active_cleanup_tab == 'pregnancy' %}show active{% endif %}" id="cleanup-pregnancy" role="tabpanel" aria-labelledby="cleanup-pregnancy-tab">
         <section class="ou-card ou-mb-3">
           <div class="ou-card-header">
@@ -133,8 +138,12 @@
             </div>
           </div>
         </section>
+        {% if dq_page %}
+          {% include "partials/_pagination_named.html" with page_obj=dq_page page_param="dq_page" %}
+        {% endif %}
       </section>
 
+    {% elif active_cleanup_tab == 'pregnancy-outcome' %}
       <section class="tab-pane fade {% if active_cleanup_tab == 'pregnancy-outcome' %}show active{% endif %}" id="cleanup-pregnancy-outcome" role="tabpanel" aria-labelledby="cleanup-pregnancy-outcome-tab">
         <section class="ou-card ou-mb-3">
           <div class="ou-card-header">
@@ -191,8 +200,12 @@
             </div>
           </div>
         </section>
+        {% if dq_page %}
+          {% include "partials/_pagination_named.html" with page_obj=dq_page page_param="dq_page" %}
+        {% endif %}
       </section>
 
+    {% elif active_cleanup_tab == 'death' %}
       <section class="tab-pane fade {% if active_cleanup_tab == 'death' %}show active{% endif %}" id="cleanup-death" role="tabpanel" aria-labelledby="cleanup-death-tab">
         <section class="ou-card ou-mb-3">
           <div class="ou-card-header">
@@ -247,8 +260,12 @@
             </div>
           </div>
         </section>
+        {% if dq_page %}
+          {% include "partials/_pagination_named.html" with page_obj=dq_page page_param="dq_page" %}
+        {% endif %}
       </section>
 
+    {% else %}
       <section class="tab-pane fade {% if active_cleanup_tab == 'verbal-autopsy' %}show active{% endif %}" id="cleanup-va" role="tabpanel" aria-labelledby="cleanup-va-tab">
         <ul class="nav nav-tabs tab-spacing" id="cleanupVASubtabs" role="tablist">
           <li class="nav-item">
@@ -373,5 +390,6 @@
           </section>
         </div>
       </section>
+    {% endif %}
   </div>
 {% endblock %}

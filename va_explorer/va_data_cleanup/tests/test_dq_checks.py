@@ -12,6 +12,7 @@ from va_explorer.tests.factories import (
     UserFactory,
     VerbalAutopsyFactory,
 )
+from va_explorer.va_data_cleanup import views as cleanup_views
 from va_explorer.va_data_management.models import (
     Death,
     Household,
@@ -316,6 +317,65 @@ def test_death_tab_shows_own_issues(settings, view_datacleanup_group):
     assert response.status_code == 200
     assert b"Flagged Person" in response.content
     assert b"Duplicate" in response.content
+
+
+def test_cleanup_loads_only_the_selected_data_quality_model(
+    settings, view_datacleanup_group, monkeypatch
+):
+    settings.QUESTIONS_TO_AUTODETECT_DUPLICATES = "Id10017, Id10010"
+    user = UserFactory.create(groups=[view_datacleanup_group])
+    client = Client()
+    client.force_login(user=user)
+    loaded_models = []
+    original = cleanup_views._dq_rows_for_model
+
+    def track_model(request, model, build_row, only_fields):
+        loaded_models.append(model)
+        return original(request, model, build_row, only_fields)
+
+    monkeypatch.setattr(cleanup_views, "_dq_rows_for_model", track_model)
+
+    response = client.get("/va_data_cleanup/?tab=death")
+
+    assert response.status_code == 200
+    assert loaded_models == [Death]
+    assert b"Household Data Quality Issues" not in response.content
+
+
+def test_data_quality_rows_are_paginated(settings, view_datacleanup_group):
+    settings.QUESTIONS_TO_AUTODETECT_DUPLICATES = "Id10017, Id10010"
+    user = UserFactory.create(groups=[view_datacleanup_group])
+    deaths = [_death(f"d{i}", DE_03=f"Person {i}") for i in range(30)]
+    _bulk(Death, deaths)
+    content_type = ContentType.objects.get_for_model(Death)
+    issue = DataQualityIssue.objects.create(
+        issue_type=DataQualityIssue.DUPLICATE,
+        target_model=content_type,
+        signature="pagination-test",
+        details={"subtype": "deceased_household_dod"},
+    )
+    DataQualityIssueMember.objects.bulk_create(
+        [
+            DataQualityIssueMember(
+                issue=issue,
+                content_type=content_type,
+                object_id=death.id,
+            )
+            for death in deaths
+        ]
+    )
+    client = Client()
+    client.force_login(user=user)
+
+    first_page = client.get("/va_data_cleanup/?tab=death")
+    second_page = client.get("/va_data_cleanup/?tab=death&dq_page=2")
+
+    assert first_page.status_code == 200
+    assert len(first_page.context["death_issue_rows"]) == cleanup_views.DQ_PER_PAGE
+    assert first_page.context["dq_page"].paginator.count == 30
+    assert second_page.status_code == 200
+    assert len(second_page.context["death_issue_rows"]) == 5
+    assert second_page.context["dq_page"].number == 2
 
 
 # --------------------------------------------------------------------------- #
