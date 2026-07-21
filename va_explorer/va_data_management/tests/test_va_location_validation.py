@@ -78,6 +78,24 @@ def test_facility_va_ignores_community_geography_validation():
     assert _raw_error_texts(va) == []
 
 
+def test_location_validation_accepts_historical_va_instances():
+    va = VerbalAutopsyFactory.create(
+        community_va="yes",
+        cluster=None,
+        constituency="Historical Community Constituency",
+        district="",
+        ward="",
+        ea="",
+        area="",
+        hospital="",
+        location=None,
+    )
+
+    validate_vas_for_dashboard([va.history.first()])
+
+    assert _raw_error_texts(va) == []
+
+
 def test_data_migration_removes_only_cross_mode_location_issues():
     facility = Location.add_root(
         name="Facility A",

@@ -18,9 +18,32 @@ def _coding_issue(va, text, severity):
     )
 
 
+def _community_va_mode(va):
+    """Read VA mode from live or django-simple-history model instances."""
+    try:
+        return va.community_va_normalized
+    except AttributeError:
+        value = str(getattr(va, "community_va", "") or "").strip().lower()
+        if value in {"yes", "y", "true", "1"}:
+            return "yes"
+        if value in {"no", "n", "false", "0"}:
+            return "no"
+
+        if any(
+            _has_meaningful_text(getattr(va, field, None))
+            for field in ("district", "constituency", "ward", "ea")
+        ):
+            return "yes"
+        if _has_meaningful_text(getattr(va, "hospital", None)):
+            return "no"
+        if _has_meaningful_text(getattr(va, "area", None)):
+            return "yes"
+        return None
+
+
 def _append_location_issues(va, issues):
     """Validate only the location fields applicable to this VA's source mode."""
-    community_mode = va.community_va_normalized
+    community_mode = _community_va_mode(va)
     if community_mode is None:
         issues.append(
             _coding_issue(

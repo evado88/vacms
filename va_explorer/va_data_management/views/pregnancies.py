@@ -19,6 +19,9 @@ from va_explorer.utils.mixins import (
 from va_explorer.va_data_management.filters import PregnancyFilter
 from va_explorer.va_data_management.forms import PregnancyForm
 from va_explorer.va_data_management.models import Pregnancy
+from va_explorer.va_data_management.utils.duplicate_issues import (
+    get_duplicate_issue_groups,
+)
 from va_explorer.va_data_management.utils.list_cleaning import (
     exclude_rows_with_invalid_display_values,
 )
@@ -93,6 +96,9 @@ class PregnancyDetail(
         context["id"] = self.object.id
         context["form"] = PregnancyForm(None, instance=self.object)
         context["history"] = self.object.history.all().reverse()
+        context["duplicate_issue_groups"] = get_duplicate_issue_groups(
+            self.object, self.get_queryset()
+        )
         return context
 
 

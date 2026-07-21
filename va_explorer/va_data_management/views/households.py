@@ -24,6 +24,9 @@ from va_explorer.va_data_management.models import Household
 from va_explorer.va_data_management.models.data_quality import (
     DataQualityIssue,
 )
+from va_explorer.va_data_management.utils.duplicate_issues import (
+    get_duplicate_issue_groups,
+)
 from va_explorer.va_data_management.utils.list_cleaning import (
     exclude_rows_with_invalid_display_values,
 )
@@ -117,11 +120,12 @@ class HouseholdDetail(
             .distinct()
         )
         context["dq_issues"] = list(dq_issues)
-        context["dq_issues_counts"] = {
-            "open": dq_issues.filter(status="open").count(),
-            "resolved": dq_issues.filter(status="resolved").count(),
-            "muted": dq_issues.filter(status="muted").count(),
-        }
+        context["dq_issues_counts"] = {"open": 0, "resolved": 0, "muted": 0}
+        for issue in context["dq_issues"]:
+            context["dq_issues_counts"][issue.status] += 1
+        context["duplicate_issue_groups"] = get_duplicate_issue_groups(
+            self.object, self.get_queryset()
+        )
         return context
 
 

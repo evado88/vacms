@@ -163,6 +163,7 @@ def test_deaths_list_excludes_placeholder_rows_and_reorders_filters():
         "enumerator",
         "district",
         "ward",
+        "ea",
         "deceased",
         "start_date",
         "end_date",

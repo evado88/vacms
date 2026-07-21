@@ -25,6 +25,9 @@ from va_explorer.va_data_management.constants import DEATH_PII_FIELDS, REDACTED_
 from va_explorer.va_data_management.filters import DeathFilter
 from va_explorer.va_data_management.forms import DeathForm
 from va_explorer.va_data_management.models import Death
+from va_explorer.va_data_management.utils.duplicate_issues import (
+    get_duplicate_issue_groups,
+)
 from va_explorer.va_data_management.utils.list_cleaning import (
     exclude_rows_with_invalid_display_values,
 )
@@ -210,6 +213,9 @@ class DeathDetail(
         )
         history = self.object.history.all().reverse()
         context["history"] = history
+        context["duplicate_issue_groups"] = get_duplicate_issue_groups(
+            self.object, self.get_queryset()
+        )
         return context
 
 

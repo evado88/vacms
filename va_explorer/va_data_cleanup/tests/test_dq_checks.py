@@ -487,6 +487,15 @@ def test_va_missing_gps_subtab_lists_only_blank_geopoint(
     response = client.get("/va_data_cleanup/?tab=verbal-autopsy&va_subtab=missing-gps")
 
     assert response.status_code == 200
+    assert (
+        b"Verbal-autopsy issue table shared by the Coding Issues / Indeterminate / "
+        b"Errors sub-tabs" not in response.content
+    )
+    assert (
+        b"Reusable paginator for pages that host several independent lists."
+        b" Expects: page_obj (a Page) and page_param (the query-string key, e.g. "
+        b'"err_page").' not in response.content
+    )
     assert response.context["va_missing_gps_count"] == 1
     row_ids = {row["id"] for row in response.context["va_missing_gps_rows"]}
     assert row_ids == {blank.id}

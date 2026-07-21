@@ -1,0 +1,29 @@
+{% if duplicate_issue_groups %}
+  <section class="col-12 mb-4" aria-labelledby="possible-duplicate-records-heading">
+    <h3 class="h5" id="possible-duplicate-records-heading">Possible duplicate records</h3>
+    <div class="table-responsive">
+      <table class="table table-hover table-sm mb-0">
+        <thead>
+          <tr>
+            <th scope="col">Issue</th>
+            <th scope="col">Other possible duplicates</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for group in duplicate_issue_groups %}
+            <tr>
+              <td>{{ group.title }}</td>
+              <td>
+                <ul class="list-unstyled mb-0">
+                  {% for duplicate in group.records %}
+                    <li><a href="{{ duplicate.url }}">{{ duplicate.label }}</a></li>
+                  {% endfor %}
+                </ul>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endif %}

@@ -1,6 +1,4 @@
 {% load va_explorer_tags %}
-{# Reusable paginator for pages that host several independent lists.
-   Expects: page_obj (a Page) and page_param (the query-string key, e.g. "err_page"). #}
 <nav aria-label="Page navigation container" class="ou-pagination-nav">
   {% if page_obj.has_other_pages %}
   <ul class="pagination pagination-lg justify-content-center">
