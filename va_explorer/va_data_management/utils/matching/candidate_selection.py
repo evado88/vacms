@@ -4,9 +4,9 @@ Two stages, both driven by the per-run :class:`DeathIndex`:
 
 * Stage 1 — deterministic keys, in precedence order: VASA ``DeathID``
   (format-validated), CMS ``Event`` bridge, NRC-gated name matching, death
-  registration number (inert until E_DEATH carries one), exact composite
-  (name token-set + sex + exact DOD + district). Every deterministic hit is
-  still scored so a contradiction guard can route it to review.
+  registration number (inert until E_DEATH carries one), exact demographic/GPS
+  composite, exact district composite. Every deterministic hit is still scored
+  so a contradiction guard can route it to review.
 * Stage 2 — union blocking (recall-oriented; missing a block loses a true
   match): EA, constituency+ward, district+death-year, phonetic surname +
   district, name-initials+year, DOD ±window regardless of geography, and a
@@ -56,6 +56,26 @@ def rejected_pks(va) -> set:
     from va_explorer.va_data_management.models import VADeathMatchRejection
 
     return VADeathMatchRejection.rejected_death_pks(va)
+
+
+def _dob_or_age_matches(profile, other):
+    if (
+        profile.dob
+        and other.dob
+        and profile.dob_precision == "day"
+        and other.dob_precision == "day"
+    ):
+        return profile.dob == other.dob
+    return (
+        profile.age_days is not None
+        and other.age_days is not None
+        and profile.age_days == other.age_days
+    )
+
+
+def _gps_matches(profile, other):
+    distance = N.gps_distance_km(profile.gps, other.gps)
+    return distance is not None and distance <= 1.0
 
 
 def deterministic_candidate(va, profile, index, rejected=frozenset(), *, phase="all"):
@@ -114,7 +134,41 @@ def deterministic_candidate(va, profile, index, rejected=frozenset(), *, phase="
         if len(pks) == 1:
             return index.death(pks[0]), MatchMethod.DEATH_REG_NO
 
-    # 5. Exact composite: name token-set equality AND sex AND exact DOD AND
+    # Exact demographic/GPS composite: name token-set equality AND exact DOD
+    # AND exact DOB/age AND sex AND place of death AND GPS within the scorer's
+    # "exact" band. The hit must be unique.
+    if (
+        phase in {"all", "secondary"}
+        and profile.name_tokens
+        and profile.sex
+        and profile.dod
+        and profile.dod_precision == "day"
+        and profile.place_category
+        and profile.gps
+    ):
+        hits = []
+        for pk in index.by_name_key.get(profile.name_tokens, []):
+            if pk in rejected:
+                continue
+            other = index.profile(pk)
+            if other.sex != profile.sex or other.sex is None:
+                continue
+            if other.dod != profile.dod or other.dod_precision != "day":
+                continue
+            if not _dob_or_age_matches(profile, other):
+                continue
+            if (
+                other.place_category != profile.place_category
+                or other.place_category is None
+            ):
+                continue
+            if not _gps_matches(profile, other):
+                continue
+            hits.append(pk)
+        if len(hits) == 1:
+            return index.death(hits[0]), MatchMethod.EXACT_COMPOSITE
+
+    # Exact district composite: name token-set equality AND sex AND exact DOD AND
     #    same district (geo term skipped for facility VAs, which have none).
     #    Like NRC, the hit must be unique — duplicate register entries fall
     #    through to probabilistic scoring, which routes ties to review.

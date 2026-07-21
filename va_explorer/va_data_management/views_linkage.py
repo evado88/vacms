@@ -78,6 +78,17 @@ def _va_label(match):
     return name or getattr(va, "instanceid", None) or f"#{va.pk}"
 
 
+def _next_best_score_display(match):
+    for alternative in match.alternatives or []:
+        if alternative.get("previous_link"):
+            continue
+        try:
+            return f"{float(alternative['score']):.1f}"
+        except (KeyError, TypeError, ValueError):
+            continue
+    return "—"
+
+
 class LinkageReviewIndexView(CustomAuthMixin, PermissionRequiredMixin, ListView):
     """Tabbed review queue over VADeathMatch rows."""
 
@@ -126,12 +137,6 @@ class LinkageReviewIndexView(CustomAuthMixin, PermissionRequiredMixin, ListView)
         district = self.request.GET.get("district", "").strip()
         if district:
             qs = qs.filter(death__district__iexact=district)
-        review_reason = self.request.GET.get("review_reason", "").strip()
-        if review_reason:
-            qs = qs.filter(review_reason=review_reason)
-        review_mode = self.request.GET.get("review_mode", "").strip()
-        if review_mode:
-            qs = qs.filter(review_mode=review_mode)
         tool = self.request.GET.get("tool", "").strip()
         if tool == "vasa":
             qs = qs.filter(vasa__isnull=False)
@@ -174,13 +179,7 @@ class LinkageReviewIndexView(CustomAuthMixin, PermissionRequiredMixin, ListView)
         context["tab_counts"] = counts
         context["method_filter"] = self.request.GET.get("method", "")
         context["district_filter"] = self.request.GET.get("district", "")
-        for key in (
-            "review_reason",
-            "review_mode",
-            "tool",
-            "min_score",
-            "max_score",
-        ):
+        for key in ("tool", "min_score", "max_score"):
             context[f"{key}_filter"] = self.request.GET.get(key, "")
         filter_params = self.request.GET.copy()
         filter_params.pop("page", None)
@@ -189,7 +188,7 @@ class LinkageReviewIndexView(CustomAuthMixin, PermissionRequiredMixin, ListView)
             {
                 "match": match,
                 "va_label": _va_label(match),
-                "va_model": "VASA" if match.vasa_id else "VA",
+                "next_best_score_display": _next_best_score_display(match),
             }
             for match in context["object_list"]
         ]

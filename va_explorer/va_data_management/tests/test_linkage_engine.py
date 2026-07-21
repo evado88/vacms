@@ -128,6 +128,72 @@ def test_exact_composite_rule():
     assert result.death_pk == death.pk
 
 
+def test_exact_demographic_gps_composite_links_without_district_match():
+    death = _make_death(
+        DE_03="Precise Person",
+        DE_04="1980-05-01",
+        DE_05="male",
+        DE_06="2024-01-10",
+        DE_07="02",
+        DE_08="",
+        DE_34="-15.416 28.283 0 5",
+        district="Register District",
+        ward="Register Ward",
+    )
+    va = _make_va(
+        Id10017="Precise",
+        Id10018="Person",
+        Id10019="male",
+        Id10021="1980-05-01",
+        Id10023="2024-01-10",
+        Id10058="home",
+        geopoint="-15.416 28.283 0 5",
+        district="Interview District",
+        ward="Interview Ward",
+    )
+
+    result = evaluate_va(va)
+
+    assert result.status == MatchStatus.MATCHED_AUTO
+    assert result.method == MatchMethod.EXACT_COMPOSITE
+    assert result.death_pk == death.pk
+    assert {"name", "dod", "dob_or_age", "sex", "place_of_death", "gps"} <= set(
+        result.supporting_fields
+    )
+
+
+def test_exact_demographic_gps_composite_accepts_exact_age_when_dob_missing():
+    death = _make_death(
+        DE_03="Age Matched",
+        DE_04="2024-01-01",
+        DE_05="female",
+        DE_06="2024-01-11",
+        DE_07="02",
+        DE_08="",
+        DE_34="-15.416 28.283 0 5",
+        district="Register District",
+        ward="Register Ward",
+    )
+    va = _make_va(
+        Id10017="Age",
+        Id10018="Matched",
+        Id10019="female",
+        Id10021="",
+        Id10023="2024-01-11",
+        Id10058="home",
+        ageInDays="10",
+        geopoint="-15.416 28.283 0 5",
+        district="Interview District",
+        ward="Interview Ward",
+    )
+
+    result = evaluate_va(va)
+
+    assert result.status == MatchStatus.MATCHED_AUTO
+    assert result.method == MatchMethod.EXACT_COMPOSITE
+    assert result.death_pk == death.pk
+
+
 def test_invalid_vasa_death_id_format_never_uses_death_id_rule():
     death = _make_death()
     death.death_id = "BADID12345"  # fails checksum/format validation

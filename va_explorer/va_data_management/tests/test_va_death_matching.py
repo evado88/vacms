@@ -14,7 +14,9 @@ from va_explorer.va_data_management.models import (
 from va_explorer.va_data_management.utils.matching import (
     auto_link_verbal_autopsy_to_death,
     evaluate_va,
+    run_matching,
 )
+from va_explorer.va_data_management.utils.matching import service as matching_service
 from va_explorer.vacms.cmsmodels.events import Event
 
 pytestmark = pytest.mark.django_db
@@ -190,6 +192,62 @@ def test_facility_va_with_no_death_is_unmatched():
     result = evaluate_va(va)
     assert result.status == MatchStatus.UNMATCHED
     assert result.death_pk is None
+
+
+def test_facility_va_is_excluded_before_matching(monkeypatch):
+    _make_death()
+    va = _make_va(hospital="Lusaka Hospital")
+
+    monkeypatch.setattr(
+        matching_service.DeathIndex,
+        "build_for_profile",
+        lambda *args, **kwargs: pytest.fail("facility VA should not build an index"),
+    )
+
+    result = evaluate_va(va)
+
+    assert result.status == MatchStatus.NO_DEATH_EXPECTED
+    assert result.method is None
+    assert result.death_pk is None
+
+
+def test_area_va_is_excluded_from_matching():
+    _make_death()
+    va = _make_va(area="Lusaka Facility Area")
+
+    result = evaluate_va(va)
+
+    assert result.status == MatchStatus.NO_DEATH_EXPECTED
+    assert result.death_pk is None
+
+
+def test_facility_va_persistence_records_no_death_expected():
+    _make_death()
+    va = _make_va(hospital="Lusaka Hospital")
+
+    result = auto_link_verbal_autopsy_to_death(va, save=True, source="test")
+
+    assert result.status == MatchStatus.NO_DEATH_EXPECTED
+    match = VADeathMatch.objects.get(verbal_autopsy=va)
+    assert match.status == MatchStatus.NO_DEATH_EXPECTED
+    assert match.death_id is None
+
+
+def test_facility_only_batch_does_not_build_death_index(monkeypatch):
+    va = _make_va(hospital="Lusaka Hospital")
+
+    monkeypatch.setattr(
+        matching_service.DeathIndex,
+        "build",
+        lambda *args, **kwargs: pytest.fail(
+            "facility-only run should not index deaths"
+        ),
+    )
+
+    summary = run_matching([va], apply=False)
+
+    assert summary[MatchStatus.NO_DEATH_EXPECTED] == 1
+    assert summary["deaths_indexed"] == 0
 
 
 def test_two_near_tied_candidates_are_ambiguous():

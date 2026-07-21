@@ -134,10 +134,26 @@ def test_index_requires_permission(pending_match):
 
 
 def test_index_lists_pending_matches(view_group, pending_match):
+    match, _, _ = pending_match
+    match.score_separation = 8.9
+    match.alternatives = [{"death_id": "next-best", "score": 41.6}]
+    match.save(update_fields=["score_separation", "alternatives"])
+
     client = _client_for(UserFactory.create(groups=[view_group]))
     response = client.get("/va_data_management/linkage-review")
     assert response.status_code == 200
-    assert b"Pending review" in response.content
+    assert b"<title>Death-VA Linkage</title>" in response.content
+    assert b"Death-VA Linkage" in response.content
+    assert b">Deceased<" in response.content
+    assert b"<th>Death ID</th>" in response.content
+    assert b"<th>Next Best</th>" in response.content
+    assert b"<th>Review Route</th>" in response.content
+    assert b"<th>Matching Fields</th>" in response.content
+    assert b"<th>Tool</th>" not in response.content
+    assert b">41.6<" in response.content
+    assert b">8.9<" not in response.content
+    assert b"Review mode" not in response.content
+    assert b"Reason" not in response.content
 
 
 def test_review_detail_is_scoped_to_user_locations(view_group):

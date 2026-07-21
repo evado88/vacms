@@ -46,6 +46,27 @@ def _va_identifier(va):
     return getattr(va, "instanceid", None) or getattr(va, "key", None)
 
 
+def _has_meaningful_value(value):
+    normalized = ("" if value is None else str(value)).strip().lower()
+    return normalized not in {"", "nan", "none", "null"}
+
+
+def _is_facility_va_excluded(va):
+    """Facility-source VAs do not have Death notifications to link against."""
+    if _has_meaningful_value(getattr(va, "hospital", None)):
+        return True
+    if _has_meaningful_value(getattr(va, "area", None)):
+        return True
+    try:
+        if va.community_va_normalized == "no":
+            return True
+    except AttributeError:
+        value = str(getattr(va, "community_va", "") or "").strip().lower()
+        if value in {"no", "n", "false", "0"}:
+            return True
+    return False
+
+
 def _crosswalk_version():
     from va_explorer.va_data_management.linkage.linkage_map import CROSSWALK_VERSION
 
@@ -69,6 +90,12 @@ def _blank_result(va, status, source, config):
         algorithm_version=config["algorithm_version"],
         source=source,
     )
+
+
+def _facility_excluded_result(va, source, config):
+    from va_explorer.va_data_management.models import MatchStatus
+
+    return _blank_result(va, MatchStatus.NO_DEATH_EXPECTED, source, config)
 
 
 def _result_from_candidate(
@@ -371,6 +398,8 @@ def _index_for(va, index):
 def evaluate_va(va, *, source="evaluation", config=None, index=None) -> MatchResult:
     """Evaluate a VA and return the explainable result. Makes no DB changes."""
     config = config or resolve_config()
+    if _is_facility_va_excluded(va):
+        return _facility_excluded_result(va, source, config)
     result, _, _ = _evaluate(
         va, source=source, config=config, index=_index_for(va, index)
     )
@@ -456,6 +485,18 @@ def auto_link_verbal_autopsy_to_death(
     va = verbal_autopsy
     config = config or resolve_config()
     existing = _locked_existing_match(va) if save else _existing_match(va)
+
+    if _is_facility_va_excluded(va):
+        result = _facility_excluded_result(va, source, config)
+        result.previously_linked = bool(existing and existing.is_linked)
+        result.previous_was_manual = bool(existing and existing.is_manual)
+        if existing is not None and existing.is_manual:
+            result.status = MatchStatus.SKIPPED
+            result.death_pk = existing.death_id
+            return result
+        if save:
+            result.changed = _persist(va, result, None, existing)
+        return result
 
     # Human-confirmed links are authoritative. Force recheck may inspect them in
     # dry-run mode, but no automatic pathway may overwrite one.
@@ -648,7 +689,13 @@ def run_matching(
     from va_explorer.va_data_management.models import MatchStatus
 
     config = resolve_config(config_name)
-    index = death_index if death_index is not None else DeathIndex.build()
+    index = death_index
+
+    def _get_index():
+        nonlocal index
+        if index is None:
+            index = DeathIndex.build()
+        return index
 
     summary = {s.value: 0 for s in MatchStatus}
     summary.update(
@@ -661,7 +708,7 @@ def run_matching(
             "methods": {},
             "block_stats": {},
             "config": config["name"],
-            "deaths_indexed": index.size,
+            "deaths_indexed": death_index.size if death_index is not None else 0,
         }
     )
 
@@ -679,7 +726,7 @@ def run_matching(
                 review_only=review_only,
                 source=source,
                 config=config,
-                index=index,
+                index=None if _is_facility_va_excluded(va) else _get_index(),
             )
             if result.changed:
                 summary["changed"] += 1
@@ -690,10 +737,14 @@ def run_matching(
                 result = _blank_result(va, MatchStatus.SKIPPED, source, config)
                 result.previously_linked = existing.is_linked
                 result.previous_was_manual = True
+            elif _is_facility_va_excluded(va):
+                result = _facility_excluded_result(va, source, config)
+                result.previously_linked = bool(existing and existing.is_linked)
+                result.previous_was_manual = bool(existing and existing.is_manual)
             else:
                 try:
                     result, _, block_stats = _evaluate(
-                        va, source=source, config=config, index=index
+                        va, source=source, config=config, index=_get_index()
                     )
                     result = _reconcile_previous_link(result, existing)
                     _collect_blocks(result, block_stats)
@@ -722,4 +773,5 @@ def run_matching(
         if on_result is not None:
             on_result(result)
 
+    summary["deaths_indexed"] = index.size if index is not None else 0
     return summary
