@@ -337,6 +337,14 @@ def _scoped_dashboard_user(scope_location):
     return UserFactory.create(groups=[group], location_restrictions=[scope_location])
 
 
+def _dashboard_user_with_permissions(*codenames):
+    permissions = Permission.objects.filter(
+        content_type__app_label="va_analytics", codename__in=codenames
+    )
+    group = GroupFactory.create(permissions=list(permissions))
+    return UserFactory.create(groups=[group])
+
+
 def test_home_dashboard_kpis_are_scoped_to_user_province():
     cache.clear()
     southern = _seed_home_dashboard_scope_data()
@@ -609,6 +617,95 @@ def test_home_overview_map_va_ea_counts_use_resolved_va_geography(user: User):
     assert ward_rows_by_ea["EA 2001"]["verbal_autopsies_count"] == 1
     assert ward_rows_by_ea["EA 3001"]["verbal_autopsies_count"] == 1
     assert "EA 4001" not in ward_rows_by_ea
+
+
+def test_home_overview_map_gps_cap_represents_every_event_type():
+    cache.clear()
+    user = _dashboard_user_with_permissions("view_dashboard", "view_pii")
+    client = Client()
+    client.force_login(user=user)
+    recorded_on = "2026-02-01"
+
+    for index in range(4):
+        Pregnancy.objects.create(
+            key=f"gps-pregnancy-{index}",
+            province="Lusaka",
+            PE_25=f"-15.{index} 28.{index}",
+            submissiondate=recorded_on,
+            today=recorded_on,
+        )
+    PregnancyOutcome.objects.create(
+        key="gps-pregnancy-outcome",
+        province="Lusaka",
+        gps="-15.4 28.4",
+        submissiondate=recorded_on,
+        today=recorded_on,
+    )
+    Death.objects.bulk_create(
+        [
+            Death(
+                key="gps-death",
+                province="Lusaka",
+                DE_34="-15.5 28.5",
+                submissiondate=recorded_on,
+                today=recorded_on,
+            )
+        ]
+    )
+    VerbalAutopsyFactory.create(
+        instanceid="gps-verbal-autopsy",
+        province="Lusaka",
+        geopoint="-15.6 28.6",
+        Id10012=recorded_on,
+        Id10023=recorded_on,
+        submissiondate=recorded_on,
+    )
+
+    response = client.get(
+        reverse("home:home_overview_map_data"),
+        {"include_gps_points": "true", "gps_limit": "4"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["gps_total"] == 7
+    assert len(payload["gps_points"]) == 4
+    assert payload["gps_truncated"] is True
+    assert {point["event_type"] for point in payload["gps_points"]} == {
+        "pregnancy",
+        "pregnancy_outcome",
+        "death",
+        "verbal_autopsy",
+    }
+
+
+def test_home_overview_map_gps_requires_pii_permission():
+    cache.clear()
+    user = _dashboard_user_with_permissions("view_dashboard")
+    client = Client()
+    client.force_login(user=user)
+
+    response = client.get(
+        reverse("home:home_overview_map_data"),
+        {"include_gps_points": "true"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["gps_pii_denied"] is True
+    assert response.json()["gps_points"] == []
+
+
+def test_operations_dashboard_loads_shared_gps_overlay_assets():
+    user = _dashboard_user_with_permissions("view_dashboard", "view_pii")
+    client = Client()
+    client.force_login(user=user)
+
+    response = client.get(reverse("home:index"))
+
+    assert response.status_code == 200
+    assert b"dashboard_gps_layer.css" in response.content
+    assert b"dashboard_gps_layer.js" in response.content
+    assert b"home_hierarchical_dashboard_map.js" in response.content
 
 
 def test_regional_operations_page_loads(user: User):

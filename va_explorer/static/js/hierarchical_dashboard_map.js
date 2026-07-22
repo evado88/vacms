@@ -197,28 +197,45 @@
       return state.colors[Math.min(bins.length - 2, state.colors.length - 1)];
     };
 
-    const gpsPIINoticeRow = () =>
-      `<div class="legend-gps-pii-note text-muted">GPS points hidden — requires PII permission</div>`;
-
-    const gpsLegendRow = () =>
-      userCanViewPII
-        ? `<div class="legend-gps-row"><span class="legend-gps-swatch"></span>GPS records</div>`
-        : gpsPIINoticeRow();
-
-    const showGPSPIINotice = () => {
-      const legend = document.getElementById(legendId);
-      if (!legend || legend.querySelector(".legend-gps-pii-note")) return;
-      legend.insertAdjacentHTML("beforeend", gpsPIINoticeRow());
+    const gpsLegendRow = () => {
+      const rowClass = userCanViewPII ? "legend-gps-row" : "legend-gps-pii-note text-muted";
+      const swatch = userCanViewPII ? `<span class="legend-gps-swatch"></span>` : "";
+      const message = userCanViewPII
+        ? "GPS records: loading..."
+        : "GPS points hidden: PII permission required.";
+      return `<div class="${rowClass}" data-gps-status role="status" aria-live="polite">${swatch}<span class="legend-gps-text">${message}</span></div>`;
     };
 
-    const showGPSFetchErrorNotice = () => {
+    const setGPSLegendStatus = (status, details = {}) => {
       const legend = document.getElementById(legendId);
-      if (!legend || legend.querySelector(".legend-gps-error-note")) return;
-      legend.insertAdjacentHTML(
-        "beforeend",
-        `<div class="legend-gps-error-note text-muted">GPS points could not be loaded (request failed — check ad-blocker/console)</div>`
-      );
+      const row = legend?.querySelector("[data-gps-status]");
+      if (!row) return;
+      const text = row.querySelector(".legend-gps-text");
+      const swatch = row.querySelector(".legend-gps-swatch");
+      row.classList.toggle("legend-gps-error-note", status === "error");
+      row.classList.toggle("text-muted", status === "denied");
+      if (swatch) swatch.hidden = status === "error" || status === "denied";
+      if (!text) return;
+
+      if (status === "loading") {
+        text.textContent = "GPS records: loading...";
+      } else if (status === "denied") {
+        text.textContent = "GPS points hidden: PII permission required.";
+      } else if (status === "error") {
+        text.textContent = "GPS points could not be loaded.";
+      } else if (!details.shown) {
+        text.textContent = "No GPS records in the current filters.";
+      } else if (details.truncated || details.total > details.shown) {
+        text.textContent = `GPS records: ${details.shown.toLocaleString()} of ${details.total.toLocaleString()} shown`;
+      } else {
+        text.textContent = `GPS records: ${details.shown.toLocaleString()} shown`;
+      }
     };
+
+    const showGPSLoadingNotice = () => setGPSLegendStatus("loading");
+    const showGPSPIINotice = () => setGPSLegendStatus("denied");
+    const showGPSFetchErrorNotice = () => setGPSLegendStatus("error");
+    const showGPSPointsStatus = (details) => setGPSLegendStatus("rendered", details);
 
     const renderLegend = (bins) => {
       const legend = document.getElementById(legendId);
@@ -496,6 +513,8 @@
           if (!response.ok) throw new Error(`GPS request failed: ${requestUrl}`);
           return response.json();
         },
+        onLoading: showGPSLoadingNotice,
+        onPointsRendered: showGPSPointsStatus,
         onPIIDenied: showGPSPIINotice,
         onFetchError: showGPSFetchErrorNotice,
       });
@@ -525,7 +544,7 @@
         if (state.map) state.map.invalidateSize();
         if (userCanViewPII) {
           const layer = gpsLayerCtl || ensureGPSLayer();
-          if (layer) layer.refresh().catch((err) => console.error(err));
+          if (layer) layer.show();
         }
       },
       resetDrill: async () => {

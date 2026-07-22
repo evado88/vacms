@@ -142,7 +142,7 @@ class HomeOverviewMapData(CustomAuthMixin, View):
             request,
             extra={
                 "component": "overview_map",
-                "schema_version": 5,
+                "schema_version": 6,
                 "time_preset": request.GET.get("time_preset", ""),
                 "start_datetime": request.GET.get("start_datetime", ""),
                 "end_datetime": request.GET.get("end_datetime", ""),
