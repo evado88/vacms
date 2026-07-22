@@ -62,6 +62,7 @@ class DeathVaTimelineBuilderTests(TestCase):
             "labels",
             "death_to_capture",
             "death_to_va",
+            "capture_to_va",
         }
         assert set(payload["cumulative"].keys()) == {
             "thresholds",
@@ -73,6 +74,7 @@ class DeathVaTimelineBuilderTests(TestCase):
             "labels",
             "capture_delay",
             "va_delay",
+            "capture_to_va_delay",
         }
         assert set(payload["excluded"].keys()) == {
             "unparseable_death_date",
@@ -92,10 +94,38 @@ class DeathVaTimelineBuilderTests(TestCase):
         payload = _build_death_va_timeline(Death.objects.all())
 
         labels = payload["delay_histogram"]["labels"]
-        assert labels == ["0-1", "2-3", "4-7", "8-14", "15-30", "31-60", ">60"]
+        assert labels == ["<0", "0-1", "2-3", "4-7", "8-14", "15-30", "31-60", ">60"]
         # capture delay = 1 day -> "0-1"; VA delay = 14 days -> "8-14"
-        assert payload["delay_histogram"]["death_to_capture"] == [1, 0, 0, 0, 0, 0, 0]
-        assert payload["delay_histogram"]["death_to_va"] == [0, 0, 0, 1, 0, 0, 0]
+        assert payload["delay_histogram"]["death_to_capture"] == [
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ]
+        assert payload["delay_histogram"]["death_to_va"] == [
+            0,
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+        ]
+        assert payload["delay_histogram"]["capture_to_va"] == [
+            0,
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+        ]
 
         cards = payload["cards"]
         assert cards["total_deaths"] == 1
@@ -133,6 +163,7 @@ class DeathVaTimelineBuilderTests(TestCase):
         assert monthly["labels"] == ["2026-01"]
         assert monthly["capture_delay"] == [1.0]
         assert monthly["va_delay"] == [14.0]
+        assert monthly["capture_to_va_delay"] == [13.0]
 
     def test_coverage_denominator_counts_unlinked_deaths(self):
         linked = _make_death(
@@ -188,7 +219,7 @@ class DeathVaTimelineBuilderTests(TestCase):
 
         assert payload["excluded"]["unparseable_death_date"] == 0
         # VA delay = 4 days -> "4-7"
-        assert payload["delay_histogram"]["death_to_va"] == [0, 0, 1, 0, 0, 0, 0]
+        assert payload["delay_histogram"]["death_to_va"] == [0, 0, 0, 1, 0, 0, 0, 0]
         assert payload["cumulative"]["denominator"] == 1
 
     def test_negative_delta_is_counted_and_excluded(self):
@@ -202,9 +233,24 @@ class DeathVaTimelineBuilderTests(TestCase):
         assert sum(payload["delay_histogram"]["death_to_va"]) == 0
         assert payload["cards"]["median_death_to_va_days"] is None
 
+    def test_va_before_e_death_capture_is_bucketed_as_negative_capture_to_va_gap(self):
+        death = _make_death(
+            key="timeline-va-before-edeath",
+            DE_06="2026-01-01",
+            submissiondate="2026-01-20",
+        )
+        va = VerbalAutopsyFactory.create(submissiondate="2026-01-15")
+        _link(death, va=va)
+
+        payload = _build_death_va_timeline(Death.objects.all())
+
+        assert payload["delay_histogram"]["labels"][0] == "<0"
+        assert payload["delay_histogram"]["capture_to_va"][0] == 1
+        assert payload["cards"]["median_capture_to_va_days"] == -5.0
+
     def test_implausible_delta_is_counted_and_excluded(self):
-        death = _make_death(key="timeline-implausible", DE_06="2018-01-01")
-        va = VerbalAutopsyFactory.create(submissiondate="2026-01-01")
+        death = _make_death(key="timeline-implausible", DE_06="2025-01-01")
+        va = VerbalAutopsyFactory.create(submissiondate="2031-01-01")
         _link(death, va=va)
 
         payload = _build_death_va_timeline(Death.objects.all())
@@ -226,7 +272,7 @@ class DeathVaTimelineBuilderTests(TestCase):
         assert payload["cards"]["linked_deaths"] == 1
         # Earliest submission (the VASA, 9 days) wins -> "8-14"; exactly one
         # observation despite two match rows.
-        assert payload["delay_histogram"]["death_to_va"] == [0, 0, 0, 1, 0, 0, 0]
+        assert payload["delay_histogram"]["death_to_va"] == [0, 0, 0, 0, 1, 0, 0, 0]
         assert payload["cards"]["median_death_to_va_days"] == 9.0
 
     def test_non_authoritative_statuses_do_not_link(self):
@@ -375,6 +421,8 @@ class DeathVaTimelineApiTests(TestCase):
         assert 'data-tab="va_timeline"' in content
         assert 'id="va-timeline-tab"' in content
         assert 'class="nav-link active" id="va-timeline-tab"' in content
+        assert "E_DEATH Capture &rarr; VA Capture" in content
+        assert "Date of death &rarr; E_DEATH capture" in content
         assert "css/death_va_timeline_dashboard.css" in content
         assert "js/death_va_timeline_dashboard.js" in content
 

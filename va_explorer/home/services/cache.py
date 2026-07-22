@@ -2,6 +2,7 @@ import time
 
 from django.core.cache import cache
 
+from va_explorer.dashboard_cutoff import DASHBOARD_CHART_START_ISO
 from va_explorer.home.cache_utils import (
     HOME_DASHBOARD_PREWARM_CHART_KEY,
     HOME_DASHBOARD_PREWARM_KEY,
@@ -85,14 +86,16 @@ def get_cached_nov_payload(request):
         request, preset, location_level, location_value
     ):
         prewarm_payload = cache.get(HOME_DASHBOARD_PREWARM_KEY)
-        if prewarm_payload is not None and _kpis_have_last_30_days(
-            prewarm_payload.get("kpis", {})
+        if (
+            prewarm_payload is not None
+            and _kpis_have_last_30_days(prewarm_payload.get("kpis", {}))
+            and prewarm_payload.get("chart_cutoff") == DASHBOARD_CHART_START_ISO
         ):
             return prewarm_payload
 
     extra = {
         "component": "nov_bundle",
-        "schema_version": 4,
+        "schema_version": 5,
         "location_level": location_level,
         "location_value": location_value,
     }
@@ -148,15 +151,19 @@ def get_cached_home_chart_bundle(request):
         request, preset, location_level, location_value
     ):
         prewarm_payload = cache.get(HOME_DASHBOARD_PREWARM_CHART_KEY)
-        if prewarm_payload is not None:
+        if (
+            prewarm_payload is not None
+            and prewarm_payload.get("chart_cutoff") == DASHBOARD_CHART_START_ISO
+        ):
             return prewarm_payload
 
-    extra = {"component": "overview_chart", "schema_version": 3}
+    extra = {"component": "overview_chart", "schema_version": 4}
     cache_key = fastpath_cache_key("home_dashboard_chart_bundle", request, extra=extra)
 
     def build():
         nov_payload = get_cached_nov_payload(request)
         return {
+            "chart_cutoff": nov_payload.get("chart_cutoff"),
             "labels": nov_payload.get("chart_labels", []),
             "pregnancy": nov_payload.get("pregnancy_values", []),
             "pregnancy_outcome": nov_payload.get("pregnancy_outcome_values", []),
@@ -173,7 +180,7 @@ def get_cached_trends_bundle(request, *, include_va=True, include_model=True):
         request,
         extra={
             "component": "trends",
-            "schema_version": 4,
+            "schema_version": 5,
             "include_va": int(include_va),
             "include_model": int(include_model),
         },

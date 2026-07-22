@@ -35,6 +35,11 @@ from pandas import to_datetime as to_dt
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from va_explorer.dashboard_cutoff import (
+    DASHBOARD_CHART_START_DATE,
+    DASHBOARD_CHART_START_ISO,
+    clamp_chart_start_iso,
+)
 from va_explorer.home.services.common import (
     coverage_band,
     parse_filter_range,
@@ -76,8 +81,8 @@ logger = logging.getLogger(__name__)
 GPS_DEFAULT_LIMIT = 2000
 GPS_CACHE_TIMEOUT = 3600  # 1 hour
 
-TREND_SUBMISSION_HARD_START_DATE = "2024-01-01"
-PREGNANCY_TREND_HARD_START_DATE = "2024-09-01"
+TREND_SUBMISSION_HARD_START_DATE = DASHBOARD_CHART_START_ISO
+PREGNANCY_TREND_HARD_START_DATE = DASHBOARD_CHART_START_ISO
 
 
 def get_pregnancy_outcomes_filter_state(request):
@@ -282,6 +287,55 @@ def _build_pregnancy_outcomes_trend_series(filtered_qs):
         date_field="PO_41",
         hard_start_date=TREND_SUBMISSION_HARD_START_DATE,
     )
+
+
+def _chart_text_date_filter(qs, *date_fields):
+    cutoff_q = Q()
+    for field_name in date_fields:
+        cutoff_q |= Q(**{f"{field_name}__regex": r"^\d{4}-\d{2}-\d{2}"}) & Q(
+            **{f"{field_name}__gte": DASHBOARD_CHART_START_ISO}
+        )
+    return qs.filter(cutoff_q)
+
+
+def _blankish_text_date_q(field_name):
+    return (
+        Q(**{f"{field_name}__isnull": True})
+        | Q(**{field_name: ""})
+        | Q(**{f"{field_name}__iexact": "nan"})
+        | Q(**{f"{field_name}__iexact": "nat"})
+        | Q(**{f"{field_name}__iexact": "none"})
+        | Q(**{f"{field_name}__iexact": "null"})
+    )
+
+
+def _pregnancy_outcomes_chart_qs(qs):
+    fallback_q = _blankish_text_date_q("PO_41") & (
+        (
+            Q(submissiondate__regex=r"^\d{4}-\d{2}-\d{2}")
+            & Q(submissiondate__gte=DASHBOARD_CHART_START_ISO)
+        )
+        | (
+            Q(today__regex=r"^\d{4}-\d{2}-\d{2}")
+            & Q(today__gte=DASHBOARD_CHART_START_ISO)
+        )
+        | (
+            Q(start__regex=r"^\d{4}-\d{2}-\d{2}")
+            & Q(start__gte=DASHBOARD_CHART_START_ISO)
+        )
+    )
+    event_q = Q(PO_41__regex=r"^\d{4}-\d{2}-\d{2}") & Q(
+        PO_41__gte=DASHBOARD_CHART_START_ISO
+    )
+    return qs.filter(event_q | fallback_q)
+
+
+def _pregnancy_chart_qs(qs):
+    return _chart_text_date_filter(qs, "PE_09A")
+
+
+def _deaths_chart_qs(qs):
+    return _chart_text_date_filter(qs, "DE_06")
 
 
 def _normalize_birth_outcome_category(value):
@@ -2760,6 +2814,7 @@ class BaselineCensusChartDataView(CustomAuthMixin, PermissionRequiredMixin, View
         start_iso, end_iso = BaselineCensusProvinceTableComponent._iso_bounds(
             start_dt, end_dt
         )
+        start_iso = clamp_chart_start_iso(start_iso)
 
         excluded_provinces = get_dashboard_excluded_census_provinces(
             include_current=bc_current
@@ -3455,6 +3510,7 @@ class SocialMobilizationChartDataView(CustomAuthMixin, PermissionRequiredMixin, 
         start_iso, end_iso = SocialMobilizationComponentView._scoped_date_bounds(
             request
         )
+        start_iso = clamp_chart_start_iso(start_iso)
 
         results, child_level = aggregate_social_mobilization_by_level(
             request,
@@ -3627,14 +3683,16 @@ class PregnancyOutcomesSummaryAPIView(_PregnancyOutcomesBaseAPIView):
 class PregnancyOutcomesTrendAPIView(_PregnancyOutcomesBaseAPIView):
     def get(self, request, format=None):
         with timed_block("outcomes.api.trend_series", request=request):
-            labels, counts = _build_pregnancy_outcomes_trend_series(self._qs(request))
+            labels, counts = _build_pregnancy_outcomes_trend_series(
+                _pregnancy_outcomes_chart_qs(self._qs(request))
+            )
         return Response({"labels": labels, "data": counts})
 
 
 class PregnancyOutcomesBirthOutcomesAPIView(_PregnancyOutcomesBaseAPIView):
     def get(self, request, format=None):
         labels, count_data, percentage_data = _build_birth_outcomes_bar_data(
-            self._qs(request)
+            _pregnancy_outcomes_chart_qs(self._qs(request))
         )
         return Response(
             {
@@ -3647,13 +3705,17 @@ class PregnancyOutcomesBirthOutcomesAPIView(_PregnancyOutcomesBaseAPIView):
 
 class PregnancyOutcomesGestationalAgeAPIView(_PregnancyOutcomesBaseAPIView):
     def get(self, request, format=None):
-        labels, counts = _build_gestational_age_distribution(self._qs(request))
+        labels, counts = _build_gestational_age_distribution(
+            _pregnancy_outcomes_chart_qs(self._qs(request))
+        )
         return Response({"labels": labels, "data": counts})
 
 
 class PregnancyOutcomesAncVisitsAPIView(_PregnancyOutcomesBaseAPIView):
     def get(self, request, format=None):
-        labels, counts = _build_anc_visits_distribution(self._qs(request))
+        labels, counts = _build_anc_visits_distribution(
+            _pregnancy_outcomes_chart_qs(self._qs(request))
+        )
         return Response({"labels": labels, "data": counts})
 
 
@@ -3671,7 +3733,7 @@ class PregnancyOutcomesKpisAPIView(_PregnancyOutcomesBaseAPIView):
 class PregnancyOutcomesPlaceOfBirthAPIView(_PregnancyOutcomesBaseAPIView):
     def get(self, request, format=None):
         labels, count_data, percentage_data = _build_place_of_birth_distribution(
-            self._qs(request)
+            _pregnancy_outcomes_chart_qs(self._qs(request))
         )
         return Response(
             {
@@ -3688,7 +3750,7 @@ class PregnancyOutcomesMapAPIView(_PregnancyOutcomesBaseAPIView):
 
     def get(self, request, format=None):
         filter_state = get_pregnancy_outcomes_filter_state(request)
-        filtered_qs = self._qs(request)
+        filtered_qs = _pregnancy_outcomes_chart_qs(self._qs(request))
         with timed_block("outcomes.api.map_hierarchy", request=request):
             hierarchy = _build_map_hierarchy_counts(filtered_qs)
         province_counts = [
@@ -3749,11 +3811,12 @@ class PregnancyDashboardView(OutcomesDashboardView):
 
         filtered_qs = build_pregnancy_qs(request)
         summary_cards = _build_pregnancy_summary_cards(filtered_qs)
-        trend_labels, trend_counts = _build_pregnancy_trend_series(filtered_qs)
+        chart_qs = _pregnancy_chart_qs(filtered_qs)
+        trend_labels, trend_counts = _build_pregnancy_trend_series(chart_qs)
         gest_age_labels, gest_age_counts = _build_pregnancy_ga_detection_distribution(
-            filtered_qs
+            chart_qs
         )
-        map_province_counts, map_district_counts = _build_map_counts(filtered_qs)
+        map_province_counts, map_district_counts = _build_map_counts(chart_qs)
         mean_age, _hiv_positive_pct = _build_pregnancy_kpis(filtered_qs)
 
         context.update(
@@ -3787,21 +3850,27 @@ class PregnancySummaryAPIView(PregnancyOutcomesSummaryAPIView):
 
 class PregnancyTrendAPIView(PregnancyOutcomesTrendAPIView):
     def get(self, request, format=None):
-        labels, counts = _build_pregnancy_trend_series(build_pregnancy_qs(request))
+        labels, counts = _build_pregnancy_trend_series(
+            _pregnancy_chart_qs(build_pregnancy_qs(request))
+        )
         return Response({"labels": labels, "data": counts})
 
 
 class PregnancyGestationalAgeDetectionAPIView(PregnancyOutcomesGestationalAgeAPIView):
     def get(self, request, format=None):
         labels, counts = _build_pregnancy_ga_detection_distribution(
-            build_pregnancy_qs(request)
+            _pregnancy_chart_qs(build_pregnancy_qs(request))
         )
         return Response({"labels": labels, "data": counts})
 
 
 class PregnancyGestationalAgeAncAPIView(PregnancyOutcomesAncVisitsAPIView):
     def get(self, request, format=None):
-        return Response(_build_pregnancy_ga_anc_points(build_pregnancy_qs(request)))
+        return Response(
+            _build_pregnancy_ga_anc_points(
+                _pregnancy_chart_qs(build_pregnancy_qs(request))
+            )
+        )
 
 
 class PregnancyMapAPIView(PregnancyOutcomesMapAPIView):
@@ -3810,7 +3879,7 @@ class PregnancyMapAPIView(PregnancyOutcomesMapAPIView):
 
     def get(self, request, format=None):
         filter_state = get_pregnancy_outcomes_filter_state(request)
-        filtered_qs = build_pregnancy_qs(request)
+        filtered_qs = _pregnancy_chart_qs(build_pregnancy_qs(request))
         hierarchy = _build_map_hierarchy_counts(filtered_qs)
         province_counts = [
             {"name": row.get("province_name") or "", "count": row.get("count") or 0}
@@ -3912,7 +3981,9 @@ class DeathsTrendAPIView(APIView):
         if invalid_tab_response is not None:
             return invalid_tab_response
         with timed_block("outcomes.deaths.trend_series", request=request):
-            labels, counts = _build_deaths_trend_series(build_deaths_qs(request))
+            labels, counts = _build_deaths_trend_series(
+                _deaths_chart_qs(build_deaths_qs(request))
+            )
         return Response({"labels": labels, "data": counts})
 
 
@@ -3939,7 +4010,7 @@ class DeathsMapAPIView(APIView):
             map_view = "Province"
         if map_view == "Ea":
             map_view = "EA"
-        filtered_qs = build_deaths_qs(request)
+        filtered_qs = _deaths_chart_qs(build_deaths_qs(request))
         with timed_block("outcomes.deaths.map_hierarchy", request=request):
             hierarchy = _build_map_hierarchy_counts(filtered_qs)
         province_counts = [
@@ -4032,7 +4103,9 @@ class DeathsAgeSexAPIView(APIView):
         invalid_tab_response = _validate_deaths_tab(request)
         if invalid_tab_response is not None:
             return invalid_tab_response
-        return Response(_build_deaths_age_sex_profile(build_deaths_qs(request)))
+        return Response(
+            _build_deaths_age_sex_profile(_deaths_chart_qs(build_deaths_qs(request)))
+        )
 
 
 def _build_deaths_timeliness_distribution(filtered_qs):
@@ -4044,6 +4117,8 @@ def _build_deaths_timeliness_distribution(filtered_qs):
         "DE_06", "submissiondate", "today", "start"
     ).iterator():
         dod_dt = _parse_outcome_datetime(row.get("DE_06"), end_of_day=True)
+        if dod_dt and dod_dt.date() < DASHBOARD_CHART_START_DATE:
+            continue
         report_dt = (
             _parse_outcome_datetime(row.get("submissiondate"), end_of_day=True)
             or _parse_outcome_datetime(row.get("today"), end_of_day=True)
@@ -4083,10 +4158,15 @@ class DeathsTimelinessAPIView(APIView):
         invalid_tab_response = _validate_deaths_tab(request)
         if invalid_tab_response is not None:
             return invalid_tab_response
-        return Response(_build_deaths_timeliness_distribution(build_deaths_qs(request)))
+        return Response(
+            _build_deaths_timeliness_distribution(
+                _deaths_chart_qs(build_deaths_qs(request))
+            )
+        )
 
 
 _TIMELINE_BUCKETS = ["0-1", "2-3", "4-7", "8-14", "15-30", "31-60", ">60"]
+_TIMELINE_SIGNED_BUCKETS = ["<0", *_TIMELINE_BUCKETS]
 _TIMELINE_THRESHOLDS = [0, 1, 3, 7, 14, 30, 60, 90]
 _MAX_PLAUSIBLE_DELAY_DAYS = 1826  # 5 years
 
@@ -4105,6 +4185,12 @@ def _timeline_bucket_label(delay):
     if delay <= 60:
         return "31-60"
     return ">60"
+
+
+def _timeline_signed_bucket_label(delay):
+    if delay < 0:
+        return "<0"
+    return _timeline_bucket_label(delay)
 
 
 def _collect_va_submissions(filtered_qs):
@@ -4159,6 +4245,7 @@ def _build_death_va_timeline(filtered_qs):
     }
     capture_hist = dict.fromkeys(_TIMELINE_BUCKETS, 0)
     va_hist = dict.fromkeys(_TIMELINE_BUCKETS, 0)
+    capture_to_va_hist = dict.fromkeys(_TIMELINE_SIGNED_BUCKETS, 0)
     capture_delays = []
     va_delays = []
     capture_to_va_delays = []
@@ -4183,8 +4270,13 @@ def _build_death_va_timeline(filtered_qs):
         if dod_dt is None:
             excluded["unparseable_death_date"] += 1
             continue
+        if dod_dt.date() < DASHBOARD_CHART_START_DATE:
+            continue
         dated_deaths += 1
-        month = monthly.setdefault(dod_dt.strftime("%Y-%m"), {"capture": [], "va": []})
+        month = monthly.setdefault(
+            dod_dt.strftime("%Y-%m"),
+            {"capture": [], "va": [], "capture_to_va": []},
+        )
 
         capture_dt = (
             _parse_outcome_datetime(row.get("submissiondate"), end_of_day=True)
@@ -4211,6 +4303,10 @@ def _build_death_va_timeline(filtered_qs):
                 capture_to_va = (va_dt.date() - capture_dt.date()).days
                 if abs(capture_to_va) <= _MAX_PLAUSIBLE_DELAY_DAYS:
                     capture_to_va_delays.append(capture_to_va)
+                    capture_to_va_hist[
+                        _timeline_signed_bucket_label(capture_to_va)
+                    ] += 1
+                    month["capture_to_va"].append(capture_to_va)
 
     def _median_or_none(values):
         return round(float(median(values)), 1) if values else None
@@ -4270,9 +4366,16 @@ def _build_death_va_timeline(filtered_qs):
             "matches_with_contradictions": contradiction_count,
         },
         "delay_histogram": {
-            "labels": _TIMELINE_BUCKETS,
-            "death_to_capture": [capture_hist[label] for label in _TIMELINE_BUCKETS],
-            "death_to_va": [va_hist[label] for label in _TIMELINE_BUCKETS],
+            "labels": _TIMELINE_SIGNED_BUCKETS,
+            "death_to_capture": [
+                capture_hist.get(label, 0) for label in _TIMELINE_SIGNED_BUCKETS
+            ],
+            "death_to_va": [
+                va_hist.get(label, 0) for label in _TIMELINE_SIGNED_BUCKETS
+            ],
+            "capture_to_va": [
+                capture_to_va_hist[label] for label in _TIMELINE_SIGNED_BUCKETS
+            ],
         },
         "cumulative": {
             "thresholds": _TIMELINE_THRESHOLDS,
@@ -4288,6 +4391,10 @@ def _build_death_va_timeline(filtered_qs):
             "va_delay": [
                 _median_or_none(monthly[label]["va"]) for label in monthly_labels
             ],
+            "capture_to_va_delay": [
+                _median_or_none(monthly[label]["capture_to_va"])
+                for label in monthly_labels
+            ],
         },
         "excluded": excluded,
     }
@@ -4301,7 +4408,9 @@ class DeathVATimelineAPIView(APIView):
                 {"detail": "Invalid tab for death-va-timeline endpoint."}, status=400
             )
         with timed_block("outcomes.deaths.va_timeline", request=request):
-            payload = _build_death_va_timeline(build_deaths_qs(request))
+            payload = _build_death_va_timeline(
+                _deaths_chart_qs(build_deaths_qs(request))
+            )
         return Response(payload)
 
 
@@ -4351,7 +4460,9 @@ class DeathsPlaceAPIView(APIView):
         invalid_tab_response = _validate_deaths_tab(request)
         if invalid_tab_response is not None:
             return invalid_tab_response
-        return Response(_build_deaths_place_distribution(build_deaths_qs(request)))
+        return Response(
+            _build_deaths_place_distribution(_deaths_chart_qs(build_deaths_qs(request)))
+        )
 
 
 def _build_deaths_top_causes(filtered_qs):
@@ -4460,7 +4571,9 @@ class DeathsTopCausesAPIView(APIView):
         invalid_tab_response = _validate_deaths_tab(request)
         if invalid_tab_response is not None:
             return invalid_tab_response
-        return Response(_build_deaths_top_causes(build_deaths_qs(request)))
+        return Response(
+            _build_deaths_top_causes(_deaths_chart_qs(build_deaths_qs(request)))
+        )
 
 
 class DeathsCauseTrendAPIView(APIView):
@@ -4468,7 +4581,9 @@ class DeathsCauseTrendAPIView(APIView):
         invalid_tab_response = _validate_deaths_tab(request)
         if invalid_tab_response is not None:
             return invalid_tab_response
-        return Response(_build_deaths_cause_trend(build_deaths_qs(request)))
+        return Response(
+            _build_deaths_cause_trend(_deaths_chart_qs(build_deaths_qs(request)))
+        )
 
 
 def _build_deaths_signals(request, *, threshold_pct=20.0, baseline_min=5):

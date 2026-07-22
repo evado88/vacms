@@ -8,6 +8,7 @@ from django.utils import timezone
 from va_explorer.tests.factories import GroupFactory, LocationFactory, UserFactory
 from va_explorer.va_analytics.views import (
     _build_pregnancy_outcomes_trend_series,
+    _pregnancy_outcomes_chart_qs,
     build_pregnancy_outcomes_qs,
     get_pregnancy_outcomes_filter_state,
 )
@@ -115,6 +116,46 @@ class TestPregnancyOutcomesQuerysetBuilder:
 
         assert labels == ["Mar 2026"]
         assert counts == [1]
+
+    def test_trend_hard_starts_at_january_2025(self):
+        self._create_po(
+            key="po-legacy",
+            PO_41="2024-12-20",
+            submissiondate="2024-12-21",
+        )
+        self._create_po(
+            key="po-start",
+            PO_41="2025-01-05",
+            submissiondate="2025-01-06",
+        )
+
+        labels, counts = _build_pregnancy_outcomes_trend_series(
+            PregnancyOutcome.objects.all()
+        )
+
+        assert "Jan 2025" in labels
+        assert "Dec 2024" not in labels
+        assert sum(counts) == 1
+
+    def test_chart_queryset_excludes_old_event_date_even_with_newer_submission(self):
+        self._create_po(
+            key="po-old-event",
+            PO_41="2024-12-31",
+            submissiondate="2025-01-02",
+        )
+        self._create_po(
+            key="po-new-event",
+            PO_41="2025-01-01",
+            submissiondate="2025-01-02",
+        )
+
+        keys = set(
+            _pregnancy_outcomes_chart_qs(PregnancyOutcome.objects.all()).values_list(
+                "key", flat=True
+            )
+        )
+
+        assert keys == {"po-new-event"}
 
 
 class TestPregnancyOutcomesApiSchemas:

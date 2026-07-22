@@ -13,13 +13,16 @@ eastern_tz = gettz("US/Eastern")
 
 @time_machine.travel(dt.datetime(2026, 3, 5, 9, 0, tzinfo=eastern_tz))
 def test_build_trend_for_queryset_is_cumulative_and_non_decreasing():
+    Pregnancy.objects.create(key="p0", submissiondate="2024-12-31")
     Pregnancy.objects.create(key="p1", submissiondate="2025-05-10")
     Pregnancy.objects.create(key="p2", submissiondate="2025-10-10")
     Pregnancy.objects.create(key="p3", submissiondate="2026-03-01")
 
     payload = build_trend_for_queryset(Pregnancy.objects.all())
+    x = payload["graphs"]["recorded"]["x"]
     y = payload["graphs"]["recorded"]["y"]
 
     assert len(y) == 12
+    assert all(not label.endswith("2024") for label in x)
     assert y[-1] == 3.0
     assert y == sorted(y)

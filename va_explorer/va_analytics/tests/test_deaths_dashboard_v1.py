@@ -5,6 +5,7 @@ from django.urls import reverse
 
 from va_explorer.tests.factories import LocationFactory
 from va_explorer.va_analytics.views import (
+    _build_deaths_age_sex_profile,
     _build_deaths_summary_cards,
     _build_deaths_trend_series,
     build_deaths_qs,
@@ -151,6 +152,23 @@ class DeathsTrendDataTests(TestCase):
         assert labels == ["Mar 2026"]
         assert counts == [1]
 
+    def test_dob_before_cutoff_still_contributes_to_age_calculations(self):
+        Death.objects.bulk_create(
+            [
+                Death(
+                    key="death-age-cutoff",
+                    DE_04="2024-02-01",
+                    DE_05="Male",
+                    DE_06="2025-02-01",
+                    submissiondate="2025-02-02",
+                )
+            ]
+        )
+
+        payload = _build_deaths_age_sex_profile(Death.objects.all())
+
+        assert payload["male"][1] == 1
+
 
 class DeathsApiSchemaTests(TestCase):
     def setUp(self):
@@ -273,32 +291,32 @@ class DeathsApiSchemaTests(TestCase):
         )
         assert response.status_code == 400
 
-    def test_mortality_trend_hard_starts_at_january_2024(self):
+    def test_mortality_trend_hard_starts_at_january_2025(self):
         Death.objects.bulk_create(
             [
                 Death(
                     key="death-trend-legacy",
                     DE_04="2020-01-01",
                     DE_05="Female",
-                    DE_06="2023-12-15",
+                    DE_06="2024-12-15",
                     DE_07="home",
                     province="Lusaka",
                     district="Lusaka",
-                    submissiondate="2023-12-16",
-                    today="2023-12-16",
-                    start="2023-12-16",
+                    submissiondate="2024-12-16",
+                    today="2024-12-16",
+                    start="2024-12-16",
                 ),
                 Death(
-                    key="death-trend-2024",
+                    key="death-trend-2025",
                     DE_04="2020-01-01",
                     DE_05="Male",
-                    DE_06="2024-01-10",
+                    DE_06="2025-01-10",
                     DE_07="home",
                     province="Lusaka",
                     district="Lusaka",
-                    submissiondate="2024-01-11",
-                    today="2024-01-11",
-                    start="2024-01-11",
+                    submissiondate="2025-01-11",
+                    today="2025-01-11",
+                    start="2025-01-11",
                 ),
             ]
         )
@@ -307,8 +325,52 @@ class DeathsApiSchemaTests(TestCase):
             reverse("va_analytics:outcomes-deaths-trend-api")
         ).json()
 
-        assert "Jan 2024" in trend["labels"]
-        assert "Dec 2023" not in trend["labels"]
+        assert "Jan 2025" in trend["labels"]
+        assert "Dec 2024" not in trend["labels"]
+
+    def test_custom_range_ending_before_chart_cutoff_returns_empty_trend(self):
+        trend = self.client.get(
+            reverse("va_analytics:outcomes-deaths-trend-api"),
+            {
+                "time_preset": "custom",
+                "start_datetime": "2024-01-01T00:00",
+                "end_datetime": "2024-12-31T23:59",
+            },
+        ).json()
+
+        assert trend == {"labels": [], "data": []}
+
+    def test_custom_range_spanning_cutoff_returns_only_january_2025_onward(self):
+        Death.objects.bulk_create(
+            [
+                Death(
+                    key="death-span-2024",
+                    DE_06="2024-12-31",
+                    province="Lusaka",
+                    district="Lusaka",
+                    submissiondate="2024-12-31",
+                ),
+                Death(
+                    key="death-span-2025",
+                    DE_06="2025-01-01",
+                    province="Lusaka",
+                    district="Lusaka",
+                    submissiondate="2025-01-01",
+                ),
+            ]
+        )
+
+        trend = self.client.get(
+            reverse("va_analytics:outcomes-deaths-trend-api"),
+            {
+                "time_preset": "custom",
+                "start_datetime": "2024-12-01T00:00",
+                "end_datetime": "2025-01-31T23:59",
+            },
+        ).json()
+
+        assert trend["labels"] == ["Jan 2025"]
+        assert trend["data"] == [1]
 
 
 class OutcomesTabsIsolationTests(TestCase):

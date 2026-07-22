@@ -8,6 +8,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_date as django_parse_date
 from django.utils.dateparse import parse_datetime as django_parse_datetime
 
+from va_explorer.dashboard_cutoff import clamp_chart_start_dt
 from va_explorer.home.services.common import (
     apply_text_geography_filter,
     build_date_expr,
@@ -322,11 +323,28 @@ def _latest_va_geo_by_identifier(queryset, start_dt, end_dt):
     return latest
 
 
+def _filter_qs_by_date_window(queryset, date_fields, start_dt, end_dt):
+    window_q = Q()
+    if start_dt is not None:
+        start_token = start_dt.date().isoformat()
+        start_q = Q()
+        for field_name in date_fields:
+            start_q |= Q(**{f"{field_name}__gte": start_token})
+        window_q &= start_q
+    if end_dt is not None:
+        end_token = end_dt.isoformat()
+        end_q = Q()
+        for field_name in date_fields:
+            end_q |= Q(**{f"{field_name}__lte": end_token})
+        window_q &= end_q
+    return queryset.filter(window_q) if window_q else queryset
+
+
 def build_home_combined_map_payload(request):
     filters = _parse_home_map_filters(request)
     geography_level = filters["geography_level"]
     geography_value = filters["geography_value"]
-    start_dt = filters["start_dt"]
+    start_dt = clamp_chart_start_dt(filters["start_dt"])
     end_dt = filters["end_dt"]
 
     with timed_block("home.map.qs.build", request=request):
@@ -503,14 +521,40 @@ def build_home_combined_map_payload(request):
         "map_ea_sums": ea_sums,
     }
 
+    gps_pregnancies_qs = pregnancies_qs
+    gps_outcomes_qs = outcomes_qs
+    gps_deaths_qs = deaths_qs
+    gps_vas_qs = vas_qs
+    gps_vasa_qs = vasa_qs
+    if end_dt is not None and end_dt < start_dt:
+        gps_pregnancies_qs = pregnancies_qs.none()
+        gps_outcomes_qs = outcomes_qs.none()
+        gps_deaths_qs = deaths_qs.none()
+        gps_vas_qs = vas_qs.none()
+        gps_vasa_qs = vasa_qs.none()
+    else:
+        gps_pregnancies_qs = _filter_qs_by_date_window(
+            pregnancies_qs, CORE_EVENT_DATE_FIELDS, start_dt, end_dt
+        )
+        gps_outcomes_qs = _filter_qs_by_date_window(
+            outcomes_qs, CORE_EVENT_DATE_FIELDS, start_dt, end_dt
+        )
+        gps_deaths_qs = _filter_qs_by_date_window(
+            deaths_qs, CORE_EVENT_DATE_FIELDS, start_dt, end_dt
+        )
+        gps_vas_qs = _filter_qs_by_date_window(vas_qs, VA_DATE_FIELDS, start_dt, end_dt)
+        gps_vasa_qs = _filter_qs_by_date_window(
+            vasa_qs, VA_DATE_FIELDS, start_dt, end_dt
+        )
+
     _attach_home_gps_payload(
         payload,
         request,
-        pregnancies_qs=pregnancies_qs,
-        outcomes_qs=outcomes_qs,
-        deaths_qs=deaths_qs,
-        vas_qs=vas_qs,
-        vasa_qs=vasa_qs,
+        pregnancies_qs=gps_pregnancies_qs,
+        outcomes_qs=gps_outcomes_qs,
+        deaths_qs=gps_deaths_qs,
+        vas_qs=gps_vas_qs,
+        vasa_qs=gps_vasa_qs,
     )
     return payload
 

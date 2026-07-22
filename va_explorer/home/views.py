@@ -27,6 +27,10 @@ from django.views.generic import TemplateView, View
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 from zoneinfo import ZoneInfo
 
+from va_explorer.dashboard_cutoff import (
+    DASHBOARD_CHART_START_DATE,
+    DASHBOARD_CHART_START_ISO,
+)
 from va_explorer.home.services.cache import (
     HOME_FASTPATH_CACHE_TTL_SECONDS,
     HOME_FASTPATH_TABLE_CACHE_TTL_SECONDS,
@@ -138,7 +142,7 @@ class HomeOverviewMapData(CustomAuthMixin, View):
             request,
             extra={
                 "component": "overview_map",
-                "schema_version": 4,
+                "schema_version": 5,
                 "time_preset": request.GET.get("time_preset", ""),
                 "start_datetime": request.GET.get("start_datetime", ""),
                 "end_datetime": request.GET.get("end_datetime", ""),
@@ -409,6 +413,7 @@ def _build_rumor_trend_data(qs):
         .exclude(today__iexact="nan")
         .exclude(today__iexact="none")
         .filter(today__regex=r"^\d{4}-\d{2}-\d{2}")
+        .filter(today__gte=DASHBOARD_CHART_START_ISO)
         .annotate(month_key=Substr("today", 1, 7))
         .values("month_key")
         .annotate(count=Count("pk"))
@@ -443,6 +448,8 @@ def _build_top_rumors_trend_data(qs, *, top_n=5):
             continue
         event_date = _parse_rumor_date(_rumor_date_str(row))
         if not event_date:
+            continue
+        if event_date < DASHBOARD_CHART_START_DATE:
             continue
         month_key = event_date.strftime("%Y-%m")
         totals[rumor] += 1
@@ -1109,6 +1116,8 @@ def _build_rumor_sentiment_data(qs, *, filter_state=None):
         parsed = _parse_rumor_date(_rumor_date_str(row))
         if parsed is None:
             continue
+        if parsed < DASHBOARD_CHART_START_DATE:
+            continue
 
         ru_num = _rumor_ru_num_int(row.get("ru_num"))
         sentiment, is_srs_domain = _rumor_sentiment_score_detail(desci)
@@ -1167,7 +1176,9 @@ def _build_rumor_sentiment_data(qs, *, filter_state=None):
         _csa_rumor_filter_window(filter_state) if filter_state else (None, None)
     )
     if start_dt:
-        range_payload["start_month"] = start_dt.strftime("%Y-%m")
+        range_payload["start_month"] = max(
+            start_dt.date(), DASHBOARD_CHART_START_DATE
+        ).strftime("%Y-%m")
     if end_dt:
         range_payload["end_month"] = end_dt.strftime("%Y-%m")
     if not range_payload["start_month"] and points:
