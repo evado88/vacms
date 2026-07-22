@@ -711,6 +711,7 @@ def test_linkage_review_is_available_to_seeded_groups(group_name):
     assert response.status_code == 200
     assert b'data-tooltip="Death-VA Linkage"' in response.content
     assert b'href="/va_data_management/linkage-review"' in response.content
+    assert b'href="/admin-panel/"' in response.content
 
 
 def test_data_viewer_can_access_default_data_views():

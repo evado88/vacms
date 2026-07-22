@@ -10,6 +10,8 @@ from va_explorer.va_admin.views import (
     admin_panel_validate_file_view,
     admin_panel_view,
     baseline_census_config_view,
+    linkage_config_view,
+    linkage_run_view,
     user_activity_log_download_view,
     user_activity_log_view,
 )
@@ -18,6 +20,8 @@ app_name = "va_admin"
 
 urlpatterns = [
     path("", view=admin_panel_view, name="index"),
+    path("linkage-config/", view=linkage_config_view, name="linkage-config"),
+    path("linkage-run/", view=linkage_run_view, name="linkage-run"),
     path("run/", view=admin_panel_run_view, name="run"),
     path("upload-file/", view=admin_panel_upload_file_view, name="upload-file"),
     path("validate-file/", view=admin_panel_validate_file_view, name="validate-file"),

@@ -9,6 +9,7 @@ from va_explorer.va_data_management.models import (
     Death,
     Household,
     LinkageReview,
+    MatchingConfig,
     Pregnancy,
     PregnancyOutcome,
     VerbalAutopsy,
@@ -33,6 +34,11 @@ GROUPS_PERMISSIONS = {
         Event: ["view_event", "change_event"],
         DataCleanup: ["view_datacleanup", "download", "bulk_download"],
         LinkageReview: ["view_linkagereview", "review_linkage"],
+        MatchingConfig: [
+            "add_matchingconfig",
+            "change_matchingconfig",
+            "view_matchingconfig",
+        ],
         AdminCommandRun: ["can_run_admin_commands"],
     },
     "Data Managers": {
@@ -49,6 +55,11 @@ GROUPS_PERMISSIONS = {
         Event: ["view_event", "change_event"],
         DataCleanup: ["view_datacleanup", "download", "bulk_download"],
         LinkageReview: ["view_linkagereview", "review_linkage"],
+        MatchingConfig: [
+            "add_matchingconfig",
+            "change_matchingconfig",
+            "view_matchingconfig",
+        ],
     },
     "Data Viewers": {
         Dashboard: ["view_dashboard"],

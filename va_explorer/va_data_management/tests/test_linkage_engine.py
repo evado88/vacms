@@ -21,9 +21,11 @@ from va_explorer.va_data_management.utils.matching import (
     resolve_config,
     run_matching,
 )
+from va_explorer.va_data_management.utils.matching import service as matching_service
 from va_explorer.va_data_management.utils.matching.candidate_selection import (
     union_block_candidates,
 )
+from va_explorer.va_data_management.utils.matching.results import CandidateScore
 from va_explorer.va_data_management.utils.matching.scoring import score_candidate
 
 from .test_va_death_matching import _make_death, _make_va, _make_vasa
@@ -323,6 +325,81 @@ def test_community_exact_composite_requires_nonempty_districts():
     assert result.method != MatchMethod.EXACT_COMPOSITE
 
 
+def test_dod_block_window_uses_configured_days():
+    death = _make_death(
+        **BLANK_GEO,
+        DE_03="Alice Phiri",
+        DE_06="2024-01-20",
+        key="window",
+    )
+    va = _make_va(
+        **BLANK_GEO,
+        Id10017="Xavier",
+        Id10018="Zulu",
+        Id10023="2024-01-10",
+    )
+    profile = build_va_profile(va)
+    index = DeathIndex.build()
+    thresholds = resolve_config()["thresholds"]
+
+    narrow, _ = union_block_candidates(
+        profile,
+        index,
+        thresholds={**thresholds, "dod_block_days": 5},
+    )
+    wide, _ = union_block_candidates(
+        profile,
+        index,
+        thresholds={**thresholds, "dod_block_days": 10},
+    )
+
+    assert death.pk not in {candidate.pk for candidate, _ in narrow}
+    assert death.pk in {candidate.pk for candidate, _ in wide}
+
+
+def test_candidate_caps_use_configured_per_block_and_total_limits():
+    for offset, name in enumerate(("Alice Phiri", "Brian Tembo", "Carol Zulu"), 1):
+        _make_death(
+            **BLANK_GEO,
+            DE_03=name,
+            DE_06=f"2024-01-{10 + offset:02d}",
+            key=f"cap-{offset}",
+        )
+    va = _make_va(
+        **BLANK_GEO,
+        Id10017="Xavier",
+        Id10018="Mwila",
+        Id10023="2024-01-10",
+    )
+    profile = build_va_profile(va)
+    index = DeathIndex.build()
+    thresholds = resolve_config()["thresholds"]
+
+    per_block_candidates, per_block_stats = union_block_candidates(
+        profile,
+        index,
+        thresholds={
+            **thresholds,
+            "max_candidates_per_block": 2,
+            "max_total_candidates": 10,
+        },
+    )
+    total_candidates, total_stats = union_block_candidates(
+        profile,
+        index,
+        thresholds={
+            **thresholds,
+            "max_candidates_per_block": 10,
+            "max_total_candidates": 1,
+        },
+    )
+
+    assert len(per_block_candidates) == 2
+    assert per_block_stats["dod_window_dropped"] == 1
+    assert len(total_candidates) == 1
+    assert total_stats["truncated"] == 2
+
+
 # --------------------------------------------------------------------------
 # Scoring bands + config overrides
 # --------------------------------------------------------------------------
@@ -338,6 +415,120 @@ def test_config_weight_override_changes_outcome():
     }
     score_crippled = score_candidate(va, death, method=None, config=crippled).score
     assert score_crippled != score_default
+
+
+def test_scoring_uses_date_age_and_contradiction_configuration():
+    death = _make_death(
+        DE_04="1980-01-01",
+        DE_06="2024-01-15",
+        district="Muchinga",
+    )
+    va = _make_va(
+        Id10021="",
+        ageInDays=str(30 * 365),
+        Id10023="2024-01-10",
+        district="Lusaka",
+    )
+    base = resolve_config()
+
+    strict = score_candidate(
+        va,
+        death,
+        method=MatchMethod.PROBABILISTIC,
+        config={
+            **base,
+            "thresholds": {
+                **base["thresholds"],
+                "tol_dod": 3,
+                "age_tol_years": 3,
+                "contradiction_penalty_fraction": 1,
+            },
+        },
+    )
+    lenient = score_candidate(
+        va,
+        death,
+        method=MatchMethod.PROBABILISTIC,
+        config={
+            **base,
+            "thresholds": {
+                **base["thresholds"],
+                "tol_dod": 7,
+                "age_tol_years": 15,
+                "contradiction_penalty_fraction": 0,
+            },
+        },
+    )
+
+    strict_by_field = {
+        comparison.field: comparison for comparison in strict.comparisons
+    }
+    lenient_by_field = {
+        comparison.field: comparison for comparison in lenient.comparisons
+    }
+    assert strict_by_field["dod"].awarded < lenient_by_field["dod"].awarded
+    assert (
+        strict_by_field["dob_or_age"].awarded < lenient_by_field["dob_or_age"].awarded
+    )
+    assert strict_by_field["district"].awarded < lenient_by_field["district"].awarded
+    assert strict.score < lenient.score
+
+
+def test_score_and_separation_thresholds_control_match_status(monkeypatch):
+    deaths = [
+        _make_death(DE_03="Alice Phiri", key="score-1"),
+        _make_death(DE_03="Brian Tembo", key="score-2"),
+    ]
+    va = _make_va(Id10017="Xavier", Id10018="Zulu")
+    index = DeathIndex.build()
+    scores = {deaths[0].pk: 95.0, deaths[1].pk: 80.0}
+
+    monkeypatch.setattr(
+        matching_service.cs,
+        "union_block_candidates",
+        lambda *args, **kwargs: ([(death, ["test"]) for death in deaths], {}),
+    )
+
+    def configured_score(va, death, *, method, **kwargs):
+        return CandidateScore(
+            death_pk=death.pk,
+            death_id=None,
+            method=method,
+            score=scores[death.pk],
+        )
+
+    monkeypatch.setattr(matching_service, "score_candidate", configured_score)
+    base = resolve_config()
+
+    def status_for(**threshold_overrides):
+        config = {
+            **base,
+            "thresholds": {**base["thresholds"], **threshold_overrides},
+        }
+        return evaluate_va(va, config=config, index=index).status
+
+    assert (
+        status_for(auto=90, review=70, min_sep=10, tie_margin=5)
+        == MatchStatus.MATCHED_AUTO
+    )
+    assert (
+        status_for(auto=90, review=70, min_sep=20, tie_margin=5)
+        == MatchStatus.AMBIGUOUS
+    )
+    assert (
+        status_for(auto=90, review=70, min_sep=10, tie_margin=20)
+        == MatchStatus.AMBIGUOUS
+    )
+
+    scores[deaths[0].pk] = 85.0
+    assert (
+        status_for(auto=90, review=80, min_sep=10, tie_margin=5)
+        == MatchStatus.PENDING_REVIEW
+    )
+    assert (
+        status_for(auto=90, review=86, min_sep=10, tie_margin=5)
+        == MatchStatus.UNMATCHED
+    )
 
 
 def test_pregnancy_flags_only_compared_for_female_adults():
