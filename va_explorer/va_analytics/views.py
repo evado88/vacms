@@ -54,11 +54,13 @@ from va_explorer.utils.mixins import CsvDownloadPermissionMixin, CustomAuthMixin
 from va_explorer.utils.profiling import timed_block
 from va_explorer.va_analytics.filters import SupervisionFilter
 from va_explorer.va_data_management.models import (
+    VASA,
     Death,
     MatchStatus,
     Pregnancy,
     PregnancyOutcome,
     VADeathMatch,
+    VerbalAutopsy,
 )
 from va_explorer.va_data_management.utils.date_parsing import (
     get_interview_dates,
@@ -4232,7 +4234,23 @@ def _collect_va_submissions(filtered_qs):
     return linked_death_ids, va_submissions
 
 
-def _build_death_va_timeline(filtered_qs):
+def _count_community_va_records(user=None):
+    """Count all canonical VA/VASA records minus canonical facility records."""
+    va_qs = restrict_queryset_to_user_locations(
+        VerbalAutopsy.objects.filter(deleted_at__isnull=True, duplicate=False), user
+    )
+    vasa_qs = restrict_queryset_to_user_locations(
+        VASA.objects.filter(deleted_at__isnull=True), user
+    )
+    total = va_qs.count() + vasa_qs.count()
+    facility = (
+        va_qs.filter(community_va__iexact="no").count()
+        + vasa_qs.filter(community_va__iexact="no").count()
+    )
+    return total - facility
+
+
+def _build_death_va_timeline(filtered_qs, *, user=None):
     death_rows = list(
         filtered_qs.values("id", "DE_06", "submissiondate", "today", "start").iterator()
     )
@@ -4324,6 +4342,7 @@ def _build_death_va_timeline(filtered_qs):
 
     total_deaths = len(death_rows)
     linked_deaths = len(linked_death_ids)
+    total_community_vas = _count_community_va_records(user)
     # Months whose every delta was excluded (e.g. implausible historical DODs)
     # would otherwise render as all-null points.
     monthly_labels = sorted(
@@ -4354,9 +4373,12 @@ def _build_death_va_timeline(filtered_qs):
     return {
         "cards": {
             "total_deaths": total_deaths,
+            "total_community_vas": total_community_vas,
             "linked_deaths": linked_deaths,
             "linked_coverage_pct": (
-                round(100.0 * linked_deaths / total_deaths, 1) if total_deaths else 0.0
+                round(100.0 * linked_deaths / total_community_vas, 1)
+                if total_community_vas
+                else 0.0
             ),
             "median_death_to_capture_days": _median_or_none(capture_delays),
             "median_death_to_va_days": _median_or_none(va_delays),
@@ -4409,7 +4431,7 @@ class DeathVATimelineAPIView(APIView):
             )
         with timed_block("outcomes.deaths.va_timeline", request=request):
             payload = _build_death_va_timeline(
-                _deaths_chart_qs(build_deaths_qs(request))
+                _deaths_chart_qs(build_deaths_qs(request)), user=request.user
             )
         return Response(payload)
 

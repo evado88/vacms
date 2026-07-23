@@ -107,10 +107,11 @@
     };
 
     setText("vaTimelineCardTotal", cards.total_deaths ?? 0);
+    setText("vaTimelineCardCommunityVas", cards.total_community_vas ?? 0);
     const coveragePct = cards.linked_coverage_pct ?? 0;
     setText(
       "vaTimelineCardCoverage",
-      `${coveragePct}% (${cards.linked_deaths ?? 0}/${cards.total_deaths ?? 0})`
+      `${coveragePct}% (${cards.linked_deaths ?? 0}/${cards.total_community_vas ?? 0})`
     );
     setText("vaTimelineCardDeathCapture", cards.median_death_to_capture_days ?? "N/A");
     setText("vaTimelineCardDeathVa", cards.median_death_to_va_days ?? "N/A");

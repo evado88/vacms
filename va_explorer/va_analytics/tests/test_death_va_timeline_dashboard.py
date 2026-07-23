@@ -49,6 +49,7 @@ class DeathVaTimelineBuilderTests(TestCase):
         }
         assert set(payload["cards"].keys()) == {
             "total_deaths",
+            "total_community_vas",
             "linked_deaths",
             "linked_coverage_pct",
             "median_death_to_capture_days",
@@ -262,10 +263,16 @@ class DeathVaTimelineBuilderTests(TestCase):
 
     def test_earliest_submission_wins_when_va_and_vasa_both_matched(self):
         death = _make_death(key="timeline-precedence", DE_06="2026-01-01")
-        va = VerbalAutopsyFactory.create(submissiondate="2026-01-20")
-        vasa = VASAFactory.create(submissiondate="2026-01-10")
+        va = VerbalAutopsyFactory.create(
+            submissiondate="2026-01-20", community_va="yes"
+        )
+        vasa = VASAFactory.create(submissiondate="2026-01-10", community_va="yes")
+        facility_va = VerbalAutopsyFactory.create(
+            submissiondate="2026-01-25", community_va="no"
+        )
         _link(death, va=va)
         _link(death, vasa=vasa)
+        _link(death, va=facility_va)
 
         payload = _build_death_va_timeline(Death.objects.all())
 
@@ -274,6 +281,7 @@ class DeathVaTimelineBuilderTests(TestCase):
         # observation despite two match rows.
         assert payload["delay_histogram"]["death_to_va"] == [0, 0, 0, 0, 1, 0, 0, 0]
         assert payload["cards"]["median_death_to_va_days"] == 9.0
+        assert payload["cards"]["total_community_vas"] == 2
 
     def test_non_authoritative_statuses_do_not_link(self):
         death = _make_death(
@@ -422,7 +430,12 @@ class DeathVaTimelineApiTests(TestCase):
         assert 'id="va-timeline-tab"' in content
         assert 'class="nav-link active" id="va-timeline-tab"' in content
         assert "E_DEATH Capture &rarr; VA Capture" in content
-        assert "Date of death &rarr; E_DEATH capture" in content
+        assert "Compares DE_06 with E_DEATH submission/today/start." not in content
+        assert (
+            "Compares E_DEATH capture with the linked VA/VASA submission date."
+            not in content
+        )
+        assert "Compares DE_06 with the linked VA/VASA submission date." not in content
         assert "css/death_va_timeline_dashboard.css" in content
         assert "js/death_va_timeline_dashboard.js" in content
 
