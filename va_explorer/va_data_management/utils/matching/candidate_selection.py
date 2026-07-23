@@ -1,16 +1,38 @@
-"""Candidate Death selection (blocking) for a Verbal Autopsy.
+"""Candidate Death selection for a Verbal Autopsy (v2).
 
-Two front-ends, one goal: hand the scorer a small, sensible candidate set
-instead of the whole Death table.
+Two stages, both driven by the per-run :class:`DeathIndex`:
 
-- Exact keys (trusted): VASA ``DeathID`` -> ``Death.death_id``; VerbalAutopsy
-  CMS ``Event`` (``event.death``).
-- Fuzzy fallback: block by geography + date-of-death window + sex, capped.
+* Stage 1 — deterministic keys, in precedence order: VASA ``DeathID``
+  (format-validated), CMS ``Event`` bridge, NRC-gated name matching, death
+  registration number (inert until E_DEATH carries one), exact demographic/GPS
+  composite, exact district composite. Every deterministic hit is still scored
+  so a contradiction guard can route it to review.
+* Stage 2 — union blocking (recall-oriented; missing a block loses a true
+  match): EA, constituency+ward, district+death-year, phonetic surname +
+  district, name-initials+year, DOD ±window regardless of geography, and a
+  province block for facility VAs. Per-block candidate counts are reported.
+
+Reviewer-rejected (VA, Death) pairs are excluded everywhere.
 """
 
 from django.core.exceptions import ObjectDoesNotExist
 
+from va_explorer.va_data_management.utils.death_ids import is_valid_death_id
+
 from . import normalization as N
+
+# Narrowest blocks first: when the global cap truncates, precise blocks win.
+BLOCK_ORDER = [
+    "nrc",
+    "death_reg_no",
+    "ea",
+    "constituency_ward",
+    "district_year",
+    "phonetic_surname_district",
+    "initials_year",
+    "dod_window",
+    "province",
+]
 
 
 def _model_name(va) -> str:
@@ -30,110 +52,277 @@ def vasa_death_id(va):
     return N.normalize_death_id(getattr(sa, "DeathID", None))
 
 
-def exact_candidate(va):
-    """Return ``(death, method)`` from a trusted exact key, or ``(None, None)``.
+def rejected_pks(va) -> set:
+    from va_explorer.va_data_management.models import VADeathMatchRejection
 
-    ``method`` is one of the MatchMethod string values.
+    return VADeathMatchRejection.rejected_death_pks(va)
+
+
+def _dob_or_age_matches(profile, other):
+    if (
+        profile.dob
+        and other.dob
+        and profile.dob_precision == "day"
+        and other.dob_precision == "day"
+    ):
+        return profile.dob == other.dob
+    return (
+        profile.age_days is not None
+        and other.age_days is not None
+        and profile.age_days == other.age_days
+    )
+
+
+def _gps_matches(profile, other):
+    distance = N.gps_distance_km(profile.gps, other.gps)
+    return distance is not None and distance <= 1.0
+
+
+def deterministic_candidate(va, profile, index, rejected=frozenset(), *, phase="all"):
+    """Return ``(death, method)`` from the strongest deterministic key.
+
+    ``phase="primary"`` checks DeathID/Event before NRC-name matching;
+    ``phase="secondary"`` checks registration number/exact composite after it.
+    Reviewer-rejected pairs never match deterministically.
     """
     from va_explorer.va_data_management.models import Death, MatchMethod
 
     model = _model_name(va)
 
-    if model == "vasa":
+    # 1. VASA DeathID (format-validated) — the interviewer-entered exact key.
+    if phase in {"all", "primary"} and model == "vasa":
         death_id = vasa_death_id(va)
-        if death_id:
-            death = (
-                Death.objects.filter(death_id__iexact=death_id).order_by("pk").first()
-            )
-            if death is not None:
+        if death_id and is_valid_death_id(death_id):
+            pk = index.by_death_id.get(death_id)
+            death = index.death(pk) if pk is not None else None
+            if death is None:
+                # The bounded single-VA index may not contain it; ask the DB.
+                death = (
+                    Death.objects.filter(death_id__iexact=death_id)
+                    .order_by("pk")
+                    .first()
+                )
+                if death is not None:
+                    index.add(death)
+            if death is not None and death.pk not in rejected:
                 return death, MatchMethod.EXACT_DEATH_ID
+
+    # 2. VerbalAutopsy: the CMS Event bridges va -> death on one row.
+    if phase in {"all", "primary"} and model == "verbalautopsy":
+        event = (
+            va.events.exclude(death__isnull=True)
+            .select_related("death")
+            .order_by("-id")
+            .first()
+        )
+        if (
+            event is not None
+            and event.death is not None
+            and event.death.pk not in rejected
+        ):
+            if index.death(event.death.pk) is None:
+                index.add(event.death)
+            return index.death(event.death.pk), MatchMethod.EVENT_BRIDGE
+
+    if phase == "primary":
         return None, None
 
-    # VerbalAutopsy: the CMS Event bridges va -> death on one row.
-    event = (
-        va.events.exclude(death__isnull=True)
-        .select_related("death")
-        .order_by("-id")
-        .first()
-    )
-    if event is not None and event.death is not None:
-        return event.death, MatchMethod.EVENT_BRIDGE
+    # Death registration number (no E_DEATH source field yet — inert).
+    if phase in {"all", "secondary"} and profile.death_reg_no:
+        key = profile.death_reg_no.upper()
+        pks = [p for p in index.by_reg_no.get(key, []) if p not in rejected]
+        if len(pks) == 1:
+            return index.death(pks[0]), MatchMethod.DEATH_REG_NO
+
+    # Exact demographic/GPS composite: name token-set equality AND exact DOD
+    # AND exact DOB/age AND sex AND place of death AND GPS within the scorer's
+    # "exact" band. The hit must be unique.
+    if (
+        phase in {"all", "secondary"}
+        and profile.name_tokens
+        and profile.sex
+        and profile.dod
+        and profile.dod_precision == "day"
+        and profile.place_category
+        and profile.gps
+    ):
+        hits = []
+        for pk in index.by_name_key.get(profile.name_tokens, []):
+            if pk in rejected:
+                continue
+            other = index.profile(pk)
+            if other.sex != profile.sex or other.sex is None:
+                continue
+            if other.dod != profile.dod or other.dod_precision != "day":
+                continue
+            if not _dob_or_age_matches(profile, other):
+                continue
+            if (
+                other.place_category != profile.place_category
+                or other.place_category is None
+            ):
+                continue
+            if not _gps_matches(profile, other):
+                continue
+            hits.append(pk)
+        if len(hits) == 1:
+            return index.death(hits[0]), MatchMethod.EXACT_COMPOSITE
+
+    # Exact district composite: name token-set equality AND sex AND exact DOD AND
+    #    same district (geo term skipped for facility VAs, which have none).
+    #    Like NRC, the hit must be unique — duplicate register entries fall
+    #    through to probabilistic scoring, which routes ties to review.
+    if (
+        phase in {"all", "secondary"}
+        and profile.name_tokens
+        and profile.sex
+        and profile.dod_precision == "day"
+    ):
+        hits = []
+        for pk in index.by_name_key.get(profile.name_tokens, []):
+            if pk in rejected:
+                continue
+            other = index.profile(pk)
+            if other.sex != profile.sex or other.sex is None:
+                continue
+            if other.dod != profile.dod or other.dod_precision != "day":
+                continue
+            if profile.tool != "facility_va":
+                va_district = N.norm_key(profile.district)
+                death_district = N.norm_key(other.district)
+                if not va_district or not death_district:
+                    continue
+                if death_district != va_district:
+                    continue
+            hits.append(pk)
+        if len(hits) == 1:
+            return index.death(hits[0]), MatchMethod.EXACT_COMPOSITE
+
     return None, None
 
 
-def _va_geo(va):
-    # VerbalAutopsy stores coded geography; translate the ward to a name so it
-    # can block against the named Death register.
-    return {
-        "ward": N.norm_key(N.resolve_ward_name(getattr(va, "ward", None))),
-        "district": N.norm_key(getattr(va, "district", None)),
-        "province": N.norm_key(getattr(va, "province", None)),
-    }
-
-
-def fuzzy_candidates(va, *, window_days, max_candidates):
-    """Return a bounded list of Death rows worth fuzzy-scoring for this VA.
-
-    Blocks by the narrowest available geography first (ward -> district ->
-    province), then filters to the date-of-death window in Python (DE_06 is free
-    text so it cannot be range-filtered in SQL). Compatible sex is used to prune
-    but a missing sex on either side never excludes a candidate.
-    """
-    from va_explorer.va_data_management.models import Death
-
-    from .scoring import va_dod
-
-    geo = _va_geo(va)
-    va_dod_day = N.parse_day(va_dod(va))
-    va_sex = N.normalize_sex(getattr(va, "Id10019", None))
-    va_ea = N.normalize_ea(getattr(va, "ea", None))
-
-    # Narrowest non-empty block wins; broaden only if empty. EA is finest: the
-    # Death EA string (``EA_0<digits>``) contains the VA's bare EA digits.
-    base = Death.objects.all()
-    blocks = []
-    if va_ea:
-        blocks.append(base.filter(ea__icontains=va_ea))
-    if geo["ward"]:
-        blocks.append(base.filter(ward__iexact=geo["ward"]))
-    if geo["district"]:
-        blocks.append(base.filter(district__iexact=geo["district"]))
-    if geo["province"]:
-        blocks.append(base.filter(province__iexact=geo["province"]))
-
+def nrc_name_candidates(profile, index, rejected=frozenset()):
+    """Return ranked exact-NRC candidates and component-level name evidence."""
+    if not profile.nrc:
+        return []
     candidates = []
-    seen = set()
-    for block in blocks:
-        # Bound the scan; ward/district blocks are small, province is the cap.
-        for death in block.only(
-            "id",
-            "death_id",
-            "DE_03",
-            "DE_04",
-            "DE_05",
-            "DE_06",
-            "DE_07",
-            "ward",
-            "district",
-            "province",
-            "ea",
-        )[: max_candidates * 5]:
-            if death.pk in seen:
+    for pk in index.by_nrc.get(profile.nrc, []):
+        if pk in rejected:
+            continue
+        death = index.death(pk)
+        other = index.profile(pk)
+        if death is None or other is None:
+            continue
+        evidence = N.nrc_name_evidence(
+            profile.given_name_raw,
+            profile.surname_raw,
+            other.name_raw,
+        )
+        candidates.append((death, evidence))
+    return sorted(
+        candidates,
+        key=lambda item: (
+            bool(item[1]["exact"]),
+            item[1]["overall_name_similarity"] or -1,
+            item[1]["surname_min_similarity"] or -1,
+            item[1]["given_name_min_similarity"] or -1,
+            -item[0].pk,
+        ),
+        reverse=True,
+    )
+
+
+def _cheap_candidate_rank(profile, other):
+    """Deterministically rank broad blocks before applying configured caps."""
+    name_similarity = N.name_similarity(profile.name_raw, other.name_raw) or 0.0
+    dod_distance = 999999
+    if profile.dod and other.dod:
+        dod_distance = abs((profile.dod - other.dod).days)
+    return (
+        profile.nrc is not None and profile.nrc == other.nrc,
+        bool(profile.name_tokens and profile.name_tokens == other.name_tokens),
+        name_similarity,
+        -dod_distance,
+        N.norm_key(profile.district) == N.norm_key(other.district),
+    )
+
+
+def union_block_candidates(profile, index, *, thresholds, rejected=frozenset()):
+    """Union-of-blocks candidate generation. Returns ``(candidates, stats)``.
+
+    ``candidates`` is ``[(death, [block names])]``; ``stats`` maps block name
+    to its (pre-cap) candidate count plus ``total``/``truncated`` entries.
+    Missing values never form a block. Contradictions, including sex, remain in
+    the candidate set so the scorer can retain and explain them.
+    """
+    per_block_cap = int(thresholds.get("max_candidates_per_block", 200))
+    total_cap = int(thresholds.get("max_total_candidates", 300))
+    window_days = int(thresholds.get("dod_block_days", 60))
+
+    blocks: dict = {}
+    district = N.norm_key(profile.district)
+    constituency = N.norm_key(profile.constituency)
+    ward = N.norm_key(profile.ward)
+    province = N.norm_key(profile.province)
+
+    if profile.nrc:
+        blocks["nrc"] = index.by_nrc.get(profile.nrc, [])
+    if profile.death_reg_no:
+        blocks["death_reg_no"] = index.by_reg_no.get(profile.death_reg_no.upper(), [])
+    if profile.ea:
+        blocks["ea"] = index.by_ea.get(profile.ea, [])
+    if constituency and ward:
+        blocks["constituency_ward"] = index.by_constituency_ward.get(
+            (constituency, ward), []
+        )
+    if district and profile.dod_year:
+        blocks["district_year"] = index.by_district_year.get(
+            (district, profile.dod_year), []
+        )
+    if profile.surname_phonetic and district:
+        blocks["phonetic_surname_district"] = index.by_phonetic_district.get(
+            (profile.surname_phonetic, district), []
+        )
+    if profile.initials and profile.dod_year:
+        blocks["initials_year"] = index.by_initials_year.get(
+            (profile.initials, profile.dod_year), []
+        )
+    if profile.dod and profile.dod_precision == "day":
+        blocks["dod_window"] = index.dod_window_pks(profile.dod, window_days)
+    if profile.tool == "facility_va" and province and not district:
+        # Facility VAs without a derivable district fall back to province.
+        blocks["province"] = index.by_province.get(province, [])
+
+    stats = {name: len(pks) for name, pks in blocks.items()}
+
+    sources: dict = {}  # pk -> [block names]
+    for name in BLOCK_ORDER:
+        ranked = sorted(
+            set(blocks.get(name, [])),
+            key=lambda pk: (_cheap_candidate_rank(profile, index.profile(pk)), -pk),
+            reverse=True,
+        )
+        retained = ranked[:per_block_cap]
+        stats[f"{name}_retained"] = len(retained)
+        stats[f"{name}_dropped"] = max(0, len(ranked) - len(retained))
+        for pk in retained:
+            if pk in rejected:
                 continue
-            # Date-of-death window filter (missing DOD on either side = keep).
-            if va_dod_day is not None:
-                d_day = N.parse_day(getattr(death, "DE_06", None))
-                if d_day is not None and abs((d_day - va_dod_day).days) > window_days:
-                    continue
-            # Sex prune (only when both known and different).
-            d_sex = N.normalize_sex(getattr(death, "DE_05", None))
-            if va_sex and d_sex and va_sex != d_sex:
-                continue
-            seen.add(death.pk)
-            candidates.append(death)
-            if len(candidates) >= max_candidates:
-                return candidates
-        if candidates:
-            # Stop at the narrowest block that produced anything.
-            break
-    return candidates
+            sources.setdefault(pk, []).append(name)
+
+    ranked_sources = sorted(
+        sources.items(),
+        key=lambda item: (
+            _cheap_candidate_rank(profile, index.profile(item[0])),
+            -BLOCK_ORDER.index(item[1][0]),
+            -item[0],
+        ),
+        reverse=True,
+    )
+    retained_sources = ranked_sources[:total_cap]
+    candidates = [(index.death(pk), names) for pk, names in retained_sources]
+    truncated = max(0, len(ranked_sources) - len(retained_sources))
+
+    stats["total"] = len(candidates)
+    stats["truncated"] = truncated
+    return candidates, stats

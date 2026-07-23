@@ -47,6 +47,11 @@
         <a class="{% active '\/(.*)data_cleanup' %} nav-link" href="{% url 'va_data_cleanup:index' %}">Data Cleanup</a>
       </li>
       {% endif %}
+      {% if perms.va_data_management.view_linkagereview %}
+      <li class="nav-item">
+        <a class="{% active '\/(.*)linkage-review' %} nav-link" href="{% url 'va_data_management:linkage_review_index' %}">Linkage Review</a>
+      </li>
+      {% endif %}
     </ul>
     <ul class="navbar-nav ml-auto my-2 my-lg-0">
       <li class="nav-item dropdown">

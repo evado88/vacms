@@ -957,6 +957,36 @@ class TestBaselineCensusChartData:
         assert central["household_enumerated"] == 4
         assert central["household_coverage"] == 100.0
 
+    def test_chart_data_excludes_pre_2025_census_records(self):
+        _build_baseline_census_fixture()
+        legacy = "2024-12-31T12:00:00.000Z"
+        cluster_a = SRSClusterLocation.objects.get(name=GEOID_A)
+        legacy_hh = Household.objects.create(
+            key="hh-a-pre-cutoff",
+            cluster=cluster_a,
+            submissiondate=legacy,
+            consent="Yes",
+            result_list="Completed",
+        )
+        HouseholdMember.objects.create(household=legacy_hh, first_name="Legacy")
+        Pregnancy.objects.create(
+            key="preg-a-pre-cutoff", ea="EA_" + GEOID_A, submissiondate=legacy
+        )
+        Death.objects.bulk_create(
+            [Death(key="death-a-pre-cutoff", ea="EA_" + GEOID_A, submissiondate=legacy)]
+        )
+        PregnancyOutcome.objects.create(
+            key="po-a-pre-cutoff", cluster=cluster_a, submissiondate=legacy
+        )
+
+        central = _chart_row(_chart_payload(_client()), "CENTRAL")
+
+        assert central["population_enumerated"] == 4
+        assert central["household_enumerated"] == 4
+        assert central["pregnancy_enumerated"] == 2
+        assert central["death_enumerated"] == 1
+        assert central["pregnancy_outcome_enumerated"] == 1
+
     def test_population_and_households_fallback_to_household_ea_when_cluster_missing(
         self,
     ):

@@ -14,7 +14,9 @@ from va_explorer.va_data_management.models import (
 from va_explorer.va_data_management.utils.matching import (
     auto_link_verbal_autopsy_to_death,
     evaluate_va,
+    run_matching,
 )
+from va_explorer.va_data_management.utils.matching import service as matching_service
 from va_explorer.vacms.cmsmodels.events import Event
 
 pytestmark = pytest.mark.django_db
@@ -164,8 +166,9 @@ def test_fuzzy_name_match_with_consistent_demographics():
     death = _make_death(DE_03="Jon Banda")  # slight spelling variation
     va = _make_va(Id10017="John", Id10018="Banda")
     result = evaluate_va(va)
-    assert result.status == MatchStatus.MATCHED_AUTO
-    assert result.method == MatchMethod.FUZZY_DEMOGRAPHIC
+    # Fixed-scale heuristic scores remain review-only until calibrated.
+    assert result.status == MatchStatus.PENDING_REVIEW
+    assert result.method == MatchMethod.PROBABILISTIC
     assert result.death_pk == death.pk
 
 
@@ -189,6 +192,62 @@ def test_facility_va_with_no_death_is_unmatched():
     result = evaluate_va(va)
     assert result.status == MatchStatus.UNMATCHED
     assert result.death_pk is None
+
+
+def test_facility_va_is_excluded_before_matching(monkeypatch):
+    _make_death()
+    va = _make_va(hospital="Lusaka Hospital")
+
+    monkeypatch.setattr(
+        matching_service.DeathIndex,
+        "build_for_profile",
+        lambda *args, **kwargs: pytest.fail("facility VA should not build an index"),
+    )
+
+    result = evaluate_va(va)
+
+    assert result.status == MatchStatus.NO_DEATH_EXPECTED
+    assert result.method is None
+    assert result.death_pk is None
+
+
+def test_area_va_is_excluded_from_matching():
+    _make_death()
+    va = _make_va(area="Lusaka Facility Area")
+
+    result = evaluate_va(va)
+
+    assert result.status == MatchStatus.NO_DEATH_EXPECTED
+    assert result.death_pk is None
+
+
+def test_facility_va_persistence_records_no_death_expected():
+    _make_death()
+    va = _make_va(hospital="Lusaka Hospital")
+
+    result = auto_link_verbal_autopsy_to_death(va, save=True, source="test")
+
+    assert result.status == MatchStatus.NO_DEATH_EXPECTED
+    match = VADeathMatch.objects.get(verbal_autopsy=va)
+    assert match.status == MatchStatus.NO_DEATH_EXPECTED
+    assert match.death_id is None
+
+
+def test_facility_only_batch_does_not_build_death_index(monkeypatch):
+    va = _make_va(hospital="Lusaka Hospital")
+
+    monkeypatch.setattr(
+        matching_service.DeathIndex,
+        "build",
+        lambda *args, **kwargs: pytest.fail(
+            "facility-only run should not index deaths"
+        ),
+    )
+
+    summary = run_matching([va], apply=False)
+
+    assert summary[MatchStatus.NO_DEATH_EXPECTED] == 1
+    assert summary["deaths_indexed"] == 0
 
 
 def test_two_near_tied_candidates_are_ambiguous():
@@ -233,6 +292,8 @@ def test_apply_persists_match_and_sets_linked_death(valid_death_id):
     match = VADeathMatch.objects.get(vasa=vasa)
     assert match.status == MatchStatus.MATCHED_AUTO
     assert match.death_id == death.pk
+    assert match.config_snapshot
+    assert match.crosswalk_version
     vasa.refresh_from_db()
     assert vasa.linked_death == death
 
@@ -285,6 +346,30 @@ def test_manual_link_not_overwritten(valid_death_id):
     assert match.death_id == other.pk  # unchanged
 
 
+def test_matcher_error_preserves_existing_authoritative_link(monkeypatch):
+    death = _make_death()
+    va = _make_va()
+    auto_link_verbal_autopsy_to_death(va, save=True, source="test")
+    match = VADeathMatch.objects.get(verbal_autopsy=va)
+    assert match.is_linked
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("synthetic matching failure")
+
+    monkeypatch.setattr(
+        "va_explorer.va_data_management.utils.matching.service._evaluate", fail
+    )
+    result = auto_link_verbal_autopsy_to_death(
+        va, save=True, force_recheck=True, source="test_error"
+    )
+
+    assert result.status == MatchStatus.ERROR
+    match.refresh_from_db()
+    assert match.status == MatchStatus.MATCHED_AUTO
+    assert match.death_id == death.pk
+    assert match.last_error["message"] == "synthetic matching failure"
+
+
 # --------------------------------------------------------------------------
 # Command: dry-run vs apply, disabled flag
 # --------------------------------------------------------------------------
@@ -293,7 +378,7 @@ def test_command_dry_run_makes_no_writes(valid_death_id):
     _set_death_id(death, valid_death_id)
     _make_vasa(death_id=valid_death_id)
 
-    call_command("link_verbal_autopsies", "--model", "vasa")
+    call_command("link_deaths_to_vas", "--model", "vasa")
     assert VADeathMatch.objects.count() == 0  # dry-run default
 
 
@@ -311,7 +396,7 @@ def test_command_apply_persists_only_qualifying(valid_death_id):
         Id10018="Qqq",
     )
 
-    call_command("link_verbal_autopsies", "--model", "vasa", "--apply")
+    call_command("link_deaths_to_vas", "--model", "vasa", "--apply")
     linked = VADeathMatch.objects.filter(status=MatchStatus.MATCHED_AUTO)
     assert linked.count() == 1
     assert linked.first().death_id == death.pk

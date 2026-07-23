@@ -104,14 +104,14 @@ class PregnancyDashboardDataTests(TestCase):
         payload = _build_pregnancy_ga_anc_points(Pregnancy.objects.all())
         assert {"x": 4, "y": 15} in payload["points"]
 
-    def test_pregnancy_trend_hard_starts_at_september_2024(self):
-        self._create_pregnancy("preg-legacy", PE_09A="2024-08-20")
-        self._create_pregnancy("preg-start", PE_09A="2024-09-05")
+    def test_pregnancy_trend_hard_starts_at_january_2025(self):
+        self._create_pregnancy("preg-legacy", PE_09A="2024-12-20")
+        self._create_pregnancy("preg-start", PE_09A="2025-01-05")
 
         labels, counts = _build_pregnancy_trend_series(Pregnancy.objects.all())
 
-        assert "Sep 2024" in labels
-        assert "Aug 2024" not in labels
+        assert "Jan 2025" in labels
+        assert "Dec 2024" not in labels
         assert sum(counts) == 1
 
 

@@ -1,14 +1,4 @@
-// dashboard_gps_layer.js
-//
-// Dot-density GPS marker layer for dashboard maps. Renders every record's
-// GPS coordinate as an individual circleMarker on a shared canvas renderer
-// for performance. Used by:
-//   - hierarchical_dashboard_map.js (outcomes dashboards)
-//   - home_hierarchical_dashboard_map.js (operations dashboard)
-//   - dashboard_map.js (legacy VA Vue dashboard)
-//
-// Always-on (no toggle). Server enforces PII gating via va_analytics.view_pii;
-// the layer simply doesn't fetch when userCanViewPII is false.
+// Shared GPS point overlay for Operations and Outcomes dashboard maps.
 
 (function (root, factory) {
   if (typeof module === "object" && typeof module.exports === "object") {
@@ -19,15 +9,22 @@
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
 
+  const GPS_PANE_Z_INDEX = 450;
+  const EVENT_TYPE_LABELS = {
+    death: "Death",
+    pregnancy: "Pregnancy",
+    pregnancy_outcome: "Pregnancy outcome",
+    verbal_autopsy: "Verbal autopsy",
+  };
   const DOT_STYLE = {
     radius: 4,
     fill: true,
-    color: "#14a384",
+    color: "#ffffff",
     fillColor: "#14a384",
-    fillOpacity: 0.85,
+    fillOpacity: 0.9,
     opacity: 1,
-    stroke: false,
-    weight: 0,
+    stroke: true,
+    weight: 1,
   };
 
   function escapeHtml(value) {
@@ -40,129 +37,130 @@
       .replace(/'/g, "&#39;");
   }
 
+  function eventTypeLabel(value) {
+    const normalized = String(value || "").trim().toLowerCase();
+    if (!normalized) return "";
+    return EVENT_TYPE_LABELS[normalized] || normalized.replace(/_/g, " ");
+  }
+
+  function isValidCoordinate(latitude, longitude) {
+    return (
+      Number.isFinite(latitude) &&
+      Number.isFinite(longitude) &&
+      latitude >= -90 &&
+      latitude <= 90 &&
+      longitude >= -180 &&
+      longitude <= 180
+    );
+  }
+
   function buildTooltipHTML(point, includeCoords) {
-    const adminParts = ["province", "district", "ward", "ea"]
+    const adminParts = ["province", "district", "constituency", "ward", "ea"]
       .map((field) => point[field])
-      .filter((v) => v && String(v).trim().length);
+      .filter((value) => value && String(value).trim().length);
     const lat = Number(point.latitude);
     const lon = Number(point.longitude);
-    const hasCoords =
-      includeCoords && Number.isFinite(lat) && Number.isFinite(lon);
-    if (!adminParts.length && !hasCoords) return null;
+    const typeLabel = eventTypeLabel(point.event_type);
+    const hasCoords = includeCoords && isValidCoordinate(lat, lon);
+    if (!typeLabel && !adminParts.length && !hasCoords) return null;
+
+    const typeLine = typeLabel
+      ? `<div class="dashboard-gps-tooltip__type"><strong>${escapeHtml(typeLabel)}</strong></div>`
+      : "";
     const adminLine = adminParts.length
       ? `<div>${adminParts.map(escapeHtml).join(" › ")}</div>`
       : "";
     const coordsLine = hasCoords
       ? `<div><strong>GPS:</strong> ${lat.toFixed(3)}, ${lon.toFixed(3)}</div>`
       : "";
-    return `<div class="dashboard-gps-tooltip">${adminLine}${coordsLine}</div>`;
+    return `<div class="dashboard-gps-tooltip">${typeLine}${adminLine}${coordsLine}</div>`;
   }
 
   function attachGPSLayer(map, opts) {
-    if (!window.L || !map || !opts) return null;
+    const leaflet = typeof window !== "undefined" ? window.L : null;
+    if (!leaflet || !map || !opts || typeof leaflet.svg !== "function") return null;
+
     const options = Object.assign(
       {
         userCanViewPII: false,
-        // async () => { gps_points, gps_total, gps_truncated, gps_pii_denied }
         fetchPoints: null,
-        // optional ({ total, shown, truncated }) => void
+        onLoading: null,
         onPointsRendered: null,
-        // optional () => void, called when the server returns gps_pii_denied
         onPIIDenied: null,
-        // optional (err) => void, called when the GPS fetch throws (network
-        // failure, blocked request, non-2xx response)
         onFetchError: null,
       },
       opts
     );
-
-    if (!options.userCanViewPII) {
-      return null;
-    }
+    if (!options.userCanViewPII) return null;
 
     const paneName = `${options.idPrefix || "dashboard"}GpsPane`;
-    if (!map.getPane(paneName)) {
-      map.createPane(paneName);
-    }
+    if (!map.getPane(paneName)) map.createPane(paneName);
     const pane = map.getPane(paneName);
-    if (pane) {
-      pane.style.zIndex = options.zIndex || 675;
-      pane.style.pointerEvents = "auto";
-    }
+    if (!pane) return null;
+    pane.classList.add("dashboard-gps-pane");
+    pane.style.zIndex = String(options.zIndex || GPS_PANE_Z_INDEX);
 
-    const renderer = L.canvas({ padding: 0.5, pane: paneName });
-    // Attach the renderer to the map so its onAdd fires and the backing
-    // canvas element is created in the GPS pane. Without this, circleMarkers
-    // referencing the renderer never get drawn (no _ctx, _redraw exits early).
-    renderer.addTo(map);
-    const group = L.featureGroup();
-    let groupAdded = false;
-    let inFlight = null;
-
-    function ensureRendererAdded() {
-      if (typeof map.hasLayer === "function" && map.hasLayer(renderer)) return;
-      renderer.addTo(map);
-      if (renderer._container) {
-        renderer._container.style.zIndex = options.zIndex || 675;
-      }
-    }
+    // SVG keeps each point independently interactive while the pane remains
+    // click-through, so choropleth drill-down still works between markers.
+    const renderer = leaflet.svg({ padding: 0.5, pane: paneName });
+    if (!renderer) return null;
+    const group = leaflet.featureGroup();
+    let requestVersion = 0;
 
     function ensureAdded() {
-      ensureRendererAdded();
-      if (!groupAdded) {
-        group.addTo(map);
-        groupAdded = true;
-      }
+      if (!map.hasLayer(renderer)) renderer.addTo(map);
+      if (!map.hasLayer(group)) group.addTo(map);
+    }
+
+    function clear() {
+      group.clearLayers();
     }
 
     function renderPoints(points) {
       ensureAdded();
-      group.clearLayers();
-      const includeCoords = options.userCanViewPII;
+      clear();
       let shown = 0;
+
       points.forEach((point) => {
         const lat = Number(point.latitude);
         const lon = Number(point.longitude);
-        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
-        const marker = L.circleMarker([lat, lon], {
+        if (!isValidCoordinate(lat, lon)) return;
+
+        const marker = leaflet.circleMarker([lat, lon], {
           ...DOT_STYLE,
           pane: paneName,
           renderer,
         });
-        const tip = buildTooltipHTML(point, includeCoords);
-        if (tip) {
-          marker.bindTooltip(tip, {
+        const tooltip = buildTooltipHTML(point, options.userCanViewPII);
+        if (tooltip) {
+          marker.bindTooltip(tooltip, {
             sticky: true,
             direction: "top",
-            opacity: 0.9,
+            opacity: 0.95,
           });
         }
         marker.addTo(group);
         shown += 1;
       });
-      if (renderer._redraw) renderer._redraw();
       return shown;
     }
 
     async function refresh() {
       if (typeof options.fetchPoints !== "function") return;
-      // De-dupe concurrent refreshes; latest call wins.
-      const myRequest = options.fetchPoints();
-      inFlight = myRequest;
+      const currentVersion = ++requestVersion;
+      clear();
+      if (typeof options.onLoading === "function") options.onLoading();
+
       try {
-        const result = await myRequest;
-        if (inFlight !== myRequest) return; // a newer refresh superseded us
-        if (!result || result.gps_pii_denied) {
-          group.clearLayers();
-          if (
-            result &&
-            result.gps_pii_denied &&
-            typeof options.onPIIDenied === "function"
-          ) {
-            options.onPIIDenied();
-          }
+        const result = await options.fetchPoints();
+        if (currentVersion !== requestVersion) return;
+        if (!result) throw new Error("GPS response was empty.");
+        if (result.gps_pii_denied) {
+          clear();
+          if (typeof options.onPIIDenied === "function") options.onPIIDenied();
           return;
         }
+
         const points = Array.isArray(result.gps_points) ? result.gps_points : [];
         const shown = renderPoints(points);
         if (typeof options.onPointsRendered === "function") {
@@ -172,36 +170,29 @@
             truncated: Boolean(result.gps_truncated),
           });
         }
-      } catch (err) {
-        console.error("[gps-layer] failed to load points", err);
-        if (typeof options.onFetchError === "function") {
-          options.onFetchError(err);
-        }
-      } finally {
-        if (inFlight === myRequest) inFlight = null;
+      } catch (error) {
+        if (currentVersion !== requestVersion) return;
+        clear();
+        console.error("[gps-layer] failed to load points", error);
+        if (typeof options.onFetchError === "function") options.onFetchError(error);
       }
     }
 
     function hide() {
-      if (groupAdded && map.hasLayer(group)) {
-        map.removeLayer(group);
-        groupAdded = false;
-      }
+      if (map.hasLayer(group)) map.removeLayer(group);
     }
 
     function show() {
       ensureAdded();
     }
 
-    return {
-      refresh: refresh,
-      hide: hide,
-      show: show,
-    };
+    ensureAdded();
+    return { refresh, hide, show };
   }
 
   return {
-    attachGPSLayer: attachGPSLayer,
-    DOT_STYLE: DOT_STYLE,
+    attachGPSLayer,
+    DOT_STYLE,
+    GPS_PANE_Z_INDEX,
   };
 });

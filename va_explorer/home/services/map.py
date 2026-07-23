@@ -8,6 +8,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_date as django_parse_date
 from django.utils.dateparse import parse_datetime as django_parse_datetime
 
+from va_explorer.dashboard_cutoff import clamp_chart_start_dt
 from va_explorer.home.services.common import (
     apply_text_geography_filter,
     build_date_expr,
@@ -322,11 +323,28 @@ def _latest_va_geo_by_identifier(queryset, start_dt, end_dt):
     return latest
 
 
+def _filter_qs_by_date_window(queryset, date_fields, start_dt, end_dt):
+    window_q = Q()
+    if start_dt is not None:
+        start_token = start_dt.date().isoformat()
+        start_q = Q()
+        for field_name in date_fields:
+            start_q |= Q(**{f"{field_name}__gte": start_token})
+        window_q &= start_q
+    if end_dt is not None:
+        end_token = end_dt.isoformat()
+        end_q = Q()
+        for field_name in date_fields:
+            end_q |= Q(**{f"{field_name}__lte": end_token})
+        window_q &= end_q
+    return queryset.filter(window_q) if window_q else queryset
+
+
 def build_home_combined_map_payload(request):
     filters = _parse_home_map_filters(request)
     geography_level = filters["geography_level"]
     geography_value = filters["geography_value"]
-    start_dt = filters["start_dt"]
+    start_dt = clamp_chart_start_dt(filters["start_dt"])
     end_dt = filters["end_dt"]
 
     with timed_block("home.map.qs.build", request=request):
@@ -503,14 +521,40 @@ def build_home_combined_map_payload(request):
         "map_ea_sums": ea_sums,
     }
 
+    gps_pregnancies_qs = pregnancies_qs
+    gps_outcomes_qs = outcomes_qs
+    gps_deaths_qs = deaths_qs
+    gps_vas_qs = vas_qs
+    gps_vasa_qs = vasa_qs
+    if end_dt is not None and end_dt < start_dt:
+        gps_pregnancies_qs = pregnancies_qs.none()
+        gps_outcomes_qs = outcomes_qs.none()
+        gps_deaths_qs = deaths_qs.none()
+        gps_vas_qs = vas_qs.none()
+        gps_vasa_qs = vasa_qs.none()
+    else:
+        gps_pregnancies_qs = _filter_qs_by_date_window(
+            pregnancies_qs, CORE_EVENT_DATE_FIELDS, start_dt, end_dt
+        )
+        gps_outcomes_qs = _filter_qs_by_date_window(
+            outcomes_qs, CORE_EVENT_DATE_FIELDS, start_dt, end_dt
+        )
+        gps_deaths_qs = _filter_qs_by_date_window(
+            deaths_qs, CORE_EVENT_DATE_FIELDS, start_dt, end_dt
+        )
+        gps_vas_qs = _filter_qs_by_date_window(vas_qs, VA_DATE_FIELDS, start_dt, end_dt)
+        gps_vasa_qs = _filter_qs_by_date_window(
+            vasa_qs, VA_DATE_FIELDS, start_dt, end_dt
+        )
+
     _attach_home_gps_payload(
         payload,
         request,
-        pregnancies_qs=pregnancies_qs,
-        outcomes_qs=outcomes_qs,
-        deaths_qs=deaths_qs,
-        vas_qs=vas_qs,
-        vasa_qs=vasa_qs,
+        pregnancies_qs=gps_pregnancies_qs,
+        outcomes_qs=gps_outcomes_qs,
+        deaths_qs=gps_deaths_qs,
+        vas_qs=gps_vas_qs,
+        vasa_qs=gps_vasa_qs,
     )
     return payload
 
@@ -526,7 +570,7 @@ def _attach_home_gps_payload(
         _qs_cache_signature,
     )
 
-    include, limit, offset = _gps_request_params(request)
+    include, limit, _offset = _gps_request_params(request)
     if not include:
         return
     user = getattr(request, "user", None)
@@ -550,27 +594,95 @@ def _attach_home_gps_payload(
     if vasa_qs is not None:
         # VASA GPS points render on the same verbal-autopsy map layer.
         sources.append((vasa_qs, "geopoint", "verbal_autopsy"))
+
+    source_counts = [
+        qs.exclude(**{f"{gps_field}__isnull": True}).exclude(**{gps_field: ""}).count()
+        for qs, gps_field, _event_type in sources
+    ]
+    event_types = list(dict.fromkeys(event_type for _qs, _field, event_type in sources))
+    event_counts = [
+        sum(
+            source_counts[index]
+            for index, source in enumerate(sources)
+            if source[2] == event_type
+        )
+        for event_type in event_types
+    ]
+    event_limits = _allocate_proportional_gps_limits(event_counts, limit)
+    source_limits = [0] * len(sources)
+    for event_type, event_limit in zip(event_types, event_limits):
+        source_indexes = [
+            index for index, source in enumerate(sources) if source[2] == event_type
+        ]
+        limits = _allocate_proportional_gps_limits(
+            [source_counts[index] for index in source_indexes], event_limit
+        )
+        for source_index, source_limit in zip(source_indexes, limits):
+            source_limits[source_index] = source_limit
+
     combined_points = []
-    combined_total = 0
-    truncated_any = False
-    remaining = max(0, min(limit, GPS_DEFAULT_LIMIT))
-    for qs, gps_field, event_type in sources:
-        per_model_limit = remaining if remaining > 0 else 0
-        points, total, truncated = _build_gps_points(
+    combined_total = sum(source_counts)
+    for (qs, gps_field, event_type), source_limit in zip(sources, source_limits):
+        if source_limit <= 0:
+            continue
+        points, _total, _truncated = _build_gps_points(
             qs,
             gps_field=gps_field,
             event_type=event_type,
-            limit=per_model_limit,
+            limit=min(source_limit, GPS_DEFAULT_LIMIT),
             offset=0,
             cache_signature=_qs_cache_signature(qs),
         )
-        combined_total += total
-        if truncated:
-            truncated_any = True
-        if points:
-            combined_points.extend(points)
-            remaining = max(0, remaining - len(points))
+        combined_points.extend(points)
     payload["gps_points"] = combined_points
     payload["gps_total"] = combined_total
-    payload["gps_truncated"] = truncated_any or combined_total > len(combined_points)
+    payload["gps_truncated"] = combined_total > len(combined_points)
     payload["gps_pii_denied"] = False
+
+
+def _allocate_proportional_gps_limits(counts, limit):
+    """Allocate a capped sample without starving small non-empty sources."""
+    capacities = [max(0, int(count or 0)) for count in counts]
+    allocation = [0] * len(capacities)
+    active_indexes = [index for index, count in enumerate(capacities) if count]
+    target = min(max(0, int(limit or 0)), sum(capacities))
+    if not active_indexes or target <= 0:
+        return allocation
+
+    if target < len(active_indexes):
+        ranked = sorted(active_indexes, key=lambda index: (-capacities[index], index))
+        for index in ranked[:target]:
+            allocation[index] = 1
+        return allocation
+
+    for index in active_indexes:
+        allocation[index] = 1
+    remaining = target - len(active_indexes)
+    if remaining <= 0:
+        return allocation
+
+    residual_capacities = [
+        capacities[index] - allocation[index] for index in range(len(capacities))
+    ]
+    residual_total = sum(residual_capacities)
+    if residual_total <= 0:
+        return allocation
+
+    remainders = []
+    for index in active_indexes:
+        exact_share = remaining * residual_capacities[index] / residual_total
+        whole_share = min(residual_capacities[index], int(exact_share))
+        allocation[index] += whole_share
+        remainders.append((exact_share - whole_share, capacities[index], index))
+
+    leftover = target - sum(allocation)
+    for _fraction, _capacity, index in sorted(
+        remainders, key=lambda item: (-item[0], -item[1], item[2])
+    ):
+        if leftover <= 0:
+            break
+        if allocation[index] >= capacities[index]:
+            continue
+        allocation[index] += 1
+        leftover -= 1
+    return allocation

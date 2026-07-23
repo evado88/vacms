@@ -136,6 +136,154 @@ class TestUserDetailView:
         )
 
 
+class TestUserIndexView:
+    @staticmethod
+    def authorized_client():
+        permission = Permission.objects.get(
+            content_type__app_label="users",
+            codename="view_user",
+        )
+        group = GroupFactory.create(permissions=[permission])
+        acting_user = UserFactory.create(name="Directory Administrator", groups=[group])
+        client = Client()
+        client.force_login(acting_user)
+        return client
+
+    def test_filters_users_by_name_case_insensitively(self):
+        matching_user = UserFactory.create(name="Alice Mumba")
+        UserFactory.create(name="Bernard Phiri")
+        client = self.authorized_client()
+
+        response = client.get(reverse("users:index"), {"name": "alice"})
+
+        assert response.status_code == 200
+        assert list(response.context["object_list"]) == [matching_user]
+        assert response.context["filter_form"].cleaned_data["name"] == "alice"
+        assert b'name="role"' in response.content
+        assert b"Reset" not in response.content
+
+    def test_filters_users_by_role(self):
+        selected_role = GroupFactory.create(name="Selected Role")
+        other_role = GroupFactory.create(name="Other Role")
+        matching_user = UserFactory.create(name="Selected User", groups=[selected_role])
+        UserFactory.create(name="Other User", groups=[other_role])
+        client = self.authorized_client()
+
+        response = client.get(reverse("users:index"), {"role": selected_role.pk})
+
+        assert response.status_code == 200
+        assert list(response.context["object_list"]) == [matching_user]
+        assert response.context["filter_form"].cleaned_data["role"] == selected_role
+
+    def test_combines_name_and_role_filters(self):
+        selected_role = GroupFactory.create(name="Combined Selected Role")
+        other_role = GroupFactory.create(name="Combined Other Role")
+        matching_user = UserFactory.create(
+            name="Alice Selected", groups=[selected_role]
+        )
+        UserFactory.create(name="Alice Other", groups=[other_role])
+        UserFactory.create(name="Bernard Selected", groups=[selected_role])
+        client = self.authorized_client()
+
+        response = client.get(
+            reverse("users:index"),
+            {"name": "Alice", "role": selected_role.pk},
+        )
+
+        assert response.status_code == 200
+        assert list(response.context["object_list"]) == [matching_user]
+
+    def test_applies_filters_before_pagination_and_preserves_query_parameters(self):
+        selected_role = GroupFactory.create(name="Paginated Role")
+        for index in range(11):
+            UserFactory.create(
+                name=f"Paged User {index:02d}",
+                groups=[selected_role],
+            )
+        client = self.authorized_client()
+
+        response = client.get(
+            reverse("users:index"),
+            {"name": "Paged", "role": selected_role.pk, "page": 2},
+        )
+
+        assert response.status_code == 200
+        assert response.context["page_obj"].paginator.count == 11
+        assert len(response.context["object_list"]) == 1
+        assert b"name=Paged" in response.content
+        assert f"role={selected_role.pk}".encode() in response.content
+
+    def test_full_page_uses_dynamic_filter_markup(self):
+        client = self.authorized_client()
+
+        response = client.get(reverse("users:index"))
+        content = response.content.decode()
+
+        assert response.status_code == 200
+        assert "data-list-filter" in content
+        assert "data-list-slot" in content
+        old_filter_card_wrapper = (
+            '<section class="ou-card ou-mb-3">\n'
+            '      <div class="ou-card-body">\n'
+            '        <form method="get" class="ou-user-filter-row'
+        )
+        assert old_filter_card_wrapper not in content
+        assert "ou-user-filter-row" in content
+        assert "ou-user-filter-controls" in content
+        assert "ou-user-filter-actions-panel" in content
+        assert "ou-user-filter-field" in content
+        assert 'type="search"' in content
+        assert "list_table.js" in content
+        assert "Reset" not in content
+        assert ">Search</button>" not in content
+
+    def test_create_and_import_actions_render_inside_filter_row(self):
+        view_permission = Permission.objects.get(
+            content_type__app_label="users",
+            codename="view_user",
+        )
+        add_permission = Permission.objects.get(
+            content_type__app_label="users",
+            codename="add_user",
+        )
+        group = GroupFactory.create(permissions=[view_permission, add_permission])
+        acting_user = UserFactory.create(name="User Manager", groups=[group])
+        client = Client()
+        client.force_login(acting_user)
+
+        response = client.get(reverse("users:index"))
+        content = response.content.decode()
+
+        assert response.status_code == 200
+        assert "ou-page-header-actions" not in content
+        assert "Create User" in content
+        assert "Import Users" in content
+        assert content.index("ou-user-filter-controls") < content.index("Name")
+        assert content.index("ou-user-filter-actions-panel") < content.index(
+            "Create User"
+        )
+        assert content.index("ou-user-filter-controls") < content.index(
+            "ou-user-filter-actions-panel"
+        )
+
+    def test_component_request_returns_user_directory_fragment(self):
+        matching_user = UserFactory.create(name="Component Alice")
+        UserFactory.create(name="Component Bernard")
+        client = self.authorized_client()
+
+        response = client.get(
+            reverse("users:index"), {"component": "1", "name": "alice"}
+        )
+        content = response.content.decode()
+
+        assert response.status_code == 200
+        assert list(response.context["object_list"]) == [matching_user]
+        assert "Component Alice" in content
+        assert "Component Bernard" not in content
+        assert "data-list-filter" not in content
+        assert "list_table.js" not in content
+
+
 class TestUserCreateView:
     def test_with_valid_permission(self, user: User, rf: RequestFactory):
         can_add_user = Permission.objects.filter(codename="add_user").first()

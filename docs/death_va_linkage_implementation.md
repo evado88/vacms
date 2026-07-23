@@ -9,7 +9,7 @@ wrongly-linked one.**
 
 - A reusable matching engine (`va_data_management/utils/matching/`).
 - A dedicated audit model `VADeathMatch` (+ migration `0049`).
-- A retrospective management command `link_verbal_autopsies` (dry-run default).
+- A retrospective management command `link_deaths_to_vas` (dry-run default; renamed from `link_verbal_autopsies` in v2).
 - A Celery sweeper + flag-gated ingestion hooks (auto-linking **OFF** by default).
 - Read-mostly Django admin for reviewing matches.
 - 19 tests; verified against production-like dev data.
@@ -124,10 +124,10 @@ scheduled only when the flag is on) for anything missed.
 
 ```bash
 # 1. Dry run (default; no writes). Review the report before applying.
-python manage.py link_verbal_autopsies --model both --export-report reports/link.csv
+python manage.py link_deaths_to_vas --model both --export-report reports/link.csv
 
 # 2. Apply, in a bounded slice first.
-python manage.py link_verbal_autopsies --model both --limit 500 --apply
+python manage.py link_deaths_to_vas --model both --limit 500 --apply
 
 # Useful filters: --va-id --district --facility --from-date --to-date
 #                 --status <existing-status> --limit --recheck --source

@@ -6,6 +6,7 @@ import pytest
 from django.core.management import CommandError, call_command
 
 from va_explorer.va_data_management.models import (
+    ClusterLocationCodes,
     Death,
     ODKFormChoice,
     Pregnancy,
@@ -13,6 +14,7 @@ from va_explorer.va_data_management.models import (
     PregnancyOutcomeBaby,
 )
 from va_explorer.va_data_management.odk.service import import_dataframe_records
+from va_explorer.va_data_management.utils.death_ids import is_valid_death_id
 
 pytestmark = pytest.mark.django_db
 
@@ -145,6 +147,14 @@ def _seed_odk_definition(form_name):
     )
 
 
+def _seed_death_id_cluster():
+    return ClusterLocationCodes.objects.create(
+        ward="CHAMUKA",
+        ward_code="102101",
+        cluster_code="2026TL",
+    )
+
+
 _FORM_MODELS = {
     "pregnancy": Pregnancy,
     "death": Death,
@@ -198,6 +208,63 @@ def test_csv_gps_columns_merged_to_single_field(
 
     obj = _FORM_MODELS[form_name].objects.get(key="k1")
     assert getattr(obj, gps_field) == "-14.5 28.3 1242 5"
+
+
+def test_odk_death_import_assigns_death_id_for_created_rows():
+    _seed_odk_definition("death")
+    _seed_death_id_cluster()
+
+    summary = import_dataframe_records(
+        "death",
+        pd.DataFrame.from_records(
+            [
+                {
+                    "key": "odk-death-created",
+                    "ward": "CHAMUKA",
+                    "DE_03": "Created Person",
+                    "DE_06": "2026-01-01",
+                }
+            ]
+        ),
+    )
+
+    death = Death.objects.get(key="odk-death-created")
+    assert summary["created"] == 1
+    assert is_valid_death_id(death.death_id)
+
+
+def test_odk_death_import_assigns_death_id_for_updated_blank_id_rows():
+    _seed_odk_definition("death")
+    _seed_death_id_cluster()
+    Death.objects.bulk_create(
+        [
+            Death(
+                key="odk-death-existing",
+                ward="CHAMUKA",
+                DE_03="Existing Person",
+                DE_06="2026-01-01",
+            )
+        ]
+    )
+
+    summary = import_dataframe_records(
+        "death",
+        pd.DataFrame.from_records(
+            [
+                {
+                    "key": "odk-death-existing",
+                    "ward": "CHAMUKA",
+                    "DE_03": "Existing Person Updated",
+                    "DE_06": "2026-01-01",
+                }
+            ]
+        ),
+    )
+
+    death = Death.objects.get(key="odk-death-existing")
+    assert summary["updated"] == 1
+    assert death.DE_03 == "Existing Person Updated"
+    assert is_valid_death_id(death.death_id)
 
 
 @pytest.mark.parametrize(

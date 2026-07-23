@@ -4,7 +4,11 @@ Covers the national-operational KPIs + chart series (nov), the overview map
 payload, and the VA-Statistics trends bundle.
 """
 
+import datetime as dt
+
 import pytest
+import time_machine
+from dateutil.tz import gettz
 from django.test import RequestFactory
 
 from va_explorer.home.services.map import build_home_combined_map_payload
@@ -20,6 +24,7 @@ from va_explorer.tests.factories import (
 )
 
 pytestmark = pytest.mark.django_db
+eastern_tz = gettz("US/Eastern")
 
 
 def _request(user):
@@ -96,3 +101,41 @@ def test_va_statistics_trends_fold_in_vasa():
     # Collected/coded overall reflect VA + VASA.
     assert va_table["collected"]["Overall"] == 2
     assert va_table["coded"]["Overall"] == 2
+
+
+@time_machine.travel(dt.datetime(2025, 2, 15, 9, 0, tzinfo=eastern_tz))
+def test_va_statistics_trend_chart_excludes_pre_2025_interviews():
+    facility = LocationFactory.create(name="Facility 1", location_type="facility")
+    VerbalAutopsyFactory.create(
+        instanceid="trend-va-legacy",
+        Id10012="2024-12-31",
+        Id10023="2024-12-31",
+        location=facility,
+        duplicate=False,
+    )
+    VASAFactory.create(
+        instanceid="trend-vasa-legacy",
+        Id10012="2024-12-31",
+        Id10023="2024-12-31",
+        location=facility,
+    )
+    VerbalAutopsyFactory.create(
+        instanceid="trend-va-current",
+        Id10012="2025-01-15",
+        Id10023="2025-01-15",
+        location=facility,
+        duplicate=False,
+    )
+    VASAFactory.create(
+        instanceid="trend-vasa-current",
+        Id10012="2025-01-15",
+        Id10023="2025-01-15",
+        location=facility,
+    )
+
+    user = AdminFactory.create()
+    va_table, graphs, _issues, _indet, _add_issues, _add_indet = get_trends_data(user)
+
+    assert va_table["collected"]["Overall"] == 4
+    assert graphs["collected"]["x"] == ["Jan"]
+    assert graphs["collected"]["y"] == [2.0]

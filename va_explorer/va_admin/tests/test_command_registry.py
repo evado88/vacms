@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from va_explorer.va_admin.command_registry import (
     ALLOWLIST,
     REGISTRY_ITEMS,
@@ -24,6 +26,25 @@ def test_registry_keys_are_unique():
 def test_load_va_csv_appears_once():
     matches = [item for item in REGISTRY_ITEMS if item.key == "load_va_csv"]
     assert len(matches) == 1
+
+
+def test_every_project_management_command_is_registered():
+    command_files = Path("va_explorer").glob("*/management/commands/*.py")
+    command_names = {path.stem for path in command_files if path.stem != "__init__"}
+    registered = {item.management_command for item in REGISTRY_ITEMS}
+
+    assert command_names - registered == set()
+
+
+def test_vasa_loader_exposes_each_repeat_group():
+    spec = ALLOWLIST["load_vasa_csv"]
+    repeat_inputs = [field for field in spec.inputs if field.flag == "--repeat"]
+
+    assert {field.name for field in repeat_inputs} == {
+        "neonate_repeat",
+        "child_repeat",
+        "adult_repeat",
+    }
 
 
 def test_favorites_include_required_commands():

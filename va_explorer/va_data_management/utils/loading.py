@@ -107,8 +107,9 @@ def normalize_community_va_value(
     ODK-first community/facility tagging rules:
     1) If community_va is explicitly provided, use it.
     2) Else if any community admin markers exist, infer community ("yes").
-    3) Else if both area and hospital/facility markers exist, infer facility ("no").
-    4) Else unknown (None).
+    3) Else if a hospital/facility marker exists, infer facility ("no").
+    4) Else treat area as the legacy community geography fallback ("yes").
+    5) Else unknown (None).
     """
     if not pd.isnull(value):
         normalized = normalize_string(value).lower()
@@ -121,8 +122,10 @@ def normalize_community_va_value(
     if any(_has_meaningful_value(v) for v in (district, constituency, ward, ea)):
         return "yes"
 
-    if _has_meaningful_value(area) and _has_meaningful_value(hospital):
+    if _has_meaningful_value(hospital):
         return "no"
+    if _has_meaningful_value(area):
+        return "yes"
 
     return None
 
@@ -278,6 +281,7 @@ def resolve_srs_cluster_from_row(row, srs_maps):
     for field_name, level in (
         ("ea", "ea"),
         ("ward", "ward"),
+        ("area", "ward"),
         ("constituency", "constituency"),
         ("district", "district"),
         ("province", "province"),

@@ -295,9 +295,19 @@ class DeathFilter(GeoEnumeratorFilterSet):
         "enumerator",
         "district",
         "ward",
+        "ea",
         "deceased",
         "start_date",
         "end_date",
+    )
+
+    ea = CharFilter(
+        field_name="ea",
+        lookup_expr="icontains",
+        label="",
+        widget=TextInput(
+            attrs={"class": "form-text", "placeholder": "EA", "aria-label": "EA"}
+        ),
     )
 
     deceased = CharFilter(

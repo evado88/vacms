@@ -5,9 +5,7 @@ from django.contrib.auth.mixins import PermissionRequiredMixin
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
-from django.db.models import CharField, Q
-from django.db.models import Value as V
-from django.db.models.functions import Concat
+from django.db.models import Prefetch, Q
 from django.http import Http404, HttpResponse
 from django.views.generic import ListView, View
 
@@ -15,6 +13,8 @@ from ..utils.file_io import download_list_as_csv, download_queryset_as_csv
 from ..utils.mixins import CustomAuthMixin
 from ..va_data_management.constants import REDACTED_STRING
 from ..va_data_management.models import (
+    CauseCodingIssue,
+    CauseOfDeath,
     Death,
     Household,
     Pregnancy,
@@ -22,11 +22,15 @@ from ..va_data_management.models import (
     VerbalAutopsy,
     questions_to_autodetect_duplicates,
 )
-from ..va_data_management.models.data_quality import DataQualityIssue
+from ..va_data_management.models.data_quality import (
+    DataQualityIssue,
+    DataQualityIssueMember,
+)
 from ..va_data_management.utils.date_parsing import parse_date
 from .models import DataCleanup
 
 User = get_user_model()
+DQ_PER_PAGE = 25
 VA_SUBTAB_PER_PAGE = 10
 VA_SUBTABS = {"duplicates", "coding-issues", "indeterminate", "errors", "missing-gps"}
 
@@ -37,40 +41,78 @@ def _paginate(request, queryset, page_param, per_page=VA_SUBTAB_PER_PAGE):
     return paginator.get_page(request.GET.get(page_param))
 
 
-def _dq_rows_for_model(model, build_row, only_fields):
-    """Build display rows for a model's own open DataQualityIssues.
-
-    Returns ``(rows, issue_group_count)``. Each record is annotated with the sorted
-    set of human-readable issue labels affecting it (via DataQualityIssueMember).
-    """
+def _dq_rows_for_model(request, model, build_row, only_fields):
+    """Return one bounded page of records with open data-quality issues."""
     content_type = ContentType.objects.get_for_model(model)
-    issues = (
-        DataQualityIssue.objects.filter(
-            target_model=content_type,
-            status=DataQualityIssue.OPEN,
+    issues = DataQualityIssue.objects.filter(
+        target_model=content_type,
+        status=DataQualityIssue.OPEN,
+    ).order_by()
+
+    member_groups = (
+        DataQualityIssueMember.objects.filter(
+            content_type=content_type,
+            issue__target_model=content_type,
+            issue__status=DataQualityIssue.OPEN,
         )
-        .prefetch_related("members")
-        .order_by("-detected_at", "-id")
+        .values_list("object_id", flat=True)
+        .order_by("-object_id")
+        .distinct()
     )
+    page = _paginate(request, member_groups, "dq_page", per_page=DQ_PER_PAGE)
+    object_ids = list(page.object_list)
 
     labels_by_object = defaultdict(set)
-    for issue in issues:
-        label = _issue_label(issue)
-        for member in issue.members.all():
-            labels_by_object[member.object_id].add(label)
+    if object_ids:
+        members = (
+            DataQualityIssueMember.objects.filter(
+                content_type=content_type,
+                object_id__in=object_ids,
+                issue__target_model=content_type,
+                issue__status=DataQualityIssue.OPEN,
+            )
+            .select_related("issue")
+            .only("object_id", "issue__issue_type", "issue__details")
+        )
+        for member in members:
+            labels_by_object[member.object_id].add(_issue_label(member.issue))
 
-    issue_count = len(issues)
-    if not labels_by_object:
-        return [], issue_count
-
-    records = model.objects.filter(id__in=labels_by_object.keys()).only(*only_fields)
+    records = model.objects.filter(id__in=object_ids).only(*only_fields).in_bulk()
     rows = [
-        build_row(record, sorted(labels_by_object[record.id]))
-        for record in records
-        if record.id in labels_by_object
+        build_row(records[object_id], sorted(labels_by_object[object_id]))
+        for object_id in object_ids
+        if object_id in records
     ]
-    rows.sort(key=lambda row: row["id"], reverse=True)
-    return rows, issue_count
+    return rows, issues.count(), page
+
+
+def _with_va_table_data(queryset):
+    """Limit wide VA rows and related objects to fields rendered by cleanup tables."""
+    return (
+        queryset.select_related("location")
+        .prefetch_related(
+            Prefetch(
+                "causes",
+                queryset=CauseOfDeath.objects.only(
+                    "verbalautopsy_id", "cause"
+                ).order_by("id"),
+            ),
+            Prefetch(
+                "coding_issues",
+                queryset=CauseCodingIssue.objects.only("verbalautopsy_id", "severity"),
+            ),
+        )
+        .only(
+            "id",
+            "Id10010",
+            "Id10012",
+            "Id10017",
+            "Id10018",
+            "Id10023",
+            "location_id",
+            "location__name",
+        )
+    )
 
 
 def _household_row(record, issues):
@@ -184,47 +226,7 @@ class DataCleanupIndexView(CustomAuthMixin, PermissionRequiredMixin, ListView):
     paginate_by = 10
     template_name = "va_data_cleanup/index.html"
 
-    def get_queryset(self):
-        queryset = (
-            self.request.user.verbal_autopsies()
-            .prefetch_related("location", "causes", "coding_issues")
-            .annotate(
-                deceased=Concat("Id10017", V(" "), "Id10018", output_field=CharField())
-            )
-            .order_by("id")
-            .filter(duplicate=True)
-        )
-
-        return queryset
-
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-        user_vas = self.request.user.verbal_autopsies()
-
-        context["total_duplicate_records"] = user_vas.filter(duplicate=True).count()
-        context["va_data_cleanup"] = True
-
-        va_duplicate_rows = []
-        for va in context["object_list"]:
-            warnings, errors = _issue_severity_counts(va)
-            va_duplicate_rows.append(
-                {
-                    "id": va.id,
-                    "interviewer": va.Id10010,
-                    "interviewed": parse_date(va.Id10012),
-                    "dod": (
-                        parse_date(va.Id10023) if (va.Id10023 != "dk") else "Unknown"
-                    ),
-                    "facility": va.location.name if va.location else "Not Provided",
-                    "deceased": va.deceased,
-                    "cause": _first_cause(va),
-                    "warnings": warnings,
-                    "errors": errors,
-                }
-            )
-        context["object_list"] = va_duplicate_rows
-        context["va_duplicate_rows"] = va_duplicate_rows
-
+    def get_active_tab(self):
         active_tab = self.request.GET.get("tab", "verbal-autopsy").strip().lower()
         allowed_tabs = {
             "household",
@@ -233,20 +235,63 @@ class DataCleanupIndexView(CustomAuthMixin, PermissionRequiredMixin, ListView):
             "death",
             "verbal-autopsy",
         }
-        if active_tab not in allowed_tabs:
-            active_tab = "verbal-autopsy"
-        context["active_cleanup_tab"] = active_tab
+        return active_tab if active_tab in allowed_tabs else "verbal-autopsy"
 
-        # ---- Verbal Autopsy sub-tabs -------------------------------------- #
-        # Coding Issues = not yet coded; Indeterminate = coded "Indeterminate";
-        # Errors = has a CauseCodingIssue with severity="error". Each sub-tab is a
-        # full, independently paginated list; only the active sub-tab builds rows.
-        active_va_subtab = (
-            self.request.GET.get("va_subtab", "duplicates").strip().lower()
+    def get_active_va_subtab(self):
+        active_subtab = self.request.GET.get("va_subtab", "duplicates").strip().lower()
+        return active_subtab if active_subtab in VA_SUBTABS else "duplicates"
+
+    def get_queryset(self):
+        if not (
+            self.get_active_tab() == "verbal-autopsy"
+            and self.get_active_va_subtab() == "duplicates"
+        ):
+            return VerbalAutopsy.objects.none()
+
+        return _with_va_table_data(
+            self.request.user.verbal_autopsies().filter(duplicate=True).order_by("id")
         )
-        if active_va_subtab not in VA_SUBTABS:
-            active_va_subtab = "duplicates"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        active_tab = self.get_active_tab()
+        active_va_subtab = self.get_active_va_subtab()
+        context["active_cleanup_tab"] = active_tab
         context["active_va_subtab"] = active_va_subtab
+        context["va_data_cleanup"] = True
+        context.update(
+            {
+                "total_duplicate_records": 0,
+                "va_duplicate_rows": [],
+                "va_coding_issue_count": 0,
+                "va_indeterminate_count": 0,
+                "va_error_count": 0,
+                "va_missing_gps_count": 0,
+                "va_coding_issue_rows": [],
+                "va_indeterminate_cod_rows": [],
+                "va_error_rows": [],
+                "va_missing_gps_rows": [],
+                "household_issue_rows": [],
+                "pregnancy_issue_rows": [],
+                "pregnancy_outcome_issue_rows": [],
+                "death_issue_rows": [],
+            }
+        )
+
+        if active_tab != "verbal-autopsy":
+            self._add_data_quality_context(context, active_tab)
+            return context
+
+        user_vas = self.request.user.verbal_autopsies()
+        if active_va_subtab == "duplicates":
+            context["total_duplicate_records"] = context["paginator"].count
+            va_duplicate_rows = _get_context_for_va_table(
+                context["object_list"], self.request.user
+            )
+            context["object_list"] = va_duplicate_rows
+            context["va_duplicate_rows"] = va_duplicate_rows
+        else:
+            context["total_duplicate_records"] = user_vas.filter(duplicate=True).count()
 
         uncoded_vas = user_vas.filter(causes__isnull=True).order_by("id").distinct()
         indeterminate_vas = (
@@ -277,15 +322,11 @@ class DataCleanupIndexView(CustomAuthMixin, PermissionRequiredMixin, ListView):
             "errors": (error_vas, "err_page", "va_error_rows"),
             "missing-gps": (missing_gps_vas, "gps_page", "va_missing_gps_rows"),
         }
-        context["va_coding_issue_rows"] = []
-        context["va_indeterminate_cod_rows"] = []
-        context["va_error_rows"] = []
-        context["va_missing_gps_rows"] = []
         if active_va_subtab in subtab_sources:
             queryset, page_param, rows_key = subtab_sources[active_va_subtab]
             page = _paginate(
                 self.request,
-                queryset.prefetch_related("causes", "coding_issues", "location"),
+                _with_va_table_data(queryset),
                 page_param,
             )
             context[rows_key] = _get_context_for_va_table(
@@ -294,60 +335,71 @@ class DataCleanupIndexView(CustomAuthMixin, PermissionRequiredMixin, ListView):
             context["va_subtab_page"] = page
             context["va_subtab_page_param"] = page_param
 
-        # Each tab shows the data quality issues detected on its own records,
-        # generated automatically on load (or via the dq_* management commands).
-        household_rows, household_total = _dq_rows_for_model(
-            Household,
-            _household_row,
-            ("id", "key", "hhn", "province", "district", "ward", "ea"),
-        )
-        context["household_issue_rows"] = household_rows
-        context["dq_issue_total"] = household_total
-
-        pregnancy_rows, pregnancy_total = _dq_rows_for_model(
-            Pregnancy,
-            _pregnancy_row,
-            ("id", "PE_04", "PE_06", "enumerator", "province", "district", "ward"),
-        )
-        context["pregnancy_issue_rows"] = pregnancy_rows
-        context["dq_pregnancy_total"] = pregnancy_total
-
-        outcome_rows, outcome_total = _dq_rows_for_model(
-            PregnancyOutcome,
-            _pregnancy_outcome_row,
-            (
-                "id",
-                "PO_02",
-                "PO_04",
-                "PO_41",
-                "PO_46",
-                "enumerator",
-                "province",
-                "district",
-                "ward",
-            ),
-        )
-        context["pregnancy_outcome_issue_rows"] = outcome_rows
-        context["dq_pregnancy_outcome_total"] = outcome_total
-
-        death_rows, death_total = _dq_rows_for_model(
-            Death,
-            _death_row,
-            (
-                "id",
-                "DE_01",
-                "DE_03",
-                "DE_06",
-                "enumerator",
-                "province",
-                "district",
-                "ward",
-            ),
-        )
-        context["death_issue_rows"] = death_rows
-        context["dq_death_total"] = death_total
-
         return context
+
+    def _add_data_quality_context(self, context, active_tab):
+        tab_config = {
+            "household": (
+                Household,
+                _household_row,
+                ("id", "key", "hhn", "province", "district", "ward", "ea"),
+                "household_issue_rows",
+                "dq_issue_total",
+            ),
+            "pregnancy": (
+                Pregnancy,
+                _pregnancy_row,
+                (
+                    "id",
+                    "PE_04",
+                    "PE_06",
+                    "enumerator",
+                    "province",
+                    "district",
+                    "ward",
+                ),
+                "pregnancy_issue_rows",
+                "dq_pregnancy_total",
+            ),
+            "pregnancy-outcome": (
+                PregnancyOutcome,
+                _pregnancy_outcome_row,
+                (
+                    "id",
+                    "PO_02",
+                    "PO_04",
+                    "PO_41",
+                    "PO_46",
+                    "enumerator",
+                    "province",
+                    "district",
+                    "ward",
+                ),
+                "pregnancy_outcome_issue_rows",
+                "dq_pregnancy_outcome_total",
+            ),
+            "death": (
+                Death,
+                _death_row,
+                (
+                    "id",
+                    "DE_01",
+                    "DE_03",
+                    "DE_06",
+                    "enumerator",
+                    "province",
+                    "district",
+                    "ward",
+                ),
+                "death_issue_rows",
+                "dq_death_total",
+            ),
+        }
+        model, row_builder, fields, rows_key, total_key = tab_config[active_tab]
+        rows, total, page = _dq_rows_for_model(self.request, model, row_builder, fields)
+        context[rows_key] = rows
+        context[total_key] = total
+        context["dq_page"] = page
 
 
 data_cleanup_index_view = DataCleanupIndexView.as_view()

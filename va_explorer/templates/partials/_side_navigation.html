@@ -117,6 +117,18 @@
             </a>
           </li>
         {% endif %}
+        {% if perms.va_data_management.view_linkagereview %}
+          <li class="nav-item">
+            <a
+              class="nav-link {% if request.resolver_match.url_name == 'linkage_review_index' or request.resolver_match.url_name == 'linkage_review_detail' %}active{% endif %}"
+              href="{% url 'va_data_management:linkage_review_index' %}"
+              data-tooltip="Death-VA Linkage"
+            >
+              <i class="fas fa-link nav-icon"></i>
+              <span class="nav-label">Linkage Review</span>
+            </a>
+          </li>
+        {% endif %}
         {% if perms.va_data_management.view_verbalautopsy %}
           <li class="nav-item">
             <a

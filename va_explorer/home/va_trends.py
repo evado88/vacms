@@ -4,6 +4,7 @@ import pandas as pd
 from django.db.models import F
 from pandas.tseries.offsets import DateOffset
 
+from va_explorer.dashboard_cutoff import DASHBOARD_CHART_START_DATE
 from va_explorer.va_data_management.constants import REDACTED_STRING
 from va_explorer.va_data_management.utils.date_parsing import (
     get_interview_dates,
@@ -48,7 +49,13 @@ def _trend_window():
     """
     today = pd.to_datetime(date.today())
     start_month = pd.to_datetime(date(today.year - 1, today.month, 1))
-    months = [start_month + DateOffset(months=i) for i in range(12)]
+    cutoff_month = pd.to_datetime(DASHBOARD_CHART_START_DATE)
+    months = []
+    for i in range(12):
+        current = start_month + DateOffset(months=i)
+        if current >= cutoff_month:
+            months.append(current)
+    start_month = months[0] if months else cutoff_month
     return today, start_month, months
 
 
@@ -195,46 +202,52 @@ def get_trends_data(user):
         vas_1_month = va_df[va_df["date"] >= (today - DateOffset(months=1))].index
         vas_overall = va_df.sort_values(by="id").index
 
-        # Graphs of the past 12 months, not including this month
-        # (current month will almost always show month with artificially low numbers)
-        x = [month.strftime("%b") for month in months]
-        yearmonths = [month.strftime("%Y-%m") for month in months]
-        plot_df = pd.DataFrame({"yearmonth": yearmonths, "x": x})
+        if months:
+            # Graphs of the past 12 months, excluding buckets before 2025.
+            x = [month.strftime("%b") for month in months]
+            yearmonths = [month.strftime("%Y-%m") for month in months]
+            plot_df = pd.DataFrame({"yearmonth": yearmonths, "x": x})
 
-        # Collected; total VAs by month
-        plot_df = plot_df.merge(
-            va_df.query("date >= @start_month")
-            .groupby("yearmonth")["id"]
-            .count()
-            .rename("y_collected")
-            .reset_index(),
-            how="left",
-        ).fillna(0)
+            # Collected; total VAs by month
+            plot_df = plot_df.merge(
+                va_df.query("date >= @start_month")
+                .groupby("yearmonth")["id"]
+                .count()
+                .rename("y_collected")
+                .reset_index(),
+                how="left",
+            ).fillna(0)
 
-        collected_monthly = plot_df["y_collected"].astype(float).values.tolist()
-        graphs["collected"]["x"] = plot_df["x"].values.tolist()
-        graphs["collected"]["y"] = _to_cumulative(collected_monthly)
+            collected_monthly = plot_df["y_collected"].astype(float).values.tolist()
+            graphs["collected"]["x"] = plot_df["x"].values.tolist()
+            graphs["collected"]["y"] = _to_cumulative(collected_monthly)
 
-        # Coded; same query as above, just filtered by whether the va has been coded
-        plot_df = plot_df.merge(
-            va_df.query("date >= @start_month & is_coded")
-            .groupby("yearmonth")["id"]
-            .count()
-            .rename("y_coded")
-            .reset_index(),
-            how="left",
-        ).fillna(0)
+            # Coded; same query as above, filtered by whether the VA is coded.
+            plot_df = plot_df.merge(
+                va_df.query("date >= @start_month & is_coded")
+                .groupby("yearmonth")["id"]
+                .count()
+                .rename("y_coded")
+                .reset_index(),
+                how="left",
+            ).fillna(0)
 
-        coded_monthly = plot_df["y_coded"].astype(float).values.tolist()
-        graphs["coded"]["x"] = plot_df["x"].values.tolist()
-        graphs["coded"]["y"] = _to_cumulative(coded_monthly)
+            coded_monthly = plot_df["y_coded"].astype(float).values.tolist()
+            graphs["coded"]["x"] = plot_df["x"].values.tolist()
+            graphs["coded"]["y"] = _to_cumulative(coded_monthly)
 
-        # Uncoded; just take the difference between the two previous queries
-        uncoded_monthly = (
-            (plot_df["y_collected"] - plot_df["y_coded"]).astype(float).values.tolist()
-        )
-        graphs["uncoded"]["x"] = plot_df["x"].values.tolist()
-        graphs["uncoded"]["y"] = _to_cumulative(uncoded_monthly)
+            # Uncoded; just take the difference between the two previous queries.
+            uncoded_monthly = (
+                (plot_df["y_collected"] - plot_df["y_coded"])
+                .astype(float)
+                .values.tolist()
+            )
+            graphs["uncoded"]["x"] = plot_df["x"].values.tolist()
+            graphs["uncoded"]["y"] = _to_cumulative(uncoded_monthly)
+        else:
+            for graph_type in VA_GRAPH_TYPES:
+                graphs[graph_type]["x"] = []
+                graphs[graph_type]["y"] = []
 
         # VAs successfully coded in the past 24 hours, 1 week, and 1 month
         vas_coded_24_hours = int(va_df.loc[vas_24_hours, "is_coded"].sum())

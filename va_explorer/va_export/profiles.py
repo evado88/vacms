@@ -1,17 +1,19 @@
-"""Export field profiles for Verbal Autopsy downloads.
+"""Export field profiles for combined VA and VASA downloads.
 
 The ``Abridged VA`` export profile keeps only the columns needed for analysis and
 record tracking: identifiers, location, demographics and cause-of-death. The lists
 below are intentionally grouped and human-readable so the profile is easy to extend.
 
 The export view (:mod:`va_explorer.va_export.views`) intersects
-``ABRIDGED_VA_EXPORT_COLUMNS`` with the columns actually present on the assembled
-DataFrame, so any field missing from a given record set is silently skipped.
+``ABRIDGED_VA_EXPORT_COLUMNS`` with the model-backed export schema, so any field
+that is not available is silently skipped.
 """
 
 # Identifier / tracking fields needed for linkage and audit.
 VA_ABRIDGED_IDENTIFIER_FIELDS = [
     "id",
+    "source",
+    "instrument",
     "instanceid",
     "instancename",
     "deviceid",

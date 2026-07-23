@@ -13,6 +13,7 @@ from va_explorer.va_data_management.management.commands.load_form_csv import (
     FORM_MODEL_MAP,
 )
 from va_explorer.va_data_management.models import (
+    Death,
     ODKFormChoice,
     ODKPullLock,
     ODKPullState,
@@ -142,6 +143,51 @@ def _run_dq_after_import(form_name: str, created: int, updated: int) -> None:
         )
 
 
+def _assign_death_ids_after_import(
+    *,
+    form_name: str,
+    keys: Optional[Iterable[Any]] = None,
+    objects: Optional[Iterable[Any]] = None,
+) -> None:
+    """Mint Death IDs for death rows touched by a bulk import.
+
+    Bulk create/update bypasses the Death post_save signal, so ODK imports need
+    an explicit hook. The assignment service is idempotent and only fills blank
+    death_id values.
+    """
+    if form_name != "death":
+        return
+
+    pks = [getattr(obj, "pk", None) for obj in objects or []]
+    pks = [pk for pk in pks if pk is not None]
+
+    if not pks and keys:
+        import_keys = [str(key).strip() for key in keys if str(key or "").strip()]
+        if import_keys:
+            pks = list(
+                Death.objects.filter(key__in=import_keys).values_list("id", flat=True)
+            )
+
+    if not pks:
+        return
+
+    from va_explorer.va_data_management.utils.death_ids import assign_death_ids
+
+    summary = assign_death_ids(death_ids=pks)
+    if summary.get("assigned"):
+        logger.info(
+            "Assigned death_ids to %d death row(s) after ODK import",
+            summary["assigned"],
+        )
+    for ward, info in summary.get("skipped_wards", {}).items():
+        logger.warning(
+            "No death_id assigned after ODK import for %d death row(s) in ward %s: %s",
+            info.get("count", 0),
+            ward,
+            info.get("reason"),
+        )
+
+
 def import_dataframe_records(form_name: str, df: pd.DataFrame) -> Dict[str, int]:
     """Map values using ODKFormChoice and save model records."""
     lookup: Dict[str, Dict[str, str]] = {}
@@ -179,6 +225,7 @@ def import_dataframe_records(form_name: str, df: pd.DataFrame) -> Dict[str, int]
             for row in df.to_dict(orient="records")
         ]
         model.objects.bulk_create(objects)
+        _assign_death_ids_after_import(form_name=form_name, objects=objects)
         _run_dq_after_import(form_name, len(objects), 0)
         return {
             "created": len(objects),
@@ -253,6 +300,7 @@ def import_dataframe_records(form_name: str, df: pd.DataFrame) -> Dict[str, int]
         if to_update:
             model.objects.bulk_update(to_update, fields=update_fields)
 
+    _assign_death_ids_after_import(form_name=form_name, keys=keys)
     _run_dq_after_import(form_name, len(to_create), len(to_update))
 
     return {

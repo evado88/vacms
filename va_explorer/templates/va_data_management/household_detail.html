@@ -162,6 +162,7 @@
 
   <div class="tab-pane fade" id="issues" role="tabpanel" aria-labelledby="issues-tab">
   <div class="row mt-4">
+    {% include "va_data_management/partials/_duplicate_issue_links.html" %}
     {% if dq_issues and dq_issues|length > 0 %}
       <div class="col-12 mb-2">
         <span class="badge badge-danger mr-2">Open: {{ dq_issues_counts.open }}</span>

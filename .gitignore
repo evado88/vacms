@@ -12,6 +12,7 @@ OpenVAFiles
 
 .env
 .save
+.env.save
 .envs/*
 pgdata
 celerybeat-schedule
@@ -98,6 +99,7 @@ Icon
 
 ### VACMS Stuff
 *.csv
+!va_explorer/va_data_management/linkage/linkage_crosswalk.csv
 *.xlsx
 
 # DB DUMP

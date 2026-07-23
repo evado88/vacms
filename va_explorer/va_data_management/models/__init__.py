@@ -8,13 +8,23 @@ from .household_census import (
     HouseholdMember,
     SRSClusterLocation,
 )
+from .linkage_review import LinkageReview
 from .odk_reference import ODKFormChoice
 from .odk_state import ODKPullLock, ODKPullState
 from .pregnancy import Pregnancy
 from .pregnancy_outcome import PregnancyOutcome, PregnancyOutcomeBaby
 from .social_mobilization import RumorLog, SocialMobilization
 from .srs_ea_population_target import BaselineCensusProvince, SRSEAPopulationTarget
-from .va_death_match import MatchMethod, MatchStatus, VADeathMatch
+from .va_death_match import (
+    MatchingConfig,
+    MatchMethod,
+    MatchStatus,
+    ReviewMode,
+    ReviewReason,
+    VADeathMatch,
+    VADeathMatchDecision,
+    VADeathMatchRejection,
+)
 from .vasa import (
     VASA,
     VASACareSeekingAdult,
@@ -66,6 +76,12 @@ __all__ = [
     "SRSEAPopulationTarget",
     "BaselineCensusProvince",
     "VADeathMatch",
+    "VADeathMatchDecision",
+    "VADeathMatchRejection",
+    "MatchingConfig",
+    "LinkageReview",
     "MatchStatus",
     "MatchMethod",
+    "ReviewMode",
+    "ReviewReason",
 ]

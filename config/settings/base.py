@@ -167,6 +167,9 @@ ODK_PULL_FORMS = [
 # retrospective command and sweeper are the initial operating mode; nothing
 # auto-links on ingest until an operator turns this on.
 VA_DEATH_MATCH_ENABLED = env.bool("VA_DEATH_MATCH_ENABLED", default=False)
+VA_DEATH_MATCH_MODE = env(
+    "VA_DEATH_MATCH_MODE", default=None
+)  # off | shadow | review_only | auto
 # Confidence thresholds (percent). Auto-link requires score STRICTLY greater
 # than the auto threshold; the review band is [review, auto] inclusive.
 VA_DEATH_MATCH_AUTO_THRESHOLD = env.int("VA_DEATH_MATCH_AUTO_THRESHOLD", default=90)
@@ -194,6 +197,18 @@ VA_DEATH_MATCH_ALGORITHM_VERSION = env(
 # matcher failure never breaks VA ingestion (errors are logged + recorded).
 VA_DEATH_MATCH_RAISE_INGESTION_ERRORS = env.bool(
     "VA_DEATH_MATCH_RAISE_INGESTION_ERRORS", default=False
+)
+# Prior for calibration: at least this % of VA/VASA records are known to have a
+# corresponding death record. The weekly calibration task and the
+# `link_deaths_to_vas --calibrate` report warn when (linked + review-queued)
+# coverage falls below it. Union-blocking DOD half-width and per-block caps
+# feed the v2 candidate generation (MatchingConfig rows can override both).
+VA_DEATH_MATCH_EXPECTED_LINK_RATE = env.int(
+    "VA_DEATH_MATCH_EXPECTED_LINK_RATE", default=75
+)
+VA_DEATH_MATCH_DOD_BLOCK_DAYS = env.int("VA_DEATH_MATCH_DOD_BLOCK_DAYS", default=60)
+VA_DEATH_MATCH_MAX_CANDIDATES_PER_BLOCK = env.int(
+    "VA_DEATH_MATCH_MAX_CANDIDATES_PER_BLOCK", default=200
 )
 
 DEFAULT_AUTO_FIELD = "django.db.models.AutoField"

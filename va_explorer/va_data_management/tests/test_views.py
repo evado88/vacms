@@ -692,12 +692,26 @@ def test_data_manager_can_access_non_user_data_views():
         reverse("va_data_management:pregnancies"),
         reverse("va_data_management:pregnancy_outcomes"),
         reverse("va_data_management:deaths"),
+        reverse("va_data_management:linkage_review_index"),
         reverse("va_data_management:index"),
     ]
 
     for url in urls:
         response = client.get(url)
         assert response.status_code == 200
+
+
+@pytest.mark.parametrize("group_name", ["Data Managers", "Admins"])
+def test_linkage_review_is_available_to_seeded_groups(group_name):
+    user = UserFactory.create(groups=[seeded_group(group_name)])
+    client = Client()
+    client.force_login(user=user)
+
+    response = client.get(reverse("va_data_management:deaths"))
+    assert response.status_code == 200
+    assert b'data-tooltip="Death-VA Linkage"' in response.content
+    assert b'href="/va_data_management/linkage-review"' in response.content
+    assert b'href="/admin-panel/"' in response.content
 
 
 def test_data_viewer_can_access_default_data_views():

@@ -9,6 +9,7 @@
       <th><a href="?{% sort_url 'province' direction='-' %}">Province</a>{% if ob == 'province' %}▲{% elif ob == '-province' %}▼{% endif %}</th>
       <th><a href="?{% sort_url 'district' direction='-' %}">District</a>{% if ob == 'district' %}▲{% elif ob == '-district' %}▼{% endif %}</th>
       <th><a href="?{% sort_url 'ward' direction='-' %}">Ward</a>{% if ob == 'ward' %}▲{% elif ob == '-ward' %}▼{% endif %}</th>
+      <th>EA</th>
       <th><a href="?{% sort_url 'DE_03' direction='-' %}">Deceased Name</a>{% if ob == 'DE_03' %}▲{% elif ob == '-DE_03' %}▼{% endif %}</th>
       <th><a href="?{% sort_url 'DE_06' direction='-' %}">Date of Death</a>{% if ob == 'DE_06' %}▲{% elif ob == '-DE_06' %}▼{% endif %}</th>
       <th></th>
@@ -30,6 +31,7 @@
           <td>{{ o.province|default:"-" }}</td>
           <td>{{ o.district|default:"-" }}</td>
           <td>{{ o.ward|default:"-" }}</td>
+          <td>{{ o.ea|default:"-" }}</td>
           <td>{% pii_filter "DE_03" o.DE_03|default:"Unknown" %}</td>
           <td>{{ o.DE_06|standard_date|default:"-" }}</td>
           <td>
@@ -58,7 +60,7 @@
       {% endfor %}
     {% else %}
       <tr>
-        <td colspan="10">There are no results.</td>
+        <td colspan="11">There are no results.</td>
       </tr>
     {% endif %}
   </tbody>

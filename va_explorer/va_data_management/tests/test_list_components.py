@@ -86,6 +86,25 @@ def test_component_honors_filters():
     assert "Ndola Person" not in content
 
 
+def test_component_honors_ea_filter():
+    client = Client()
+    client.force_login(_death_viewer())
+    _make_death(DE_03="EA 101 Person", eventid=None, ea="101")
+    _make_death(DE_03="EA 202 Person", eventid=None, ea="202")
+
+    response = client.get(
+        reverse("va_data_management:deaths"),
+        {"component": "1", "ea": "101"},
+    )
+
+    assert response.status_code == 200
+    content = response.content.decode()
+    assert ">EA<" in content
+    assert ">101<" in content
+    assert "EA 101 Person" in content
+    assert "EA 202 Person" not in content
+
+
 def test_component_honors_date_filters_from_date_inputs():
     client = Client()
     client.force_login(_death_viewer())
@@ -116,3 +135,4 @@ def test_full_page_has_no_apply_button_and_loads_list_js():
     assert ">Latest</label>" in content
     assert "list_table.js" in content
     assert "data-list-slot" in content
+    assert 'placeholder="EA"' in content

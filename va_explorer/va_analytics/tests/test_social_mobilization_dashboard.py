@@ -486,10 +486,22 @@ class TestSocialMobilizationChartData:
 
     def test_trend_buckets_by_day(self):
         _build_fixture()
+        SocialMobilization.objects.create(
+            key="social-mob-pre-cutoff",
+            province="copperbelt",
+            district="mpongwe",
+            health_facility="HP1",
+            village_neighbourhood="V1",
+            submissiondate="2024-12-31T12:00:00.000Z",
+            event_type="household",
+            people_over_15="100",
+        )
         payload = _chart(_client())
 
-        # Recent rows share one day; the old row adds a second bucket.
+        # Recent rows share one day; the post-cutoff old row adds a second
+        # bucket. The explicit 2024 row is outside the chart cutoff.
         assert len(payload["trend"]) == 2
+        assert all(not row["date"].startswith("2024") for row in payload["trend"])
         assert all("people_reached" in row for row in payload["trend"])
 
     def test_location_filter_narrows_results(self):

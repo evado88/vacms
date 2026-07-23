@@ -31,6 +31,9 @@ from va_explorer.va_data_management.models import (
 )
 from va_explorer.va_data_management.tasks import run_coding_algorithms
 from va_explorer.va_data_management.utils.date_parsing import parse_date
+from va_explorer.va_data_management.utils.duplicate_issues import (
+    get_duplicate_issue_groups,
+)
 from va_explorer.va_data_management.utils.loading import get_va_summary_stats
 from va_explorer.va_data_management.utils.validate import validate_vas_for_dashboard
 from va_explorer.va_data_management.vasa.value_decode import sa_display_value
@@ -252,6 +255,9 @@ class Show(
         context["errors"] = [
             issue for issue in coding_issues if issue.severity == "error"
         ]
+        context["duplicate_issue_groups"] = get_duplicate_issue_groups(
+            self.object, self.get_queryset()
+        )
 
         # TODO: date in diff info should be formatted in local time
         history = self.object.history.all().reverse()
@@ -354,6 +360,9 @@ class VASAShow(
         context["errors"] = [
             issue for issue in coding_issues if issue.severity == "error"
         ]
+        context["duplicate_issue_groups"] = get_duplicate_issue_groups(
+            self.object, self.get_queryset()
+        )
 
         # Linked social autopsy (OneToOne; may be absent).
         try:

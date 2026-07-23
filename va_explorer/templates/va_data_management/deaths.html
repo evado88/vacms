@@ -10,7 +10,7 @@
   <div data-list-table>
     <section class="ou-card ou-mb-3">
       <div class="ou-card-body">
-        <small class="ou-filter-note">Filter deaths by enumerator, district, ward, deceased name, or date of death range.</small>
+        <small class="ou-filter-note">Filter deaths by enumerator, district, ward, EA, deceased name, or date of death range.</small>
         <form method="get" class="ou-filter-row ou-va-filter-row" data-list-filter>
           {% for field in filter.form %}
             <div class="form-group mb-0{% if field.name == 'start_date' or field.name == 'end_date' %} ou-date-filter-group{% endif %}">

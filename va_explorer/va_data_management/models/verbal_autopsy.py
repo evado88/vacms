@@ -1621,7 +1621,8 @@ class BaseVerbalAutopsy(SoftDeletionModel):
         ODK-first community/facility tagging:
         - explicit community_va values win (yes/no variants)
         - otherwise infer community from district/constituency/ward/ea
-        - otherwise infer facility when both area and hospital are present
+        - otherwise infer facility when hospital is present
+        - otherwise treat area as legacy community geography
         - otherwise unresolved (None)
         """
         value = (self.community_va or "").strip().lower()
@@ -1641,10 +1642,10 @@ class BaseVerbalAutopsy(SoftDeletionModel):
         ):
             return "yes"
 
-        if self._has_meaningful_value(self.area) and self._has_meaningful_value(
-            self.hospital
-        ):
+        if self._has_meaningful_value(self.hospital):
             return "no"
+        if self._has_meaningful_value(self.area):
+            return "yes"
 
         return None
 

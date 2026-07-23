@@ -8,10 +8,15 @@
   <div class="col-12">
     <div class="d-flex align-items-center justify-content-between mb-3">
       <h4 class="mb-0">Admin Panel</h4>
-      <span class="badge badge-secondary">Admin Only</span>
+      {% if can_run_admin_commands %}
+      <span class="badge badge-secondary">Admin Access</span>
+      {% elif can_view_linkage_review %}
+      <span class="badge badge-info">Linkage Access</span>
+      {% endif %}
     </div>
 
     <ul class="nav nav-tabs" id="vacmsAdminPanelTabs" role="tablist">
+      {% if can_run_admin_commands %}
       <li class="nav-item" role="presentation">
         <a class="nav-link active" id="adminTabCommands-tab" data-toggle="tab" href="#adminTabCommands" role="tab" aria-controls="adminTabCommands" aria-selected="true">Commands</a>
       </li>
@@ -24,9 +29,16 @@
       <li class="nav-item" role="presentation">
         <a class="nav-link" id="adminTabAudit-tab" data-toggle="tab" href="#adminTabAudit" role="tab" aria-controls="adminTabAudit" aria-selected="false">System Audit Trail</a>
       </li>
+      {% endif %}
+      {% if can_view_linkage_review %}
+      <li class="nav-item" role="presentation">
+        <a class="nav-link {% if not can_run_admin_commands %}active{% endif %}" id="adminTabLinkage-tab" data-toggle="tab" href="#adminTabLinkage" role="tab" aria-controls="adminTabLinkage" aria-selected="{% if not can_run_admin_commands %}true{% else %}false{% endif %}">Death-VA Linkage</a>
+      </li>
+      {% endif %}
     </ul>
 
     <div class="tab-content border border-top-0 p-3" id="vacmsAdminPanelTabsContent">
+      {% if can_run_admin_commands %}
       <div class="tab-pane fade show active" id="adminTabCommands" role="tabpanel" aria-labelledby="adminTabCommands-tab">
         <div class="card mb-4">
           <div class="card-header d-flex justify-content-between align-items-center">
@@ -228,7 +240,91 @@
           </div>
         </section>
       </div>
+      {% endif %}
 
+      {% if can_view_linkage_review %}
+      <div class="tab-pane fade {% if not can_run_admin_commands %}show active{% endif %}" id="adminTabLinkage" role="tabpanel" aria-labelledby="adminTabLinkage-tab">
+        <div class="d-flex flex-wrap align-items-center justify-content-between mb-3">
+          <div class="mr-3">
+            <h5 class="mb-1">Death-VA Linkage</h5>
+            <p class="small text-muted mb-0">
+              Configure automatic Death to VA matching and open the review workspace when needed.
+            </p>
+          </div>
+          <div class="btn-group btn-group-sm">
+            <a class="btn btn-outline-secondary" href="{% url 'va_data_management:linkage_review_index' %}" target="_blank" rel="noopener">Open full page</a>
+          </div>
+        </div>
+        <section class="card mb-4">
+          <div class="card-header d-flex flex-wrap align-items-center justify-content-between">
+            <strong>Automatic Linkage Configuration</strong>
+            <span class="small text-muted mt-1 mt-sm-0">
+              Active revision: <code>{{ active_linkage_config.name|default:"settings defaults" }}</code>
+            </span>
+          </div>
+          <div class="card-body">
+            <div class="row">
+              <div class="{% if can_change_linkage_config %}col-lg-9 pr-lg-4{% else %}col-12{% endif %}">
+                <p class="small text-muted">
+                  New settings apply to subsequent linkage evaluations. Existing evaluations retain the configuration revision recorded with them.
+                </p>
+                {% if can_change_linkage_config %}
+                <form method="post" action="{% url 'va_admin:linkage-config' %}">
+                  {% csrf_token %}
+                  <div class="row">
+                    {% for field in linkage_config_form %}
+                    <div class="col-lg-6">
+                      {% if field.name == 'name_nrc_probabilistic_auto_enabled' %}
+                      <div class="custom-control custom-checkbox mb-3 pt-2">
+                        {{ field }}
+                        <label class="custom-control-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+                        {% if field.help_text %}<small class="form-text text-muted">{{ field.help_text }}</small>{% endif %}
+                      </div>
+                      {% else %}
+                      <div class="form-group mb-3">
+                        <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+                        {{ field }}
+                        {% if field.help_text %}<small class="form-text text-muted">{{ field.help_text }}</small>{% endif %}
+                      </div>
+                      {% endif %}
+                    </div>
+                    {% endfor %}
+                  </div>
+                  <button type="submit" class="btn btn-primary">Create and Activate Revision</button>
+                </form>
+                {% else %}
+                <dl class="row small mb-0">
+                  {% for item in linkage_config_summary_items %}
+                  <dt class="col-sm-5">{{ item.label }}</dt>
+                  <dd class="col-sm-7 mb-3">
+                    <div>{{ item.value }}</div>
+                    {% if item.help_text %}
+                    <div class="text-muted">{{ item.help_text }}</div>
+                    {% endif %}
+                  </dd>
+                  {% endfor %}
+                </dl>
+                {% endif %}
+              </div>
+              {% if can_change_linkage_config %}
+              <aside class="col-lg-3 pl-lg-4 mt-4 mt-lg-0 vacms-linkage-run-column" aria-labelledby="vacmsLinkageRunTitle">
+                <strong id="vacmsLinkageRunTitle">Run Death-VA Linkage</strong>
+                <p class="small text-muted mt-2">
+                  Evaluate Death and VA records now, persist safe automatic links, and send uncertain matches for review using the active revision.
+                </p>
+                <form method="post" action="{% url 'va_admin:linkage-run' %}">
+                  {% csrf_token %}
+                  <button type="submit" class="btn btn-success btn-block">Run Linkage Now</button>
+                </form>
+              </aside>
+              {% endif %}
+            </div>
+          </div>
+        </section>
+      </div>
+      {% endif %}
+
+      {% if can_run_admin_commands %}
       <div class="tab-pane fade" id="adminTabAlerts" role="tabpanel" aria-labelledby="adminTabAlerts-tab">
         <section class="card vacms-alerts-panel">
           <div class="card-header d-flex justify-content-between align-items-center">
@@ -261,6 +357,7 @@
       <div class="tab-pane fade" id="adminTabAudit" role="tabpanel" aria-labelledby="adminTabAudit-tab">
         {% include "va_admin/_audit_trail.html" %}
       </div>
+      {% endif %}
     </div>
   </div>
 </div>
@@ -367,6 +464,16 @@
 
 {% block page_scripts %}
   <style>
+    .vacms-linkage-run-column {
+      border-left: 1px solid #dee2e6;
+    }
+    @media (max-width: 991.98px) {
+      .vacms-linkage-run-column {
+        border-left: 0;
+        border-top: 1px solid #dee2e6;
+        padding-top: 1.5rem;
+      }
+    }
     .vacms-alerts-panel {
       max-height: 640px;
       min-height: 640px;

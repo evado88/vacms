@@ -17,8 +17,21 @@
   };
 
   const SERIES = {
-    capture: { label: "Death → Capture (E_DEATH)", color: "#4b84ce", border: "#2f6ec2" },
-    va: { label: "Death → VA Submission", color: "#d73027", border: "#b02318" },
+    capture: {
+      label: "Date of death → E_DEATH capture",
+      color: "#4b84ce",
+      border: "#2f6ec2",
+    },
+    captureToVa: {
+      label: "E_DEATH capture → VA capture",
+      color: "#1f9d55",
+      border: "#147a3f",
+    },
+    va: {
+      label: "Date of death → VA capture",
+      color: "#d73027",
+      border: "#b02318",
+    },
   };
 
   let histogramChart = null;
@@ -94,10 +107,11 @@
     };
 
     setText("vaTimelineCardTotal", cards.total_deaths ?? 0);
+    setText("vaTimelineCardCommunityVas", cards.total_community_vas ?? 0);
     const coveragePct = cards.linked_coverage_pct ?? 0;
     setText(
       "vaTimelineCardCoverage",
-      `${coveragePct}% (${cards.linked_deaths ?? 0}/${cards.total_deaths ?? 0})`
+      `${coveragePct}% (${cards.linked_deaths ?? 0}/${cards.total_community_vas ?? 0})`
     );
     setText("vaTimelineCardDeathCapture", cards.median_death_to_capture_days ?? "N/A");
     setText("vaTimelineCardDeathVa", cards.median_death_to_va_days ?? "N/A");
@@ -129,6 +143,13 @@
               borderColor: SERIES.va.border,
               borderWidth: 1,
             },
+            {
+              label: SERIES.captureToVa.label,
+              data: [],
+              backgroundColor: SERIES.captureToVa.color,
+              borderColor: SERIES.captureToVa.border,
+              borderWidth: 1,
+            },
           ],
         },
         options: {
@@ -136,7 +157,7 @@
           maintainAspectRatio: false,
           plugins: { legend: { display: true, position: "top" }, tooltip: { enabled: true } },
           scales: {
-            x: { grid: { display: false }, title: { display: true, text: "Delay since death (days)" } },
+            x: { grid: { display: false }, title: { display: true, text: "Gap in days" } },
             y: {
               beginAtZero: true,
               ticks: { precision: 0 },
@@ -151,10 +172,15 @@
     histogramChart.data.labels = histogram.labels || [];
     histogramChart.data.datasets[0].data = histogram.death_to_capture || [];
     histogramChart.data.datasets[1].data = histogram.death_to_va || [];
+    histogramChart.data.datasets[2].data = histogram.capture_to_va || [];
     histogramChart.update();
 
     const total = []
-      .concat(histogram.death_to_capture || [], histogram.death_to_va || [])
+      .concat(
+        histogram.death_to_capture || [],
+        histogram.death_to_va || [],
+        histogram.capture_to_va || []
+      )
       .reduce((acc, value) => acc + Number(value || 0), 0);
     setEmpty("vaTimelineHistogramEmpty", total === 0);
   };
@@ -235,7 +261,7 @@
           labels: [],
           datasets: [
             {
-              label: "Median death → capture (days)",
+              label: "Median date of death → E_DEATH capture (days)",
               data: [],
               borderColor: SERIES.capture.color,
               backgroundColor: "rgba(75, 132, 206, 0.15)",
@@ -245,7 +271,17 @@
               spanGaps: false,
             },
             {
-              label: "Median death → VA (days)",
+              label: "Median E_DEATH capture → VA capture (days)",
+              data: [],
+              borderColor: SERIES.captureToVa.color,
+              backgroundColor: "rgba(31, 157, 85, 0.15)",
+              pointRadius: 3,
+              tension: 0.25,
+              fill: false,
+              spanGaps: false,
+            },
+            {
+              label: "Median date of death → VA capture (days)",
               data: [],
               borderColor: SERIES.va.color,
               backgroundColor: "rgba(215, 48, 39, 0.15)",
@@ -274,7 +310,8 @@
 
     monthlyChart.data.labels = monthly.labels || [];
     monthlyChart.data.datasets[0].data = monthly.capture_delay || [];
-    monthlyChart.data.datasets[1].data = monthly.va_delay || [];
+    monthlyChart.data.datasets[1].data = monthly.capture_to_va_delay || [];
+    monthlyChart.data.datasets[2].data = monthly.va_delay || [];
     monthlyChart.update();
 
     setEmpty("vaTimelineMonthlyEmpty", (monthly.labels || []).length === 0);

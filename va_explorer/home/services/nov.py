@@ -6,6 +6,10 @@ from django.db.models import Count, Max, Q, TextField
 from django.db.models.functions import Greatest, Lower
 from django.utils import timezone
 
+from va_explorer.dashboard_cutoff import (
+    DASHBOARD_CHART_START_ISO,
+    clamp_chart_start_dt,
+)
 from va_explorer.home.services.common import (
     apply_text_geography_filter,
     build_date_expr,
@@ -274,11 +278,20 @@ def _filter_timestamps(timestamps, start_dt, end_dt):
 
 
 def _build_chart_series(pregnancy_ts, outcome_ts, death_ts, va_ts, start_dt, end_dt):
+    chart_start_dt = clamp_chart_start_dt(start_dt)
+    if end_dt is not None and end_dt < chart_start_dt:
+        return {
+            "labels": [],
+            "pregnancy": [],
+            "pregnancy_outcome": [],
+            "death": [],
+            "va": [],
+        }
     series = {
-        "pregnancy": _filter_timestamps(pregnancy_ts, start_dt, end_dt),
-        "pregnancy_outcome": _filter_timestamps(outcome_ts, start_dt, end_dt),
-        "death": _filter_timestamps(death_ts, start_dt, end_dt),
-        "va": _filter_timestamps(va_ts, start_dt, end_dt),
+        "pregnancy": _filter_timestamps(pregnancy_ts, chart_start_dt, end_dt),
+        "pregnancy_outcome": _filter_timestamps(outcome_ts, chart_start_dt, end_dt),
+        "death": _filter_timestamps(death_ts, chart_start_dt, end_dt),
+        "va": _filter_timestamps(va_ts, chart_start_dt, end_dt),
     }
 
     all_values = (
@@ -296,7 +309,7 @@ def _build_chart_series(pregnancy_ts, outcome_ts, death_ts, va_ts, start_dt, end
             "va": [],
         }
 
-    chart_start = start_dt or min(all_values)
+    chart_start = chart_start_dt
     chart_end = end_dt or max(all_values)
     day_span = (chart_end.date() - chart_start.date()).days
     use_daily = day_span <= 62
@@ -560,6 +573,7 @@ def get_national_operational_view_data(
     }
 
     return {
+        "chart_cutoff": DASHBOARD_CHART_START_ISO,
         "chart_labels": chart_data["labels"],
         "pregnancy_values": chart_data["pregnancy"],
         "pregnancy_outcome_values": chart_data["pregnancy_outcome"],

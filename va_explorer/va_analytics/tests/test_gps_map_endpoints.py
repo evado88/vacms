@@ -97,6 +97,21 @@ class TestPregnancyOutcomeMapGPS:
         assert data["gps_total"] == 2
         assert data["gps_truncated"] is True
 
+    def test_invalid_coordinates_are_excluded(self, client):
+        _make_user_with_perms(client, ["view_dashboard", "view_pii"])
+        PregnancyOutcome.objects.create(
+            key="po-invalid-gps",
+            gps="-95.0 28.5",
+            submissiondate="2026-02-01",
+            today="2026-02-01",
+        )
+        data = client.get(
+            reverse("va_analytics:po-map-api"), {"include_gps_points": "true"}
+        ).json()
+        assert len(data["gps_points"]) == 1
+        assert data["gps_total"] == 2
+        assert data["gps_truncated"] is True
+
     def test_pregnancy_events_map_alias_returns_gps_points(self, client):
         _make_user_with_perms(client, ["view_dashboard", "view_pii"])
         data = client.get(
@@ -116,6 +131,7 @@ class TestPregnancyOutcomeMapGPS:
         assert response.status_code == 200
         html = response.content.decode()
         assert 'data-user-pii="true"' in html
+        assert "dashboard_gps_layer.css" in html
         assert "dashboard_gps_layer.js" in html
         assert "hierarchical_dashboard_map.js" in html
         assert "pregnancy_events_dashboard.js" in html
@@ -130,6 +146,7 @@ class TestPregnancyMapGPS:
             province="Lusaka",
             district="Lusaka",
             PE_25="-14.5 28.3",
+            PE_09A="2026-02-01",
             submissiondate="2026-02-01",
             today="2026-02-01",
         )
@@ -153,6 +170,7 @@ class TestDeathsMapGPS:
                     province="Lusaka",
                     district="Lusaka",
                     DE_34="-15.0 28.5",
+                    DE_06="2026-02-01",
                     submissiondate="2026-02-01",
                     today="2026-02-01",
                 )
@@ -166,6 +184,25 @@ class TestDeathsMapGPS:
         point = data["gps_points"][0]
         assert point["event_type"] == "death"
         assert point["latitude"] == -15.0
+
+
+@pytest.mark.django_db
+class TestVerbalAutopsyMapGPS:
+    def test_geopoint_field_used(self, client):
+        _make_user_with_perms(client, ["view_dashboard", "view_pii"])
+        VerbalAutopsy.objects.create(
+            instanceid="va-gps-1",
+            geopoint="-15.2 28.1",
+            Id10023="2026-02-01",
+        )
+        data = client.get(
+            reverse("va_analytics:dashboard-api"),
+            {"include_gps_points": "true"},
+        ).json()
+        assert len(data["gps_points"]) == 1
+        point = data["gps_points"][0]
+        assert point["event_type"] == "verbal_autopsy"
+        assert point["latitude"] == -15.2
 
 
 @pytest.mark.django_db
@@ -186,12 +223,14 @@ class TestDeathsMapGPS:
             {
                 "key": "scoped-pregnancy-gps",
                 "PE_25": "-14.5 28.3",
+                "PE_09A": "2026-02-01",
                 "submissiondate": "2026-02-01",
                 "today": "2026-02-01",
             },
             {
                 "key": "outside-pregnancy-gps",
                 "PE_25": "-15.0 28.5",
+                "PE_09A": "2026-02-01",
                 "submissiondate": "2026-02-01",
                 "today": "2026-02-01",
             },
@@ -222,12 +261,14 @@ class TestDeathsMapGPS:
             {
                 "key": "scoped-death-gps",
                 "DE_34": "-14.5 28.3",
+                "DE_06": "2026-02-01",
                 "submissiondate": "2026-02-01",
                 "today": "2026-02-01",
             },
             {
                 "key": "outside-death-gps",
                 "DE_34": "-15.0 28.5",
+                "DE_06": "2026-02-01",
                 "submissiondate": "2026-02-01",
                 "today": "2026-02-01",
             },
@@ -302,6 +343,7 @@ def test_location_scoped_pii_user_gets_only_scoped_gps_points(
                 "constituency": "MANDEVU",
                 "ward": "CHAISA",
                 "ea": "EA_05055012002",
+                "PE_09A": "2026-02-01",
                 "submissiondate": "2026-02-01",
                 "today": "2026-02-01",
             },
@@ -332,6 +374,7 @@ def test_location_scoped_pii_user_gets_only_scoped_gps_points(
                 "constituency": "MANDEVU",
                 "ward": "CHAISA",
                 "ea": "EA_05055012002",
+                "DE_06": "2026-02-01",
                 "submissiondate": "2026-02-01",
                 "today": "2026-02-01",
             },

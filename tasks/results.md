@@ -165,3 +165,65 @@ regression test added. (The constraint prevented any bad write.)
 ### Cache/Celery/Deploy
 - No cache keys, migrations, or Celery changes. ODK/pyODK ingestion shares the
   fixed loader automatically (dry_run is keyword-only, call sites unchanged).
+
+## Death↔VA Linkage Hardening v2 (2026-07-16)
+
+Implements docs/death_va_linkage_hardenning.md (plan: docs/death_va_linkage_hardening_plan.md).
+
+### Files Added
+- `va_explorer/va_data_management/linkage/` — crosswalk package: hand-maintained
+  `crosswalk_rules.py` (seeds/overrides/category maps = human-confirmation record),
+  generated `linkage_map.py` + reviewable `linkage_crosswalk.csv`
+- `management/commands/generate_linkage_crosswalk.py` — XLSForm label analysis →
+  artifacts, `--check` drift guard (mirrors generate_vasa_mapping)
+- `utils/xlsform.py` — shared XLSForm helpers (factored out of generate_vasa_mapping)
+- `utils/matching/{config,profiles,death_index}.py` — engine defaults,
+  crosswalk-driven LinkageProfile builders, per-run in-memory Death index
+- `models/linkage_review.py` — unmanaged permission model (review workflow)
+- `views_linkage.py` + `templates/va_data_management/linkage_review/` — review UI
+  (tabs pending/ambiguous/linked/rejected/duplicates, evidence table, confirm/reject)
+- Migrations 0051 (VADeathMatch v2 fields + MatchingConfig + VADeathMatchRejection),
+  0052 (seed active config: auto 88 / review 60), 0053 (LinkageReview perms)
+- Tests: `test_linkage_{crosswalk,normalization,engine,command_views}.py` (52 tests)
+- `docs/linkage_pipeline.md` — crosswalk regen, recalibration, 75%-prior monitoring
+
+### Files Modified
+- `utils/matching/{candidate_selection,scoring,service,normalization,results}.py` —
+  v2 engine: deterministic rules (validated death_id, event bridge, unique NRC,
+  inert death_reg_no, unique exact composite) each with contradiction guards
+  (sex/DOD-year → review); union blocking (ea, constituency+ward, district+year,
+  phonetic surname+district, initials+year, DOD±60d geo-free, facility province);
+  config-table weights; never-silently-unlink demotion; rejected-pair exclusion
+- Command renamed `link_verbal_autopsies` → `link_deaths_to_vas` (+ --tool, --since,
+  --rebuild, --calibrate, --reconcile-v1, --config)
+- `tasks.py` — weekly `linkage_calibration_report` (Mon 03:00, flag-gated)
+- `va_analytics/views.py` `_build_death_va_timeline` — + review_queue_pending/
+  ambiguous, matches_with_contradictions cards (additive)
+- `initialize_groups.py` + `fixtures/group.json` — LinkageReview perms for
+  Admins/Data Managers; navbar entry
+- `config/settings/base.py` — VA_DEATH_MATCH_EXPECTED_LINK_RATE (75),
+  _DOD_BLOCK_DAYS (60), _MAX_CANDIDATES_PER_BLOCK (200)
+- `requirements/base.txt` — jellyfish==1.0.3 (Jaro-Winkler + soundex/metaphone)
+
+### Spec discrepancies resolved against the forms
+- DE-08 IS deceased NRC (model label dropped "NRC"); DE-23 = informant NRC, excluded
+- DE-03A/DE-02A nicknames absent from E_DEATH v1.2.4 → dormant crosswalk concepts
+- No death-reg-number field on E_DEATH (DE-30 is y/n) → death_reg_no rule inert
+- DE-22 is informant address → usual_residence left `proposed`, not active
+
+### Verification
+- 132 tests pass (52 new + 80 regression incl. matching/death-ids/timeline)
+- `generate_linkage_crosswalk --check` + `generate_vasa_mapping --check` green
+- ruff + black + django-upgrade clean
+- Real-data calibrate (3,252 deaths / 2,681 VA+VASA, dry-run): community VA 80.0%
+  and VASA 81.2% coverage (≥75% prior PASS); facility VA 40.0% → overall 65%
+  INVESTIGATE — facility VAs have province/area/hospital only and E_DEATH is a
+  household form, so register coverage of facility deaths needs data-owner review.
+  v2 auto-links 805 vs v1's 313; only 2 v1 links demoted (kept in alternatives);
+  8 same-tool duplicates flagged.
+- Migrations 0051–0053 applied to the local DB (additive only; dry-run engine
+  makes no match writes until `--apply`).
+
+### Known pre-existing failures (unrelated)
+- users test_mso_and_csa_groups_include_schedule_permissions (2) — documented
+  clean-tree failure.

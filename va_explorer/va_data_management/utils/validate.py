@@ -8,6 +8,125 @@ def _has_meaningful_text(value):
     return normalized not in {"", "nan", "none", "null"}
 
 
+def _coding_issue(va, text, severity):
+    return CauseCodingIssue(
+        verbalautopsy_id=va.id,
+        text=text,
+        severity=severity,
+        algorithm="",
+        settings="",
+    )
+
+
+def _community_va_mode(va):
+    """Read VA mode from live or django-simple-history model instances."""
+    try:
+        return va.community_va_normalized
+    except AttributeError:
+        value = str(getattr(va, "community_va", "") or "").strip().lower()
+        if value in {"yes", "y", "true", "1"}:
+            return "yes"
+        if value in {"no", "n", "false", "0"}:
+            return "no"
+
+        if any(
+            _has_meaningful_text(getattr(va, field, None))
+            for field in ("district", "constituency", "ward", "ea")
+        ):
+            return "yes"
+        if _has_meaningful_text(getattr(va, "hospital", None)):
+            return "no"
+        if _has_meaningful_text(getattr(va, "area", None)):
+            return "yes"
+        return None
+
+
+def _append_location_issues(va, issues):
+    """Validate only the location fields applicable to this VA's source mode."""
+    community_mode = _community_va_mode(va)
+    if community_mode is None:
+        issues.append(
+            _coding_issue(
+                va,
+                "Warning: unable to determine whether VA is community or facility "
+                "(community_va unresolved).",
+                "warning",
+            )
+        )
+        return
+
+    if community_mode == "yes":
+        # Facility, area and Location belong to facility VAs and are intentionally
+        # ignored here. A cluster is preferred, while any persisted community
+        # geography is enough to avoid a false error when cluster matching is
+        # ambiguous or has not run yet.
+        has_admin_marker = any(
+            _has_meaningful_text(candidate)
+            for candidate in (va.district, va.constituency, va.ward, va.ea)
+        )
+        if not va.cluster and not has_admin_marker:
+            issues.append(
+                _coding_issue(
+                    va,
+                    "ERROR: unmatched EA/cluster for community VA",
+                    "error",
+                )
+            )
+        return
+
+    # District, constituency, ward, EA and cluster belong to community VAs and
+    # are intentionally ignored for facility VAs.
+    if not va.location:
+        va = assign_va_location(va)
+        if not va.location:
+            issues.append(
+                _coding_issue(
+                    va,
+                    "ERROR: no location provided (or none detected)",
+                    "error",
+                )
+            )
+
+    if not va.location:
+        return
+
+    hospital = str(va.hospital or "").casefold()
+    location_name = str(va.location.name or "").casefold()
+    if not va.location.is_active and location_name != "unknown" and hospital != "other":
+        issues.append(
+            _coding_issue(
+                va,
+                "Warning: VA location was matched to facility known to be inactive. "
+                "Consider updating the location to an active facility instead, or "
+                "update the facility list.",
+                "warning",
+            )
+        )
+
+    if location_name == "unknown" and hospital == "other":
+        issues.append(
+            _coding_issue(
+                va,
+                "Warning: location field (parsed from hospital) was parsed as "
+                "'Other Facility'. May not fully show on dashboards until "
+                "underlying data is corrected to actual location.",
+                "warning",
+            )
+        )
+
+    if location_name == "unknown" and hospital != "other":
+        issues.append(
+            _coding_issue(
+                va,
+                "ERROR: location field (parsed from hospital) did not match any "
+                "known facilities in the facility list. VA Explorer set the "
+                "location to 'Unknown.' This VA will not show on dashboards until "
+                "underlying data is corrected to actual location.",
+                "error",
+            )
+        )
+
+
 def validate_vas_for_dashboard(verbal_autopsies):
     # This validator is used to determine whether there is sufficient data to include
     # the record in the dashboard. Any errors or warnings are collected and reported
@@ -98,116 +217,6 @@ def validate_vas_for_dashboard(verbal_autopsies):
             )
             issues.append(issue)
 
-        community_mode = va.community_va_normalized
-        if community_mode is None:
-            issue_text = (
-                "Warning: unable to determine whether VA is community or facility "
-                "(community_va unresolved)."
-            )
-            issue = CauseCodingIssue(
-                verbalautopsy_id=va.id,
-                text=issue_text,
-                severity="warning",
-                algorithm="",
-                settings="",
-            )
-            issues.append(issue)
-        elif community_mode == "yes":
-            # Validate: community geography.
-            # Cluster is preferred. If absent, allow persisted admin markers so
-            # community records are not incorrectly failed as facility records.
-            has_admin_marker = any(
-                _has_meaningful_text(candidate)
-                for candidate in (va.district, va.ward, va.ea)
-            )
-            if not va.cluster and not has_admin_marker:
-                issue_text = "ERROR: unmatched EA/cluster for community VA"
-                issue = CauseCodingIssue(
-                    verbalautopsy_id=va.id,
-                    text=issue_text,
-                    severity="error",
-                    algorithm="",
-                    settings="",
-                )
-                issues.append(issue)
-        else:
-            # Validate: facility location
-            # location is used to display the record on the map
-            if not va.location:
-                # try re-assigning location using location logic described in loading.py
-                va = assign_va_location(va)
-
-                # if still no location, record an error
-                if not va.location:
-                    issue_text = "ERROR: no location provided (or none detected)"
-                    issue = CauseCodingIssue(
-                        verbalautopsy_id=va.id,
-                        text=issue_text,
-                        severity="error",
-                        algorithm="",
-                        settings="",
-                    )
-                    issues.append(issue)
-
-        # if location is valid but inactive record a warning
-        if (
-            va.location
-            and not va.location.is_active
-            and va.location.name.casefold() != "unknown"
-            and va.hospital.casefold() != "other"
-            and va.community_va_normalized != "yes"
-        ):
-            issue_text = "Warning: VA location was matched to facility known \
-                to be inactive. Consider updating the location to an active \
-                facility instead, or update the facility list."
-            issue = CauseCodingIssue(
-                verbalautopsy_id=va.id,
-                text=issue_text,
-                severity="warning",
-                algorithm="",
-                settings="",
-            )
-            issues.append(issue)
-
-        # if location is "Other" (a valid, but non-informative location stemming
-        # stemming from bad data) record a warning
-        if (
-            va.location
-            and va.location.name.casefold() == "unknown"
-            and va.hospital.casefold() == "other"
-            and va.community_va_normalized != "yes"
-        ):
-            issue_text = "Warning: location field (parsed from hospital) \
-                was parsed as 'Other Facility'. May not fully show on \
-                dashboards until underlying data is corrected to actual location."
-            issue = CauseCodingIssue(
-                verbalautopsy_id=va.id,
-                text=issue_text,
-                severity="warning",
-                algorithm="",
-                settings="",
-            )
-            issues.append(issue)
-
-        # if location is "Unknown" (couldn't find match for provided location)
-        # record a warning
-        if (
-            va.location
-            and va.location.name.casefold() == "unknown"
-            and va.hospital.casefold() != "other"
-            and va.community_va_normalized != "yes"
-        ):
-            issue_text = "ERROR: location field (parsed from hospital) did not \
-                match any known facilities in the facility list. VA Explorer set \
-                the location to 'Unknown.'  This VA will not show on \
-                dashboards until underlying data is corrected to actual location."
-            issue = CauseCodingIssue(
-                verbalautopsy_id=va.id,
-                text=issue_text,
-                severity="error",
-                algorithm="",
-                settings="",
-            )
-            issues.append(issue)
+        _append_location_issues(va, issues)
 
     CauseCodingIssue.objects.bulk_create(issues)

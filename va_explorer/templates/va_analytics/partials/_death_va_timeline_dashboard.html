@@ -8,10 +8,11 @@
   <section class="sectionContainer panelView" id="vaTimelinePanelSection" data-component="panel">
     <div class="highlightsContainer deaths-summary-cards" id="vaTimelineSummaryCards" data-component="summary">
       <div class="highlight"><h3>Total Deaths</h3><p id="vaTimelineCardTotal">--</p></div>
+      <div class="highlight"><h3>Total Community VAs</h3><p id="vaTimelineCardCommunityVas">--</p></div>
       <div class="highlight"><h3>Linked VA Coverage</h3><p id="vaTimelineCardCoverage">--</p></div>
-      <div class="highlight"><h3>Median Death &rarr; Capture (days)</h3><p id="vaTimelineCardDeathCapture">--</p></div>
-      <div class="highlight"><h3>Median Death &rarr; VA (days)</h3><p id="vaTimelineCardDeathVa">--</p></div>
-      <div class="highlight"><h3>Median Capture &rarr; VA (days)</h3><p id="vaTimelineCardCaptureVa">--</p></div>
+      <div class="highlight"><h3>Median Date of Death &rarr; E_DEATH Capture</h3><p id="vaTimelineCardDeathCapture">--</p></div>
+      <div class="highlight"><h3>Median E_DEATH Capture &rarr; VA Capture</h3><p id="vaTimelineCardCaptureVa">--</p></div>
+      <div class="highlight"><h3>Median Date of Death &rarr; VA Capture</h3><p id="vaTimelineCardDeathVa">--</p></div>
     </div>
   </section>
   </div>
@@ -19,7 +20,7 @@
   <div class="deaths-filters-row">
     <section class="sectionContainer" id="vaTimelineFiltersSection" data-component="filters">
       <form id="vaTimelineFiltersForm" class="controls" method="get" action="">
-        <small class="dashboard-note">Compares when deaths occurred, when they were captured with the E_DEATH tool, and when the linked VA/VASA was submitted.</small>
+        <small class="dashboard-note">Compares date of death, E_DEATH capture date, and linked VA/VASA capture date using authoritative Death-VA matches.</small>
         <div class="filtersRow">
           <div class="mainFiltersContainer">
             <label for="vaTimelineFilterTimePreset">DOD:</label>
@@ -63,7 +64,7 @@
       <div class="deaths-inner-row">
         <div class="deaths-inner-col">
           <section class="sectionContainer" id="vaTimelineHistogramSection" data-component="histogram">
-            <h2>Reporting Delay Distribution</h2>
+            <h2>Timeline Gap Distribution</h2>
             <div class="chartsContainer">
               <div class="chart-canvas-wrap">
                 <canvas id="vaTimelineHistogramChart" data-component="histogram-chart"></canvas>
@@ -86,7 +87,7 @@
       </div>
 
       <section class="sectionContainer" id="vaTimelineMonthlySection" data-component="monthly">
-        <h2>Median Delay by Month of Death</h2>
+        <h2>Median Timeline Gaps by Month of Death</h2>
         <div class="chartsContainer">
           <div class="chart-canvas-wrap compact">
             <canvas id="vaTimelineMonthlyChart" data-component="monthly-chart"></canvas>

@@ -26,3 +26,18 @@ repos:
   hooks:
     - id: django-upgrade
       args: [--target-version, "4.1"]
+
+- repo: local
+  hooks:
+    - id: check-vasa-mapping
+      name: check VASA generated mapping
+      entry: python manage.py generate_vasa_mapping --check --quiet
+      language: system
+      pass_filenames: false
+      files: ^(va_explorer/va_data_management/(vasa/|management/commands/generate_vasa_mapping.py|utils/xlsform.py)|va_explorer/static/data/.*\.xlsx)$
+    - id: check-linkage-crosswalk
+      name: check Death-VA linkage crosswalk
+      entry: python manage.py generate_linkage_crosswalk --check --quiet
+      language: system
+      pass_filenames: false
+      files: ^(va_explorer/va_data_management/(linkage/|management/commands/generate_linkage_crosswalk.py|utils/xlsform.py|vasa/field_map.py)|va_explorer/static/data/.*\.(xlsx|csv))$

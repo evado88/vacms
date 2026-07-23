@@ -6,6 +6,7 @@ from django.db.models import Max
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
 
+from va_explorer.dashboard_cutoff import DASHBOARD_CHART_START_DATE
 from va_explorer.va_data_management.models import (
     Death,
     Household,
@@ -75,10 +76,15 @@ def _month_sequence_12(now_local):
     start = _sub_calendar_months(
         now_local.replace(day=1, hour=0, minute=0, second=0, microsecond=0), 11
     )
+    cutoff = timezone.make_aware(
+        datetime.combine(DASHBOARD_CHART_START_DATE, time.min),
+        timezone.get_current_timezone(),
+    )
     months = []
     current = start
     for _ in range(12):
-        months.append(current)
+        if current >= cutoff:
+            months.append(current)
         if current.month == 12:
             current = current.replace(year=current.year + 1, month=1)
         else:

@@ -58,10 +58,11 @@
   display: flex;
   align-items: stretch;
   gap: var(--timeline-gap);
+  flex-wrap: wrap;
 }
 
 #deathVaTimelineApp .highlight {
-  flex: 1;
+  flex: 1 1 160px;
   min-width: 0;
   overflow: hidden;
   border: 1px solid var(--timeline-border);
@@ -92,6 +93,41 @@
   font-size: 0.95rem;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+}
+
+#deathVaTimelineApp .timeline-interval-definitions {
+  margin-top: 0.75rem;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+  text-align: left;
+}
+
+#deathVaTimelineApp .timeline-interval-definitions div {
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--timeline-border);
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+#deathVaTimelineApp .timeline-interval-definitions strong,
+#deathVaTimelineApp .timeline-interval-definitions span {
+  display: block;
+}
+
+#deathVaTimelineApp .timeline-interval-definitions strong {
+  margin-bottom: 0.25rem;
+  color: var(--timeline-text);
+  font-size: 0.78rem;
+  line-height: 1.25;
+  text-wrap: balance;
+}
+
+#deathVaTimelineApp .timeline-interval-definitions span {
+  color: var(--timeline-muted);
+  font-size: 0.72rem;
+  line-height: 1.35;
+  text-wrap: pretty;
 }
 
 #deathVaTimelineApp .controls {
@@ -191,7 +227,9 @@
 
 @media (max-width: 767.98px) {
   #deathVaTimelineApp .highlightsContainer,
-  #deathVaTimelineApp .deaths-inner-row {
+  #deathVaTimelineApp .deaths-inner-row,
+  #deathVaTimelineApp .timeline-interval-definitions {
+    grid-template-columns: 1fr;
     flex-direction: column;
   }
 

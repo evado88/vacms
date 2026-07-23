@@ -36,6 +36,7 @@ def test_death_filter_placeholders():
         ("enumerator", "Enumerator"),
         ("district", "District"),
         ("ward", "Ward"),
+        ("ea", "EA"),
         ("deceased", "Deceased"),
     ]:
         _assert_placeholder(form, name, placeholder)
@@ -43,6 +44,7 @@ def test_death_filter_placeholders():
         "enumerator",
         "district",
         "ward",
+        "ea",
         "deceased",
         "start_date",
         "end_date",

@@ -6,10 +6,12 @@ import re
 import traceback
 from datetime import timedelta
 
+from django import forms
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.management import call_command
+from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.http import HttpResponseForbidden, JsonResponse, StreamingHttpResponse
 from django.middleware.csrf import get_token
@@ -17,6 +19,7 @@ from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_date as django_parse_date
+from django.utils.text import slugify
 from django.views.decorators.http import require_POST
 
 from va_explorer.va_admin.command_registry import (
@@ -28,11 +31,14 @@ from va_explorer.va_admin.command_registry import (
     requires_password_confirmation,
     resolve_data_file,
 )
+from va_explorer.va_admin.forms import LinkageConfigurationForm
 from va_explorer.va_admin.models import AdminPanelAlert
+from va_explorer.va_data_management.models import MatchingConfig
 from va_explorer.va_data_management.utils.baseline_census import (
     get_baseline_census_province_config,
     save_baseline_census_province_config,
 )
+from va_explorer.va_data_management.utils.matching.config import resolve_config
 from va_explorer.vacms.models import AdminCommandRun
 
 PRODUCTION_SETTINGS_MODULE = "config.settings.production"
@@ -143,9 +149,65 @@ def user_can_run_admin_commands(user):
     return bool(user.is_superuser or user.has_perm("vacms.can_run_admin_commands"))
 
 
+def user_can_access_admin_panel(user):
+    if not getattr(user, "is_authenticated", False):
+        return False
+    return bool(
+        user_can_run_admin_commands(user)
+        or user.has_perm("va_data_management.view_linkagereview")
+    )
+
+
+def user_can_change_linkage_config(user):
+    return bool(
+        getattr(user, "is_authenticated", False)
+        and (
+            user.is_superuser or user.has_perm("va_data_management.add_matchingconfig")
+        )
+    )
+
+
+def _next_linkage_config_name(base_name):
+    """Return a readable revision name that does not already exist."""
+    date_suffix = timezone.localdate().strftime("%Y%m%d")
+    stem = (slugify(base_name) or "linkage")[:55]
+    candidate = f"{stem}-{date_suffix}"
+    counter = 2
+    while MatchingConfig.objects.filter(name=candidate).exists():
+        counter_suffix = f"-{counter}"
+        candidate = f"{stem[: 64 - len(date_suffix) - len(counter_suffix) - 1]}-{date_suffix}{counter_suffix}"
+        counter += 1
+    return candidate
+
+
+def _linkage_config_summary_items(form):
+    items = []
+    for name in ("revision_name",) + tuple(form.threshold_fields) + ("notes",):
+        field = form.fields[name]
+        value = form[name].value()
+        if isinstance(field, forms.BooleanField):
+            value = "Enabled" if value else "Disabled"
+        items.append(
+            {
+                "name": name,
+                "label": field.label or name.replace("_", " ").title(),
+                "help_text": field.help_text,
+                "value": value if value not in (None, "") else "N/A",
+            }
+        )
+    return items
+
+
 @login_required
 def admin_panel_view(request):
-    if not user_can_run_admin_commands(request.user):
+    can_run_admin_commands = user_can_run_admin_commands(request.user)
+    can_view_linkage_review = request.user.has_perm(
+        "va_data_management.view_linkagereview"
+    )
+    can_change_linkage_config = user_can_change_linkage_config(request.user)
+    can_access_admin_panel = user_can_access_admin_panel(request.user)
+
+    if not can_access_admin_panel:
         _record_alert(
             request=request,
             category=AdminPanelAlert.SECURITY,
@@ -154,64 +216,226 @@ def admin_panel_view(request):
             summary="User attempted to open admin panel without required privileges.",
         )
         return HttpResponseForbidden("You are not allowed to access this page.")
-    _prune_old_alerts()
-    command_groups = grouped_command_specs()
+
+    command_groups = {}
     command_groups_json = {}
     command_categories = []
-    is_production = _is_production_environment()
-    for category, specs in command_groups.items():
-        if is_production:
-            specs = [spec for spec in specs if spec.key not in DISABLED_IN_PRODUCTION]
-        normal_specs = [spec for spec in specs if not spec.dangerous]
-        danger_specs = [spec for spec in specs if spec.dangerous]
-        command_categories.append(
-            {
-                "category": category,
-                "normal": normal_specs,
-                "danger": danger_specs,
-            }
-        )
-        command_groups_json[category] = [
-            {
-                "key": spec.key,
-                "management_command": spec.management_command,
-                "category": spec.category,
-                "description": spec.description,
-                "safety": spec.safety,
-                "timeout_hint": spec.timeout_hint,
-                "favorite": spec.favorite,
-                "dangerous": spec.dangerous,
-                "requires_password": requires_password_confirmation(spec),
-                "inputs": [
-                    {
-                        "type": field.type,
-                        "name": field.name,
-                        "required": field.required,
-                        "help": field.help,
-                        "filename_pattern": field.filename_pattern,
-                        "standardized_name": field.standardized_name,
-                        "allowed_pattern": field.allowed_pattern,
-                        "default": field.default,
-                        "choices": list(field.choices),
-                        "flag": field.flag,
-                    }
-                    for field in spec.inputs
-                ],
-            }
-            for spec in specs
-        ]
+    alerts_feed = []
+    baseline_census_provinces = []
+
+    if can_run_admin_commands:
+        _prune_old_alerts()
+        command_groups = grouped_command_specs()
+        is_production = _is_production_environment()
+        for category, specs in command_groups.items():
+            if is_production:
+                specs = [
+                    spec for spec in specs if spec.key not in DISABLED_IN_PRODUCTION
+                ]
+            normal_specs = [spec for spec in specs if not spec.dangerous]
+            danger_specs = [spec for spec in specs if spec.dangerous]
+            command_categories.append(
+                {
+                    "category": category,
+                    "normal": normal_specs,
+                    "danger": danger_specs,
+                }
+            )
+            command_groups_json[category] = [
+                {
+                    "key": spec.key,
+                    "management_command": spec.management_command,
+                    "category": spec.category,
+                    "description": spec.description,
+                    "safety": spec.safety,
+                    "timeout_hint": spec.timeout_hint,
+                    "favorite": spec.favorite,
+                    "dangerous": spec.dangerous,
+                    "requires_password": requires_password_confirmation(spec),
+                    "inputs": [
+                        {
+                            "type": field.type,
+                            "name": field.name,
+                            "required": field.required,
+                            "help": field.help,
+                            "filename_pattern": field.filename_pattern,
+                            "standardized_name": field.standardized_name,
+                            "allowed_pattern": field.allowed_pattern,
+                            "default": field.default,
+                            "choices": list(field.choices),
+                            "flag": field.flag,
+                            "value_prefix": field.value_prefix,
+                        }
+                        for field in spec.inputs
+                    ],
+                }
+                for spec in specs
+            ]
+        alerts_feed = [_serialize_alert(alert) for alert in _fetch_alert_feed()]
+        baseline_census_provinces = get_baseline_census_province_config()
     context = {
+        "can_run_admin_commands": can_run_admin_commands,
+        "can_view_linkage_review": can_view_linkage_review,
+        "can_change_linkage_config": can_change_linkage_config,
         "command_groups": command_groups,
         "command_categories": command_categories,
         "command_groups_json": command_groups_json,
         "filename_placeholders": STANDARD_FILENAME_PLACEHOLDERS,
-        "alerts_feed": [_serialize_alert(alert) for alert in _fetch_alert_feed()],
-        "baseline_census_provinces": get_baseline_census_province_config(),
+        "alerts_feed": alerts_feed,
+        "baseline_census_provinces": baseline_census_provinces,
     }
+    if can_view_linkage_review:
+        linkage_config = resolve_config()
+        active_linkage_config = MatchingConfig.objects.filter(is_active=True).first()
+        linkage_config_form = LinkageConfigurationForm(
+            config=linkage_config,
+            initial={
+                "revision_name": _next_linkage_config_name(linkage_config["name"]),
+                "notes": (
+                    f"Revision of {linkage_config['name']} "
+                    "created from the admin panel."
+                ),
+            },
+        )
+        context.update(
+            {
+                "active_linkage_config": active_linkage_config,
+                "linkage_config_form": linkage_config_form,
+                "linkage_config_summary_items": _linkage_config_summary_items(
+                    linkage_config_form
+                ),
+            }
+        )
     # Initial server-rendered fragment for the System Audit Trail tab; subsequent
     # filtering/paging is handled by list_table.js against the component endpoint.
     context.update(_audit_context(request))
     return render(request, "va_admin/admin_panel.html", context)
+
+
+@require_POST
+@login_required
+def linkage_config_view(request):
+    """Create and activate an audited linkage configuration revision."""
+    if not user_can_change_linkage_config(request.user):
+        return HttpResponseForbidden("You are not allowed to change linkage settings.")
+
+    form = LinkageConfigurationForm(request.POST)
+    if not form.is_valid():
+        for error in form.non_field_errors() or ["Check the linkage configuration."]:
+            messages.error(request, error)
+        return redirect(f"{reverse('va_admin:index')}#adminTabLinkage")
+
+    if MatchingConfig.objects.filter(name=form.cleaned_data["revision_name"]).exists():
+        messages.error(request, "That configuration revision name already exists.")
+        return redirect(f"{reverse('va_admin:index')}#adminTabLinkage")
+
+    try:
+        with transaction.atomic():
+            active_config = MatchingConfig.objects.filter(is_active=True).first()
+            MatchingConfig.objects.filter(is_active=True).update(is_active=False)
+            MatchingConfig.objects.create(
+                name=form.cleaned_data["revision_name"],
+                is_active=True,
+                weights=active_config.weights if active_config else {},
+                thresholds=form.thresholds(),
+                algorithm_version=(
+                    active_config.algorithm_version if active_config else "2.0"
+                ),
+                notes=form.cleaned_data["notes"],
+                updated_by=request.user,
+            )
+    except IntegrityError:
+        messages.error(
+            request,
+            "The configuration revision could not be activated because its name "
+            "is already in use. Refresh the page and try the suggested name.",
+        )
+        return redirect(f"{reverse('va_admin:index')}#adminTabLinkage")
+    messages.success(
+        request,
+        f"Activated linkage configuration '{form.cleaned_data['revision_name']}'.",
+    )
+    return redirect(f"{reverse('va_admin:index')}#adminTabLinkage")
+
+
+@require_POST
+@login_required
+def linkage_run_view(request):
+    """Run the active Death-VA linkage configuration and persist its results."""
+    if not user_can_change_linkage_config(request.user):
+        _record_alert(
+            request=request,
+            category=AdminPanelAlert.SECURITY,
+            severity=AdminPanelAlert.HIGH,
+            title="Unauthorized Death-VA linkage run attempt",
+            summary="User attempted to run Death-VA linkage without required privileges.",
+        )
+        return HttpResponseForbidden("You are not allowed to run Death-VA linkage.")
+
+    stdout_buffer = io.StringIO()
+    stderr_buffer = io.StringIO()
+    started_at = timezone.now()
+    ok = True
+    try:
+        call_command(
+            "link_deaths_to_vas",
+            "--apply",
+            "--source",
+            "admin_panel_manual",
+            stdout=stdout_buffer,
+            stderr=stderr_buffer,
+        )
+    except Exception:
+        ok = False
+        stderr_buffer.write("\n")
+        stderr_buffer.write(traceback.format_exc())
+
+    finished_at = timezone.now()
+    duration_ms = int((finished_at - started_at).total_seconds() * 1000)
+    output = f"{stdout_buffer.getvalue()}{stderr_buffer.getvalue()}"
+    AdminCommandRun.objects.create(
+        user=request.user,
+        command_id="death_va_linkage",
+        management_command="link_deaths_to_vas",
+        inputs={"apply": True, "source": "admin_panel_manual"},
+        filenames=[],
+        started_at=started_at,
+        finished_at=finished_at,
+        duration_ms=duration_ms,
+        ok=ok,
+        output_excerpt=output[:50000],
+        output_full=output[:200000],
+    )
+
+    if ok:
+        messages.success(
+            request,
+            "Death-VA linkage completed using the active configuration revision.",
+        )
+        _record_alert(
+            request=request,
+            category=AdminPanelAlert.INTERACTION,
+            severity=AdminPanelAlert.LOW,
+            title="Death-VA linkage completed",
+            summary=f"Manual linkage run completed in {duration_ms} ms.",
+            context={"duration_ms": duration_ms, "ok": True},
+        )
+    else:
+        messages.error(
+            request,
+            "Death-VA linkage failed. Review the admin command logs for details.",
+        )
+        _record_alert(
+            request=request,
+            category=AdminPanelAlert.SYSTEM,
+            severity=AdminPanelAlert.CRITICAL,
+            title="Death-VA linkage failed",
+            summary=f"Manual linkage run failed after {duration_ms} ms.",
+            details=output[-4000:],
+            context={"duration_ms": duration_ms, "ok": False},
+        )
+
+    return redirect(f"{reverse('va_admin:index')}#adminTabLinkage")
 
 
 @require_POST
@@ -250,6 +474,8 @@ def _sanitize_input_value(field, raw_value):
 
     if field.type == "file":
         value = "" if raw_value is None else str(raw_value).strip()
+        if not value and not field.required:
+            return None
         if not value:
             standardized = str(field.standardized_name or "").strip()
             if standardized:
@@ -336,6 +562,9 @@ def _build_call_command_args(command_id, inputs):
         if field.type == "file":
             filenames.append(value)
             value = str(resolve_data_file(value))
+
+        if field.value_prefix:
+            value = f"{field.value_prefix}{value}"
 
         if field.flag:
             args.extend([field.flag, str(value)])

@@ -71,6 +71,9 @@ class DataQualityIssue(models.Model):
     class Meta:
         indexes = [
             models.Index(fields=["issue_type", "target_model", "status"]),
+            models.Index(
+                fields=["target_model", "status"], name="dq_target_status_idx"
+            ),
         ]
 
     def mark_resolved(self, by_user=None):

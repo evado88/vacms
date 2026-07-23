@@ -13,7 +13,8 @@
   </div>
   <div class="ou-card-body">
     <p class="ou-text-muted">Customize which data you'd like to export and how. First choose target type, then timeframe and geographic scope.</p>
-    <form action="/va_export/" method="post" id="export-form">
+    <div id="exportValidationWarning" class="alert alert-warning d-none" role="alert"></div>
+    <form action="{% url 'va_export:download_form' %}" method="post" id="export-form">
       {% csrf_token %}
       <div class="va-export-config-panels">
         <div class="va-export-config-panel">
@@ -34,51 +35,11 @@
         </div>
       </div>
       <div class="ou-form-actions">
-        <button type="submit" id="submit-form" class="btn btn-primary hidden">Download</button>
+        <button type="submit" id="submit-form" class="btn btn-primary">Download</button>
       </div>
     </form>
   </div>
 </section>
-
-<div class="modal fade" id="downloadModal" tabindex="-1" role="dialog" aria-hidden="true">
-  <div class="modal-dialog" role="document">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title">Preparing Download</h5>
-        <button type="button" class="close" data-dismiss="modal" aria-label="Close">
-          <span aria-hidden="true">&times;</span>
-        </button>
-      </div>
-      <div class="modal-body">
-        Your download is being prepared and compressed to a .zip file.
-        This modal will close automatically when the download has finished. <br/><br/>
-        <strong>Note</strong>: Large file sizes may take several minutes to download.
-      </div>
-      <div class="modal-footer">
-        <button type="button" class="btn btn-secondary" data-dismiss="modal">Close now</button>
-      </div>
-    </div>
-  </div>
-</div>
-
-<div class="modal fade" id="downloadFailedModal" tabindex="-1" role="dialog" aria-hidden="true">
-  <div class="modal-dialog" role="document">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title">Download Failed</h5>
-        <button type="button" class="close" data-dismiss="modal" aria-label="Close">
-          <span aria-hidden="true">&times;</span>
-        </button>
-      </div>
-      <div class="modal-body">
-        Your download could not be completed. Please try again later.
-      </div>
-      <div class="modal-footer">
-        <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
-      </div>
-    </div>
-  </div>
-</div>
 {% endblock %}
 
 <!-- Needs to be outside content block so JS in base template loads first -->

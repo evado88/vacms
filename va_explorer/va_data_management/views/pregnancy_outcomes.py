@@ -20,6 +20,9 @@ from va_explorer.utils.mixins import (
 from va_explorer.va_data_management.filters import PregnancyOutcomeFilter
 from va_explorer.va_data_management.forms import PregnancyOutcomeForm
 from va_explorer.va_data_management.models import PregnancyOutcome
+from va_explorer.va_data_management.utils.duplicate_issues import (
+    get_duplicate_issue_groups,
+)
 from va_explorer.va_data_management.utils.list_cleaning import (
     exclude_rows_with_invalid_display_values,
 )
@@ -96,6 +99,9 @@ class PregnancyOutcomeDetail(
         context["history"] = self.object.history.all().reverse()
         # Show one row per duplicate set; flagged duplicates are excluded.
         context["babies"] = self.object.babies.filter(is_duplicate=False)
+        context["duplicate_issue_groups"] = get_duplicate_issue_groups(
+            self.object, self.get_queryset()
+        )
         return context
 
 
