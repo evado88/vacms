@@ -55,6 +55,13 @@ _VA_ANNOTATION_COLUMNS = [
 _VA_QUERY_HELPER_COLUMNS = ["loc_name", "cluster_name", "record_source"]
 # VASA raw_answers stores ingestion provenance, not canonical export values.
 _VA_EXPORT_EXCLUDED_COLUMNS = {"location_id", "cluster_id", "raw_answers"}
+# This ordered registry drives the schema, query construction, counting, and
+# streaming for the combined VA dataset. Conventional VA rows intentionally
+# remain ahead of VASA-derived VA rows in every download.
+_VA_EXPORT_SOURCES = (
+    (VerbalAutopsy, "ids", "VA"),
+    (VASA, "vasa_ids", "VASA"),
+)
 
 _RUMOR_SURVEILLANCE_COLUMNS = [
     "id",
@@ -472,9 +479,13 @@ def _export_non_va_dataset(request, dataset, params):
 
 
 def _va_output_columns(record_type):
-    va_model_columns = _model_export_columns(VerbalAutopsy)
-    vasa_model_columns = _model_export_columns(VASA)
-    model_columns = list(dict.fromkeys([*va_model_columns, *vasa_model_columns]))
+    model_columns = list(
+        dict.fromkeys(
+            column
+            for model, _id_param, _source_label in _VA_EXPORT_SOURCES
+            for column in _model_export_columns(model)
+        )
+    )
     full_output_columns = [
         column for column in model_columns if column not in _VA_EXPORT_EXCLUDED_COLUMNS
     ]
@@ -579,7 +590,7 @@ def _filter_va_queryset(request, params, *, model, id_param, source_label):
         loc_name=F("location__name"),
         cluster_name=F("cluster__name"),
         record_source=Value(source_label, output_field=TextField()),
-    )
+    ).order_by("pk", "causes__pk")
 
 
 def _transform_va_row(
@@ -612,24 +623,26 @@ def _transform_va_row(
 def _export_va_dataset(request, params):
     record_type = params["va_record_type"]
     fmt = params["format"]
-    matching_vas = _filter_va_queryset(
-        request,
-        params,
-        model=VerbalAutopsy,
-        id_param="ids",
-        source_label="VA",
-    )
-    matching_vasa_records = _filter_va_queryset(
-        request,
-        params,
-        model=VASA,
-        id_param="vasa_ids",
-        source_label="VASA",
-    )
+    source_querysets = [
+        (
+            model,
+            source_label,
+            _filter_va_queryset(
+                request,
+                params,
+                model=model,
+                id_param=id_param,
+                source_label=source_label,
+            ),
+        )
+        for model, id_param, source_label in _VA_EXPORT_SOURCES
+    ]
     output_columns = _va_output_columns(record_type)
-    va_row_count = matching_vas.count()
-    vasa_row_count = matching_vasa_records.count()
-    row_count = va_row_count + vasa_row_count
+    source_row_counts = {
+        source_label: queryset.count()
+        for _model, source_label, queryset in source_querysets
+    }
+    row_count = sum(source_row_counts.values())
 
     logger.info(
         "VA export requested: user=%s rows=%s va_rows=%s vasa_rows=%s "
@@ -637,8 +650,8 @@ def _export_va_dataset(request, params):
         "start:%s, end:%s, causes:%s}",
         getattr(request.user, "email", None),
         row_count,
-        va_row_count,
-        vasa_row_count,
+        source_row_counts["VA"],
+        source_row_counts["VASA"],
         record_type,
         fmt,
         bool(params.get("ids")),
@@ -668,19 +681,14 @@ def _export_va_dataset(request, params):
             output_columns,
         )
 
-    rows = chain(
+    rows = chain.from_iterable(
         _iter_queryset_rows(
-            matching_vas,
-            _va_query_columns(VerbalAutopsy, output_columns),
+            queryset,
+            _va_query_columns(model, output_columns),
             transform=transform,
             chunk_size=100,
-        ),
-        _iter_queryset_rows(
-            matching_vasa_records,
-            _va_query_columns(VASA, output_columns),
-            transform=transform,
-            chunk_size=100,
-        ),
+        )
+        for model, _source_label, queryset in source_querysets
     )
     audited_rows = _audit_rows(rows, request, "verbal_autopsy", fmt)
 
