@@ -661,8 +661,18 @@ def schedule_link_for_va_ids(ids, *, model_name, source):
     def _enqueue():
         from va_explorer.va_data_management.tasks import _LINK_BATCH_SIZE, link_va_batch
 
-        for i in range(0, len(ids), _LINK_BATCH_SIZE):
-            link_va_batch.delay(ids[i : i + _LINK_BATCH_SIZE], model_name, source)
+        try:
+            for i in range(0, len(ids), _LINK_BATCH_SIZE):
+                link_va_batch.delay(ids[i : i + _LINK_BATCH_SIZE], model_name, source)
+        except Exception:  # noqa: BLE001 - broker availability must not undo ingestion
+            logger.exception(
+                "Could not enqueue VA->Death linking for %d %s record(s); "
+                "the next linkage sweep can process them.",
+                len(ids),
+                model_name,
+            )
+            if _cfg("VA_DEATH_MATCH_RAISE_INGESTION_ERRORS", False):
+                raise
 
     transaction.on_commit(_enqueue)
 

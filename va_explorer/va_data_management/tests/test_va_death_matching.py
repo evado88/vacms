@@ -411,6 +411,32 @@ def test_ingestion_seam_noop_when_flag_disabled(settings):
     assert VADeathMatch.objects.count() == 0
 
 
+def test_ingestion_seam_does_not_fail_when_broker_is_unavailable(
+    settings, monkeypatch, caplog
+):
+    """A post-commit task enqueue cannot roll back or fail a VA import."""
+    from kombu.exceptions import OperationalError
+
+    from va_explorer.va_data_management.tasks import link_va_batch
+    from va_explorer.va_data_management.utils.matching import schedule_link_for_va_ids
+
+    settings.VA_DEATH_MATCH_ENABLED = True
+    settings.VA_DEATH_MATCH_MODE = "auto"
+
+    def broker_unavailable(*args, **kwargs):
+        raise OperationalError("Redis is unavailable")
+
+    monkeypatch.setattr(link_va_batch, "delay", broker_unavailable)
+    callbacks = []
+    monkeypatch.setattr(matching_service.transaction, "on_commit", callbacks.append)
+
+    with caplog.at_level("ERROR"):
+        schedule_link_for_va_ids([1, 2, 3], model_name="vasa", source="test")
+        callbacks[0]()
+
+    assert "Could not enqueue VA->Death linking" in caplog.text
+
+
 def test_ea_matches_across_va_and_death_formats():
     """VA's bare EA digits match the Death register's ``EA_0<digits>`` form."""
     _make_death(ea="EA_05021031018", ward="Chaisa")
