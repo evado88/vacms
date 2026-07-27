@@ -4,6 +4,7 @@ import pandas as pd
 from anytree import LevelOrderIter, Node, RenderTree
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
+from django.db import transaction
 
 from va_explorer.va_data_management.models import SRSClusterLocation
 
@@ -94,7 +95,7 @@ def _process_cluster_csv(csv_file) -> pd.DataFrame:
     ]:
         if col not in df.columns:
             df[col] = ""
-    if not df.get("country", pd.Series()).any():
+    if not df.get("country", pd.Series(dtype="object")).any():
         df["country"] = "Zambia"
 
     # drop structurally incomplete rows
@@ -199,7 +200,21 @@ def _process_cluster_tree(tree: Node, delete_previous: bool = False):
         if confirm.strip().lower() not in {"yes", "y"}:
             print("Aborted.")
             return
+
+    _persist_cluster_tree(tree, delete_previous)
+
+
+@transaction.atomic
+def _persist_cluster_tree(tree: Node, delete_previous: bool = False):
+    """Reconcile a parsed hierarchy without leaving partial tree mutations."""
+    if delete_previous:
         SRSClusterLocation.objects.all().delete()
+
+    # Treebeard allocates a new child path from the parent's persisted
+    # ``numchild`` value. An interrupted historical import can leave that value
+    # stale, causing add_child() to reuse an occupied path. The safe/default
+    # repair updates only depth and numchild; it does not rewrite node paths.
+    SRSClusterLocation.fix_tree()
 
     db_fields = {f.name for f in SRSClusterLocation._meta.get_fields()}
     allowed_node_attrs = {"name", "location_type", "code", "is_active"} & db_fields
