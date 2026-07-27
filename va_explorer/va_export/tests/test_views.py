@@ -317,6 +317,44 @@ class TestAPIView:
         with zipfile.ZipFile(io.BytesIO(_response_content(response))) as archive:
             assert CSV_FILE_NAME in archive.namelist()
 
+    @pytest.mark.parametrize("record_type", ["abridged", "full"])
+    def test_html_form_exports_uncoded_vasa_for_both_record_types(
+        self, user: User, record_type
+    ):
+        test_data = build_test_db()
+        vasa = VASAFactory.create(
+            location=test_data["facility_a"],
+            Id10019="female",
+            Id10023="2020-06-01",
+            instrument="adult",
+            raw_answers={"values": {"Q1601": "2"}},
+        )
+        client = Client()
+        client.force_login(user=user)
+
+        response = client.post(
+            reverse("va_export:download_form"),
+            data={
+                "dataset": "verbalautopsy",
+                "va_record_type": record_type,
+                "action": "download",
+                "format": "csv",
+                **DEFAULT_EXPORT_DATES,
+            },
+        )
+
+        assert response.status_code == 200
+        rows = _csv_rows(response)
+        vasa_rows = [row for row in rows if row["source"] == "VASA"]
+        assert len(vasa_rows) == 1
+        assert int(vasa_rows[0]["id"]) == vasa.pk
+        assert vasa_rows[0]["instrument"] == "adult"
+        assert vasa_rows[0]["Id10019"] == "female"
+        assert vasa_rows[0]["cause"] == ""
+        header = _csv_header(response)
+        assert "raw_answers" not in header
+        assert ("Id10007" in header) is (record_type == "full")
+
     def test_html_form_post_renders_validation_errors(self, user: User):
         client = Client()
         client.force_login(user=user)
@@ -896,6 +934,54 @@ class TestAPIView:
         }
         assert exported_vasa_ids == {included.pk}
 
+    def test_uncoded_vasa_is_included_until_a_cause_filter_is_selected(
+        self, user: User
+    ):
+        test_data = build_test_db()
+        uncoded_vasa = VASAFactory.create(
+            location=test_data["facility_a"],
+            Id10023="2020-06-01",
+            instrument="adult",
+        )
+        undated_vasa = VASAFactory.create(
+            location=test_data["facility_a"], Id10023="", instrument="adult"
+        )
+        client = Client()
+        client.force_login(user=user)
+
+        unfiltered_rows = _csv_rows(_post_export(client))
+        exported_records = {(row["source"], int(row["id"])) for row in unfiltered_rows}
+        assert ("VASA", uncoded_vasa.pk) in exported_records
+        assert ("VASA", undated_vasa.pk) not in exported_records
+
+        filtered_rows = _csv_rows(_post_export(client, data={"causes": "cod_a"}))
+        assert ("VASA", uncoded_vasa.pk) not in {
+            (row["source"], int(row["id"])) for row in filtered_rows
+        }
+
+    def test_vasa_with_multiple_causes_exports_one_ordered_row_per_cause(
+        self, user: User
+    ):
+        test_data = build_test_db()
+        vasa = VASAFactory.create(
+            location=test_data["facility_a"], Id10023="2020-06-01"
+        )
+        CauseOfDeath.objects.create(
+            cause="First cause", algorithm="InterVA5", settings={}, vasa=vasa
+        )
+        CauseOfDeath.objects.create(
+            cause="Second cause", algorithm="InSilicoVA", settings={}, vasa=vasa
+        )
+        client = Client()
+        client.force_login(user=user)
+
+        rows = _csv_rows(_post_export(client, data={"vasa_ids": str(vasa.pk)}))
+
+        assert [(row["cause"], row["cause_algorithm"]) for row in rows] == [
+            ("First cause", "InterVA5"),
+            ("Second cause", "InSilicoVA"),
+        ]
+
     def test_source_specific_ids_do_not_collide(self, user: User):
         test_data = build_test_db()
         va = test_data["va1"]
@@ -931,7 +1017,46 @@ class TestAPIView:
 
         with zipfile.ZipFile(io.BytesIO(_response_content(response))) as archive:
             json_data = json.loads(archive.read(JSON_FILE_NAME))
+        records = json.loads(json_data["records"])
         assert json_data["count"] == 5
+        assert [record["source"] for record in records] == [
+            "VA",
+            "VA",
+            "VA",
+            "VA",
+            "VASA",
+        ]
+        assert records[-1]["id"] == vasa.pk
+
+    def test_vasa_pii_is_redacted_and_provenance_is_not_exported(self):
+        test_data = build_test_db()
+        vasa = VASAFactory.create(
+            location=test_data["facility_a"],
+            Id10017="Private",
+            Id10018="Person",
+            Id10023="2020-06-01",
+            geopoint="-15.4000 28.3000",
+            raw_answers={"values": {"A4001": "Private"}},
+        )
+        client = Client()
+        client.force_login(user=User.objects.get(name="no_pii"))
+
+        response = _post_export(
+            client,
+            data={
+                "format": "csv",
+                "va_record_type": "full",
+                "vasa_ids": str(vasa.pk),
+            },
+        )
+
+        rows = _csv_rows(response)
+        assert len(rows) == 1
+        assert rows[0]["source"] == "VASA"
+        assert rows[0]["Id10017"] == REDACTED_STRING
+        assert rows[0]["Id10018"] == REDACTED_STRING
+        assert rows[0]["geopoint"] == REDACTED_STRING
+        assert "raw_answers" not in _csv_header(response)
 
     def test_location_filtering_includes_cluster_community_vas(self, user: User):
         test_data = build_test_db()

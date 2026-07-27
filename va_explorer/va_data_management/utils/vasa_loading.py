@@ -47,6 +47,7 @@ from ..vasa.value_decode import FALLBACK, UNKNOWN_CODE, decode_value
 from .date_parsing import parse_date
 from .geopoint import merge_geopoint_into
 from .loading import _has_meaningful_value
+from .vasa_geocoding import VasaGeocoder, geo_codes
 
 logger = logging.getLogger(__name__)
 
@@ -97,11 +98,16 @@ FALLBACK_VALUE_TITLE = (
     "VASA decoded value is a generation-time fallback (may not be recognised "
     "by coding)"
 )
+GEOGRAPHY_UNRESOLVED_TITLE = (
+    "VASA geography codes could not be matched to a location (record will not be "
+    "location-scoped)"
+)
 _CONFLICT_KEY_CHECKS = ("name_conflict", "who_id_conflict")
 _DECODE_KEY_CHECKS = ("unknown_code", "fallback_value")
+_GEO_KEY_CHECKS = ("geography_unresolved",)
 # Every check the loader owns end-to-end: flagged during load, auto-resolved
 # when the record re-loads without the problem.
-_LOADER_KEY_CHECKS = _CONFLICT_KEY_CHECKS + _DECODE_KEY_CHECKS
+_LOADER_KEY_CHECKS = _CONFLICT_KEY_CHECKS + _DECODE_KEY_CHECKS + _GEO_KEY_CHECKS
 
 # Dry-run change reports are capped to keep summaries safe on large exports.
 _DRY_RUN_CHANGE_CAP = 500
@@ -508,6 +514,33 @@ def _flag_decode_issues(vasa, instanceid, decode_flags):
         )
 
 
+def _flag_geo_issue(vasa, instanceid, resolution):
+    """Record an unresolvable-geography VASA record as a VALIDITY issue.
+
+    Non-blocking: the record is still ingested, it just won't be location-scoped
+    until its codes resolve (e.g. reference data is loaded / a spelling is fixed
+    and the record re-imports). Self-resolves via :func:`_resolve_stale_loader_issues`.
+    """
+    from va_explorer.va_data_management.models.data_quality import DataQualityIssue
+    from va_explorer.va_data_management.utils.dq import upsert_issue
+
+    upsert_issue(
+        issue_type=DataQualityIssue.VALIDITY,
+        model_class=VASA,
+        member_ids=[vasa.pk],
+        title=GEOGRAPHY_UNRESOLVED_TITLE,
+        keys={"check": "geography_unresolved"},
+        details={
+            "instanceid": instanceid,
+            "unresolved_level": resolution.unresolved_level,
+            "province": vasa.province,
+            "district": vasa.district,
+            "ward": vasa.ward,
+            "ea": vasa.ea,
+        },
+    )
+
+
 def _resolve_stale_loader_issues(flagged_checks, checks=_LOADER_KEY_CHECKS):
     """Auto-resolve loader-owned issues for records that re-loaded clean.
 
@@ -609,12 +642,17 @@ def load_vasa_from_dataframes(main_df, repeat_dfs=None, *, dry_run=False):
         "dry_run": dry_run,
         "death_id_validation": None,
         "linking": {"enabled": False, "scheduled": 0},
+        "geo": {"location_resolved": 0, "cluster_resolved": 0, "unresolved": 0},
     }
     if dry_run:
         summary["changes"] = []
     vasa_by_key = {}
     vasa_ids = []
     flagged_checks = {}
+    # Resolve each record's coded geography to Location/SRS cluster FKs so VASA
+    # participates in location scoping (exports, restrictions, dashboards) like a
+    # VA record. Reference tables are read once here for the whole batch.
+    geocoder = VasaGeocoder()
 
     for raw in main_df.to_dict(orient="records"):
         raw_ci = {str(k).strip().lower(): v for k, v in raw.items()}
@@ -639,6 +677,16 @@ def load_vasa_from_dataframes(main_df, repeat_dfs=None, *, dry_run=False):
                 summary, instanceid, collisions, name_resolutions
             )
             _tally_decode_events(summary["decode"], decode_flags, raw_values)
+
+            geo = geocoder.resolve(geo_codes(record))
+            record["location_id"] = geo.location_id
+            record["cluster_id"] = geo.cluster_id
+            if geo.location_id is not None:
+                summary["geo"]["location_resolved"] += 1
+            if geo.cluster_id is not None:
+                summary["geo"]["cluster_resolved"] += 1
+            if geo.unresolved_level is not None:
+                summary["geo"]["unresolved"] += 1
 
             if dry_run:
                 existing = VASA.all_objects.filter(instanceid=instanceid).first()
@@ -670,9 +718,13 @@ def load_vasa_from_dataframes(main_df, repeat_dfs=None, *, dry_run=False):
                     _flag_conflict_issues(vasa, instanceid, conflicts)
                 if decode_flags:
                     _flag_decode_issues(vasa, instanceid, decode_flags)
-                flagged_checks[vasa.pk] = {c["kind"] for c in conflicts} | {
-                    f["check"] for f in decode_flags
-                }
+                if geo.unresolved_level is not None:
+                    _flag_geo_issue(vasa, instanceid, geo)
+                flagged_checks[vasa.pk] = (
+                    {c["kind"] for c in conflicts}
+                    | {f["check"] for f in decode_flags}
+                    | ({"geography_unresolved"} if geo.unresolved_level else set())
+                )
                 if _has_meaningful_value(vasa.key):
                     vasa_by_key[str(vasa.key).strip()] = vasa
                 vasa_ids.append(vasa.pk)
