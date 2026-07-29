@@ -1,6 +1,5 @@
 import argparse
 
-import pandas as pd
 from django.core.management import call_command
 from django.core.management.base import BaseCommand, CommandError
 
@@ -14,6 +13,7 @@ from va_explorer.va_data_management.utils.loading import (
     load_odk_csv_to_model,
     normalize_dataframe_columns,
     normalize_string,
+    read_form_csv,
     upsert_gps_for_existing,
 )
 
@@ -74,7 +74,7 @@ class Command(BaseCommand):
                 "ODK form definition for 'pregnancy_outcome' not loaded."
             )
 
-        df = pd.read_csv(csv_file)
+        df = read_form_csv(csv_file)
 
         df = merge_geopoint_into(df, source_prefix="gps", target_field="gps")
 

@@ -1,6 +1,10 @@
 # Results
 
-## 2026-07-29 — Literal `"nan"` in Death records (main)
+## 2026-07-29 — Literal `"nan"` in Death records (superseded)
+
+> This initial implementation report is retained for provenance but its blanket
+> `repair_nan_text` runbook must not be used. The validated source-aware design,
+> current test results, and deployment runbook are in `tasks/plan.md`.
 
 ### Problem
 

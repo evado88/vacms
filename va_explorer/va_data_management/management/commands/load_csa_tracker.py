@@ -6,7 +6,10 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
 from va_explorer.va_data_management.models import CSADailyTracker
-from va_explorer.va_data_management.utils.loading import normalize_dataframe_columns
+from va_explorer.va_data_management.utils.loading import (
+    normalize_dataframe_columns,
+    read_form_csv,
+)
 
 
 class Command(BaseCommand):
@@ -39,7 +42,7 @@ class Command(BaseCommand):
         if batch_size <= 0:
             raise CommandError("--batch-size must be greater than zero")
 
-        df = pd.read_csv(csv_file, dtype=str)
+        df = read_form_csv(csv_file)
         df = normalize_dataframe_columns(df, CSADailyTracker)
         df = df.loc[:, ~df.columns.duplicated()]
 

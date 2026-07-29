@@ -11,7 +11,10 @@ from va_explorer.va_data_management.odk.service import (
     RUMOR_JUNK_DESCRIPTIONS,
     purge_junk_rumor_logs,
 )
-from va_explorer.va_data_management.utils.loading import normalize_dataframe_columns
+from va_explorer.va_data_management.utils.loading import (
+    normalize_dataframe_columns,
+    read_form_csv,
+)
 
 
 class Command(BaseCommand):
@@ -36,7 +39,7 @@ class Command(BaseCommand):
         csv_file = options["csv_file"]
         log_dir = options["log_dir"]
 
-        df = pd.read_csv(csv_file, dtype=str)
+        df = read_form_csv(csv_file)
 
         # Standardise KEY and PARENT_KEY column names
         if "PARENT_KEY" in df.columns:

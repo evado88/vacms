@@ -148,6 +148,32 @@ def test_export_honors_filters(client):
     assert str(drop.id) not in ids
 
 
+def test_literal_nan_is_excluded_from_list_and_export(client):
+    client.force_login(_data_manager())
+    hidden = _make_death(DE_03="NaN", eventid=None)
+    visible = _make_death(DE_03="Visible Person", eventid=None)
+
+    list_response = client.get(reverse("va_data_management:deaths"))
+    assert str(hidden.id).encode() not in list_response.content
+    assert b"Visible Person" in list_response.content
+
+    rows = _parse_csv(client.get(reverse("va_data_management:deaths_csv")))
+    id_col = rows[0].index("id")
+    ids = {row[id_col] for row in rows[1:]}
+    assert str(hidden.id) not in ids
+    assert str(visible.id) in ids
+
+
+def test_export_serializes_optional_nan_as_blank(client):
+    client.force_login(_data_manager())
+    death = _make_death(DE_15="NaN")
+
+    rows = _parse_csv(client.get(reverse("va_data_management:deaths_csv")))
+    header = rows[0]
+    row = next(item for item in rows[1:] if item[header.index("id")] == str(death.id))
+    assert row[header.index("DE_15")] == ""
+
+
 def test_export_redacts_pii_for_non_pii_user(client):
     # Data Manager (CSV allowed) but WITHOUT view_pii -> PII columns redacted.
     dm_group, _ = Group.objects.get_or_create(name="Data Managers")

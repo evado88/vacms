@@ -14,6 +14,7 @@ from va_explorer.va_data_management.utils.loading import (
     normalize_dataframe_columns,
     normalize_string,
     normalize_value,
+    read_form_csv,
 )
 from va_explorer.va_data_management.utils.repeat_group_dedup import (
     CHILD_DEDUP_SPECS,
@@ -44,7 +45,7 @@ class Command(BaseCommand):
         if not ODKFormChoice.objects.filter(form_name=norm_form_name).exists():
             raise CommandError("Definition for form 'household' has not been loaded")
 
-        df = pd.read_csv(csv_file)
+        df = read_form_csv(csv_file)
 
         # Standardise KEY and PARENT_KEY column names
         if "PARENT_KEY" in df.columns:

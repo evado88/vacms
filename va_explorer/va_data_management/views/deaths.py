@@ -38,6 +38,15 @@ from va_explorer.vacms.cmsmodels.events import Event
 from va_explorer.vacms.permissions import user_can_manage_va_schedule
 
 
+def _death_csv_value(value):
+    """Keep database placeholders from leaking into downloaded CSV files."""
+    if value is None:
+        return ""
+    if isinstance(value, str) and value.strip().lower() == "nan":
+        return ""
+    return value
+
+
 class Deaths(
     AjaxListTableMixin,
     CustomAuthMixin,
@@ -167,8 +176,7 @@ class DeathsCsvExport(CsvDownloadPermissionMixin, Deaths):
                 if redact and name in DEATH_PII_FIELDS:
                     row.append(REDACTED_STRING)
                     continue
-                value = getattr(death, name)
-                row.append("" if value is None else value)
+                row.append(_death_csv_value(getattr(death, name)))
             writer.writerow(row)
             row_count += 1
 

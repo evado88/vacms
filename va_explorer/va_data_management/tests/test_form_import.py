@@ -16,17 +16,18 @@ from va_explorer.va_data_management.models import (
 from va_explorer.va_data_management.odk.service import (
     _strip_group_prefix,
     import_dataframe_records,
+    load_definition_from_bytes,
 )
 from va_explorer.va_data_management.utils.death_ids import is_valid_death_id
 
 pytestmark = pytest.mark.django_db
 
 
-def make_definition(tmpdir):
+def make_definition(tmpdir, field_name="consent"):
     survey = pd.DataFrame(
         {
             "type": ["select_one yesno"],
-            "name": ["consent"],
+            "name": [field_name],
             "label": ["Consent"],
         }
     )
@@ -45,36 +46,37 @@ def make_definition(tmpdir):
 
 
 def test_import_definition_and_csv(tmp_path):
-    definition = make_definition(tmp_path)
-    call_command("load_pregnancy_definition", str(definition))
+    definition = make_definition(tmp_path, "PE-03")
+    load_definition_from_bytes("pregnancy", definition.read_bytes())
     assert ODKFormChoice.objects.count() == 2
 
     csv_path = Path(tmp_path) / "data.csv"
-    csv_path.write_text("consent\n1\n")
+    csv_path.write_text("key,PE-03\nleading-zero-pregnancy,1\n")
     call_command("load_pregnancy_csv", str(csv_path))
     preg = Pregnancy.objects.get()
-    assert preg.consent == "Yes"
+    assert preg.PE_03 == "Yes"
 
 
 def test_death_import_definition_and_csv(tmp_path):
     definition = make_definition(tmp_path)
-    call_command("load_death_definition", str(definition))
+    load_definition_from_bytes("death", definition.read_bytes())
     assert ODKFormChoice.objects.filter(form_name="death").count() == 2
 
     csv_path = Path(tmp_path) / "data.csv"
-    csv_path.write_text("consent\n1\n")
+    csv_path.write_text("key,consent,DE-08\ndeath-import,1,001234\n")
     call_command("load_death_csv", str(csv_path))
     death = Death.objects.get()
     assert death.consent == "Yes"
+    assert death.DE_08 == "001234"
 
 
 def test_pregnancy_outcome_import_definition_and_csv(tmp_path):
     definition = make_definition(tmp_path)
-    call_command("load_pregnancy_outcome_definition", str(definition))
+    load_definition_from_bytes("pregnancy_outcome", definition.read_bytes())
     assert ODKFormChoice.objects.filter(form_name="pregnancy_outcome").count() == 2
 
     csv_path = Path(tmp_path) / "data.csv"
-    csv_path.write_text("consent\n1\n")
+    csv_path.write_text("key,ea,consent\noutcome-import,,1\n")
     call_command("load_pregnancy_outcome_csv", str(csv_path))
     outcome = PregnancyOutcome.objects.get()
     assert outcome.consent == "Yes"
@@ -103,10 +105,10 @@ def test_pregnancy_outcome_import_without_definition(tmp_path):
 
 def test_pregnancy_outcome_baby_details_linking_and_missing_parent_skip(tmp_path):
     definition = make_definition(tmp_path)
-    call_command("load_pregnancy_outcome_definition", str(definition))
+    load_definition_from_bytes("pregnancy_outcome", definition.read_bytes())
 
     parent_csv = Path(tmp_path) / "pregnancy_outcome.csv"
-    parent_csv.write_text("key,consent\nparent-1,1\n")
+    parent_csv.write_text("key,ea,consent\nparent-1,,1\n")
     call_command("load_pregnancy_outcome_csv", str(parent_csv))
     assert PregnancyOutcome.objects.filter(key="parent-1").exists()
 

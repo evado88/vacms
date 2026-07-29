@@ -91,6 +91,8 @@ def clean_import_value(value, blank=None):
     """
     if pd.isna(value):
         return blank
+    if isinstance(value, str) and (not value.strip() or value.strip().lower() == "nan"):
+        return blank
     return value
 
 
@@ -102,6 +104,23 @@ def blank_values_for_model(model):
     satisfy NOT NULL; writing None there would now raise IntegrityError.
     """
     return {field.name: (None if field.null else "") for field in model._meta.fields}
+
+
+def read_form_csv(source, **kwargs):
+    """Read an ODK/form CSV without pandas coercing identifiers or blanks.
+
+    Form answers are text. Letting pandas infer numeric columns turns values
+    such as ``00123`` into ``123``/``123.0`` and represents empty cells as
+    floating-point NaN. Callers may override these defaults explicitly when a
+    non-form CSV genuinely needs type inference.
+    """
+    options = {
+        "dtype": str,
+        "keep_default_na": False,
+        "low_memory": False,
+    }
+    options.update(kwargs)
+    return pd.read_csv(source, **options)
 
 
 def merge_geopoint_columns(df):

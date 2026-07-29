@@ -7,6 +7,7 @@ from django.utils import timezone
 
 from va_explorer.va_data_management.models import (
     CSADailyTracker,
+    Death,
     Household,
     ODKFormChoice,
     ODKPullLock,
@@ -34,7 +35,7 @@ def test_pull_form_updates_state_and_counts(monkeypatch):
     calls = {}
 
     def fake_list_submissions(
-        form_id, project_id, since=None, include_attachments=False
+        form_id, project_id, since=None, include_attachments=False, **kwargs
     ):
         calls["since"] = since
         df = pd.DataFrame([{"createdAt": "2024-01-01T00:00:00Z"}])
@@ -199,6 +200,63 @@ def test_import_dataframe_records_upserts_non_va_rows():
     assert created.province == "Central"
 
 
+def test_death_partial_update_preserves_absent_and_system_fields():
+    Death.objects.bulk_create(
+        [
+            Death(
+                key="death-1",
+                death_id="1321BY0062",
+                eventid="event-1",
+                DE_03="Existing Name",
+                DE_06="2026-01-01",
+            )
+        ]
+    )
+
+    counts = import_dataframe_records(
+        "death",
+        pd.DataFrame(
+            [
+                {
+                    "key": "death-1",
+                    "death_id": "source-id",
+                    "eventid": "source-event",
+                    "DE-06": "2026-02-02",
+                }
+            ]
+        ),
+    )
+
+    death = Death.objects.get(key="death-1")
+    assert counts["updated"] == 1
+    assert death.DE_03 == "Existing Name"
+    assert death.DE_06 == "2026-02-02"
+    assert death.death_id == "1321BY0062"
+    assert death.eventid == "event-1"
+
+
+def test_death_hyphenated_choice_field_is_mapped_after_normalization():
+    ODKFormChoice.objects.create(
+        form_name="death", field_name="DE_05", value="02", label="Female"
+    )
+
+    import_dataframe_records(
+        "death", pd.DataFrame([{"key": "death-choice", "DE-05": "02"}])
+    )
+
+    assert Death.objects.get(key="death-choice").DE_05 == "Female"
+
+
+def test_consenting_death_with_missing_core_columns_is_diagnosed(caplog):
+    with caplog.at_level("WARNING"):
+        import_dataframe_records(
+            "death", pd.DataFrame([{"key": "death-warning", "consent": "Yes"}])
+        )
+
+    assert "missing expected source column(s)" in caplog.text
+    assert "DE_03" in caplog.text
+
+
 def test_import_dataframe_records_drops_blank_keys_and_intrafile_duplicates():
     df = pd.DataFrame(
         [
@@ -232,7 +290,7 @@ def test_import_dataframe_records_routes_to_csa_daily_tracker():
 def test_upsert_into_models_wraps_va_loader_in_atomic_transaction(monkeypatch):
     service = ODKPullService(default_project_id=1)
 
-    def fake_load_records(df):
+    def fake_load_records(df, **kwargs):
         Household.objects.create(key="tx-house")
         raise RuntimeError("boom")
 

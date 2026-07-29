@@ -1,6 +1,5 @@
 import argparse
 
-import pandas as pd
 from django.core.management import call_command
 from django.core.management.base import BaseCommand, CommandError
 
@@ -11,6 +10,7 @@ from va_explorer.va_data_management.utils.loading import (
     load_odk_csv_to_model,
     normalize_dataframe_columns,
     normalize_string,
+    read_form_csv,
     upsert_gps_for_existing,
 )
 
@@ -60,7 +60,7 @@ class Command(BaseCommand):
         if not ODKFormChoice.objects.filter(form_name=norm_form_name).exists():
             raise CommandError("Definition for form 'death' has not been loaded")
 
-        df = pd.read_csv(csv_file)
+        df = read_form_csv(csv_file)
 
         df = merge_geopoint_into(df, source_prefix="DE-34", target_field="DE_34")
 

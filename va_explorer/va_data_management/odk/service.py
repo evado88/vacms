@@ -26,8 +26,11 @@ from va_explorer.va_data_management.utils.geopoint import (
     merge_geopoint_into,
 )
 from va_explorer.va_data_management.utils.loading import (
+    blank_values_for_model,
+    clean_import_value,
     load_records_from_dataframe,
     normalize_dataframe_columns,
+    normalize_string,
     normalize_value,
 )
 from va_explorer.va_data_management.utils.odk import make_pyodk_client
@@ -81,6 +84,9 @@ FORM_GEOPOINT_MAP = {
     "death": ("DE-34", "DE_34"),
 }
 
+DEATH_SYSTEM_FIELDS = frozenset({"death_id", "eventid"})
+DEATH_CORE_FIELDS = frozenset({"DE_03", "DE_05", "DE_06"})
+
 
 class ODKPullLocked(Exception):
     """Raised when an ODK pull is already running."""
@@ -121,12 +127,6 @@ def load_definition_from_bytes(form_name: str, content: bytes) -> int:
     return created
 
 
-def _clean_import_value(value):
-    if pd.isna(value):
-        return None
-    return value
-
-
 def _strip_group_prefix(column):
     """Collapse a split-GPS column to its bare component name.
 
@@ -144,6 +144,64 @@ def _strip_group_prefix(column):
     if tail != text and is_bare_geopoint_component(tail):
         return tail
     return text
+
+
+def _is_affirmative(value: Any) -> bool:
+    return str(value or "").strip().lower() in {"yes", "y", "true", "1", "01"}
+
+
+def _diagnose_death_columns(df: pd.DataFrame) -> None:
+    """Surface structurally incomplete consented Death payloads.
+
+    A missing source column is different from a blank answer. The former
+    usually means ODK column normalization failed and previously went
+    unnoticed while nearly empty Death rows were persisted.
+    """
+    if "consent" not in df.columns or not df["consent"].map(_is_affirmative).any():
+        return
+    missing = sorted(DEATH_CORE_FIELDS - set(df.columns))
+    if missing:
+        logger.warning(
+            "Consented death import is missing expected source column(s) after "
+            "normalization: %s",
+            ", ".join(missing),
+        )
+
+
+def prepare_form_dataframe(form_name: str, df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize an ODK frame and map coded answers without writing models."""
+    df = df.copy()
+
+    pre_renames = FORM_PRE_NORMALIZE_RENAMES.get(form_name, {})
+    if pre_renames:
+        df = df.rename(
+            columns={key: value for key, value in pre_renames.items() if key in df}
+        )
+
+    geopoint_cfg = FORM_GEOPOINT_MAP.get(form_name)
+    if geopoint_cfg:
+        source_prefix, gps_field = geopoint_cfg
+        df = merge_geopoint_into(
+            df, source_prefix=source_prefix, target_field=gps_field
+        )
+
+    model = FORM_MODEL_MAP[form_name]
+    df = normalize_dataframe_columns(df, model)
+    df = df.loc[:, ~df.columns.duplicated()]
+
+    lookup: Dict[str, Dict[str, str]] = {}
+    for choice in ODKFormChoice.objects.filter(form_name=form_name):
+        field_name = normalize_string(choice.field_name)
+        lookup.setdefault(field_name, {})[normalize_value(choice.value)] = choice.label
+    for field, mapping in lookup.items():
+        if field in df.columns:
+            df[field] = df[field].map(
+                lambda value, _map=mapping: _map.get(normalize_value(value), value)
+            )
+
+    if form_name == "death":
+        _diagnose_death_columns(df)
+    return df
 
 
 def _run_dq_after_import(form_name: str, created: int, updated: int) -> None:
@@ -210,38 +268,21 @@ def _assign_death_ids_after_import(
 
 def import_dataframe_records(form_name: str, df: pd.DataFrame) -> Dict[str, int]:
     """Map values using ODKFormChoice and save model records."""
-    lookup: Dict[str, Dict[str, str]] = {}
-    for choice in ODKFormChoice.objects.filter(form_name=form_name):
-        lookup.setdefault(choice.field_name, {})[
-            normalize_value(choice.value)
-        ] = choice.label
-    for field, mapping in lookup.items():
-        if field in df.columns:
-            df[field] = df[field].map(
-                lambda value, _map=mapping: _map.get(normalize_value(value), value)
-            )
-
-    pre_renames = FORM_PRE_NORMALIZE_RENAMES.get(form_name, {})
-    if pre_renames:
-        df = df.rename(
-            columns={k: v for k, v in pre_renames.items() if k in df.columns}
-        )
-
-    geopoint_cfg = FORM_GEOPOINT_MAP.get(form_name)
-    if geopoint_cfg:
-        source_prefix, gps_field = geopoint_cfg
-        df = merge_geopoint_into(
-            df, source_prefix=source_prefix, target_field=gps_field
-        )
-
     model = FORM_MODEL_MAP[form_name]
-    df = normalize_dataframe_columns(df, model)
-    df = df.loc[:, ~df.columns.duplicated()]
+    df = prepare_form_dataframe(form_name, df)
+    blanks = blank_values_for_model(model)
+    protected_fields = DEATH_SYSTEM_FIELDS if model is Death else frozenset()
 
     unique_field = FORM_UNIQUE_FIELD_MAP.get(form_name)
     if not unique_field or unique_field not in df.columns:
         objects = [
-            model(**{key: _clean_import_value(value) for key, value in row.items()})
+            model(
+                **{
+                    key: clean_import_value(value, blanks.get(key))
+                    for key, value in row.items()
+                    if key not in protected_fields
+                }
+            )
             for row in df.to_dict(orient="records")
         ]
         model.objects.bulk_create(objects)
@@ -272,17 +313,22 @@ def import_dataframe_records(form_name: str, df: pd.DataFrame) -> Dict[str, int]
             "duplicate_rows": duplicate_rows,
         }
 
-    concrete_fields = [
+    concrete_fields = {
         field.name
         for field in model._meta.concrete_fields
         if not field.auto_created and field.name != model._meta.pk.name
+    }
+    allowed_fields = concrete_fields - protected_fields
+    update_fields = [
+        field
+        for field in df.columns
+        if field in allowed_fields and field != unique_field
     ]
-    update_fields = [field for field in concrete_fields if field != unique_field]
     records = [
         {
-            key: _clean_import_value(value)
+            key: clean_import_value(value, blanks.get(key))
             for key, value in row.items()
-            if key in concrete_fields
+            if key in allowed_fields
         }
         for row in df.to_dict(orient="records")
     ]
@@ -303,21 +349,25 @@ def import_dataframe_records(form_name: str, df: pd.DataFrame) -> Dict[str, int]
             to_create.append(model(**record))
             continue
 
+        changed = False
         for field in update_fields:
-            new_val = record.get(field)
+            new_val = record[field]
             if (
                 field == gps_target
                 and not _gp_meaningful(new_val)
                 and _gp_meaningful(getattr(existing, field, None))
             ):
                 continue
-            setattr(existing, field, new_val)
-        to_update.append(existing)
+            if getattr(existing, field) != new_val:
+                setattr(existing, field, new_val)
+                changed = True
+        if changed:
+            to_update.append(existing)
 
     with transaction.atomic():
         if to_create:
             model.objects.bulk_create(to_create)
-        if to_update:
+        if to_update and update_fields:
             model.objects.bulk_update(to_update, fields=update_fields)
 
     _assign_death_ids_after_import(form_name=form_name, keys=keys)
@@ -521,7 +571,7 @@ def import_rumor_log_records(df: pd.DataFrame) -> Dict[str, int]:
             data["key"] = str(data["key"]).strip() or None
         else:
             data.pop("key", None)
-        obj = RumorLog(**{k: _clean_import_value(v) for k, v in data.items()})
+        obj = RumorLog(**{k: clean_import_value(v) for k, v in data.items()})
         obj.social_mobilization = social_mobilization
         objects.append(obj)
 

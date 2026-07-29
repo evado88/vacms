@@ -2,7 +2,6 @@
 
 import argparse
 
-import pandas as pd
 from django.core.management import call_command
 from django.core.management.base import BaseCommand, CommandError
 from simple_history.utils import bulk_update_with_history
@@ -15,6 +14,7 @@ from va_explorer.va_data_management.utils.loading import (
     normalize_dataframe_columns,
     normalize_string,
     normalize_value,
+    read_form_csv,
 )
 
 # Fields that carry ODK coded values requiring label lookup
@@ -192,7 +192,7 @@ class Command(BaseCommand):
             raise CommandError("Definition for form 'households' has not been loaded")
 
         # --- Load and prepare CSV ---
-        df = pd.read_csv(csv_file, dtype=str)
+        df = read_form_csv(csv_file)
 
         # Merge split GPS columns (hh_gps-Latitude/Longitude/Altitude/Accuracy → hh_gps)
         # before column normalization drops the component columns.

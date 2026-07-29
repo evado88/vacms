@@ -1,7 +1,7 @@
 from django.db.models import CharField, F, Value
 from django.db.models.functions import Cast, Coalesce, Lower, Trim
 
-INVALID_LIST_DISPLAY_VALUES = frozenset({"", "-", "not listed", "unknown"})
+INVALID_LIST_DISPLAY_VALUES = frozenset({"", "-", "nan", "not listed", "unknown"})
 
 
 def exclude_rows_with_invalid_display_values(queryset, field_names):

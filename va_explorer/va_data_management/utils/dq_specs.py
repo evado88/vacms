@@ -84,6 +84,7 @@ class DQSpec:
     time_fields: Dict[str, Optional[str]] = field(default_factory=dict)
     consent_field: Optional[str] = None
     consent_gate_field: Optional[str] = None
+    completeness_requires_consent: bool = False
     required_fields: Sequence[Any] = ()  # (field, label) pairs
     duplicate_groups: Sequence[Tuple[str, Sequence[str]]] = ()
     duplicate_title: str = ""
@@ -412,6 +413,7 @@ DQ_SPECS: Dict[type, DQSpec] = {
             "submissiondate": "submissiondate",
         },
         consent_field="consent",
+        completeness_requires_consent=True,
         required_fields=(
             ("DE_03", "Name of deceased"),
             ("DE_05", "Sex of deceased"),
@@ -586,7 +588,14 @@ def run_dq_for_model(
                 summary["timeliness"] += 1
 
         # Completeness
-        if spec.completeness_fn is not None:
+        consent_blocks_completeness = (
+            spec.completeness_requires_consent
+            and spec.consent_field
+            and not _yes(row.get(spec.consent_field))
+        )
+        if consent_blocks_completeness:
+            issue = None
+        elif spec.completeness_fn is not None:
             issue = spec.completeness_fn(model, oid, row)
         elif spec.required_fields:
             issue = upsert_completeness_issue(

@@ -124,6 +124,25 @@ def test_death_consent_flags_non_affirmative():
     assert _issues_for(Death, DataQualityIssue.CONSENT).exists()
 
 
+def test_death_no_consent_does_not_create_completeness_issue():
+    _bulk(
+        Death,
+        [
+            _death(
+                "d1",
+                consent="no",
+                DE_03=None,
+                DE_05=None,
+                DE_06=None,
+            )
+        ],
+    )
+    run_dq_for_model(DQ_SPECS[Death], write_reports=False)
+
+    assert not _issues_for(Death, DataQualityIssue.INCOMPLETE).exists()
+    assert _issues_for(Death, DataQualityIssue.CONSENT).exists()
+
+
 def test_death_validity_flags_male_maternal_flag_and_future_dod():
     _bulk(Death, [_death("d1", DE_05="Male", DE_16="yes", DE_06="2999-01-01")])
     run_dq_for_model(DQ_SPECS[Death], write_reports=False)

@@ -14,6 +14,7 @@ from va_explorer.va_data_management.utils.loading import (
     normalize_dataframe_columns,
     normalize_string,
     normalize_value,
+    read_form_csv,
 )
 
 
@@ -44,7 +45,7 @@ class Command(BaseCommand):
                 "ODK form definition for 'pregnancy_outcome' not loaded."
             )
 
-        df = pd.read_csv(csv_file, dtype=str)
+        df = read_form_csv(csv_file)
 
         # Standardise KEY and PARENT_KEY column names
         if "PARENT_KEY" in df.columns:
