@@ -25,6 +25,7 @@ idempotent upsert by instanceID) but adds the VASA-specific concerns:
 import logging
 
 import pandas as pd
+from django.core.exceptions import ValidationError
 from django.db import transaction
 
 from ..models import (
@@ -47,6 +48,7 @@ from ..vasa.value_decode import FALLBACK, UNKNOWN_CODE, decode_value
 from .date_parsing import parse_date
 from .geopoint import merge_geopoint_into
 from .loading import _has_meaningful_value
+from .submission_timestamp import parse_submission_timestamp
 from .vasa_geocoding import VasaGeocoder, geo_codes
 
 logger = logging.getLogger(__name__)
@@ -102,12 +104,20 @@ GEOGRAPHY_UNRESOLVED_TITLE = (
     "VASA geography codes could not be matched to a location (record will not be "
     "location-scoped)"
 )
+SUBMISSION_TIMESTAMP_TITLE = (
+    "VASA submission date could not be parsed (record will not appear in dated "
+    "downloads)"
+)
+SUBMISSION_TIMESTAMP_KEYS = {"check": "unparseable_submissiondate"}
 _CONFLICT_KEY_CHECKS = ("name_conflict", "who_id_conflict")
 _DECODE_KEY_CHECKS = ("unknown_code", "fallback_value")
 _GEO_KEY_CHECKS = ("geography_unresolved",)
+_SUBMISSION_KEY_CHECKS = ("unparseable_submissiondate",)
 # Every check the loader owns end-to-end: flagged during load, auto-resolved
 # when the record re-loads without the problem.
-_LOADER_KEY_CHECKS = _CONFLICT_KEY_CHECKS + _DECODE_KEY_CHECKS + _GEO_KEY_CHECKS
+_LOADER_KEY_CHECKS = (
+    _CONFLICT_KEY_CHECKS + _DECODE_KEY_CHECKS + _GEO_KEY_CHECKS + _SUBMISSION_KEY_CHECKS
+)
 
 # Dry-run change reports are capped to keep summaries safe on large exports.
 _DRY_RUN_CHANGE_CAP = 500
@@ -318,7 +328,15 @@ def _build_vasa_record(raw, raw_ci):
     record["key"] = raw_ci.get("key") or record["instanceid"]
     submission = raw_ci.get("submissiondate")
     if _has_meaningful_value(submission):
+        # Preserve the raw value verbatim, then derive the canonical timestamp.
+        # A malformed value must not cost the whole submission: the record still
+        # loads with a null timestamp and _flag_submission_timestamp_issue()
+        # raises a VALIDITY issue so the bad value stays visible and fixable.
         record["submissiondate"] = submission
+        try:
+            record["submitted_at"] = parse_submission_timestamp(submission)
+        except ValidationError:
+            record["submitted_at"] = None
     if _has_meaningful_value(raw_ci.get("geopoint")):
         record["geopoint"] = raw_ci["geopoint"]
     record["instrument"] = _detect_instrument(raw, who_values)
@@ -484,6 +502,33 @@ def _flag_conflict_issues(vasa, instanceid, conflicts):
             keys=keys,
             details=details,
         )
+
+
+def _flag_submission_timestamp_issue(vasa, instanceid):
+    """Record an unparseable raw submissiondate as a VALIDITY DataQualityIssue.
+
+    ``submitted_at`` is what the VA/VASA export filters on, so a record that
+    fails to derive one is invisible to every dated download. Derive the flag
+    from persisted state rather than the parse site so a corrected re-import
+    resolves the same issue.
+    """
+    from va_explorer.va_data_management.models.data_quality import DataQualityIssue
+    from va_explorer.va_data_management.utils.dq import upsert_issue
+
+    if vasa.submitted_at is not None or not _has_meaningful_value(vasa.submissiondate):
+        return
+
+    upsert_issue(
+        issue_type=DataQualityIssue.VALIDITY,
+        model_class=VASA,
+        member_ids=[vasa.pk],
+        title=SUBMISSION_TIMESTAMP_TITLE,
+        keys=SUBMISSION_TIMESTAMP_KEYS,
+        details={
+            "instanceid": instanceid,
+            "submissiondate": str(vasa.submissiondate),
+        },
+    )
 
 
 def _flag_decode_issues(vasa, instanceid, decode_flags):
@@ -720,10 +765,20 @@ def load_vasa_from_dataframes(main_df, repeat_dfs=None, *, dry_run=False):
                     _flag_decode_issues(vasa, instanceid, decode_flags)
                 if geo.unresolved_level is not None:
                     _flag_geo_issue(vasa, instanceid, geo)
+                unparseable_submission = vasa.submitted_at is None and (
+                    _has_meaningful_value(vasa.submissiondate)
+                )
+                if unparseable_submission:
+                    _flag_submission_timestamp_issue(vasa, instanceid)
                 flagged_checks[vasa.pk] = (
                     {c["kind"] for c in conflicts}
                     | {f["check"] for f in decode_flags}
                     | ({"geography_unresolved"} if geo.unresolved_level else set())
+                    | (
+                        {"unparseable_submissiondate"}
+                        if unparseable_submission
+                        else set()
+                    )
                 )
                 if _has_meaningful_value(vasa.key):
                     vasa_by_key[str(vasa.key).strip()] = vasa

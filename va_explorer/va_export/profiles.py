@@ -71,10 +71,11 @@ VA_ABRIDGED_COD_FIELDS = [
     "cause_created",
 ]
 
-# Death date plus record timestamps for tracking.
+# Death date, canonical submission timestamp, and record timestamps for tracking.
 VA_ABRIDGED_DATE_FIELDS = [
     "Id10023",  # Date of death
     "date",  # Annotated alias of Id10023
+    "submitted_at",  # Canonical ODK submission timestamp
     "created",
     "updated",
 ]

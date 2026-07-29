@@ -1,3 +1,5 @@
+from datetime import datetime
+from datetime import timezone as datetime_timezone
 from io import StringIO
 from pathlib import Path
 
@@ -63,6 +65,88 @@ def test_loading_from_dataframe():
     assert result["created"][1].instanceid == data[1]["instanceid"]
     assert result["created"][1].Id10007 == data[1]["testing-dashes-Id10007"]
     assert result["created"][1].location == loc
+
+
+def test_loading_from_dataframe_populates_canonical_submission_timestamp():
+    Location.add_root(
+        name="Test Location", key="test_location", location_type="facility"
+    )
+    raw_submission = "2026-05-15T16:25:49.168+02:00"
+    df = pandas.DataFrame.from_records(
+        [
+            {
+                "instanceid": "instance-submitted-at",
+                "Id10017": "name",
+                "Id10018": "one",
+                "Id10012": "2026-05-14",
+                "Id10023": "",
+                "hospital": "test_location",
+                "submissiondate": raw_submission,
+            }
+        ]
+    )
+
+    result = load_records_from_dataframe(df)
+    record = VerbalAutopsy.objects.get(instanceid="instance-submitted-at")
+
+    assert result["created"] == [record]
+    assert record.submissiondate == raw_submission
+    assert record.submitted_at == datetime(
+        2026, 5, 15, 14, 25, 49, 168000, tzinfo=datetime_timezone.utc
+    )
+    assert record.history.get().submitted_at == record.submitted_at
+
+
+def test_loading_from_dataframe_flags_invalid_submission_timestamp_without_aborting():
+    # Callers wrap this loader in a transaction, so raising on a malformed value
+    # would roll back an entire ODK pull over one bad row. Both rows must load;
+    # the bad one is flagged the same way an unparseable Id10023 is.
+    Location.add_root(
+        name="Test Location", key="test_location", location_type="facility"
+    )
+    df = pandas.DataFrame.from_records(
+        [
+            {
+                "instanceid": "instance-good",
+                "Id10017": "name",
+                "Id10018": "one",
+                "Id10012": "2026-05-14",
+                "Id10023": "2026-05-01",
+                "hospital": "test_location",
+                "submissiondate": "2026-05-15T16:25:49Z",
+            },
+            {
+                "instanceid": "instance-bad",
+                "Id10017": "name",
+                "Id10018": "two",
+                "Id10012": "2026-05-14",
+                "Id10023": "2026-05-01",
+                "hospital": "test_location",
+                "submissiondate": "2026-05-15 16:25:49",
+            },
+        ]
+    )
+
+    result = load_records_from_dataframe(df)
+
+    assert len(result["created"]) == 2
+    good = VerbalAutopsy.objects.get(instanceid="instance-good")
+    bad = VerbalAutopsy.objects.get(instanceid="instance-bad")
+    assert good.submitted_at == datetime(
+        2026, 5, 15, 16, 25, 49, tzinfo=datetime_timezone.utc
+    )
+    # Raw provenance is preserved even though it could not be normalized.
+    assert bad.submissiondate == "2026-05-15 16:25:49"
+    assert bad.submitted_at is None
+
+    issues = CauseCodingIssue.objects.filter(
+        verbalautopsy_id=bad.id, text__contains="submissiondate"
+    )
+    assert issues.count() == 1
+    assert issues.first().severity == "error"
+    assert not CauseCodingIssue.objects.filter(
+        verbalautopsy_id=good.id, text__contains="submissiondate"
+    ).exists()
 
 
 def test_loading_from_dataframe_with_community_va_field():

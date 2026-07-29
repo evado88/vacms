@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from django.core.exceptions import ValidationError
 from django.db.models import Count, Max, Q
 from simple_history.utils import bulk_create_with_history, bulk_update_with_history
 
@@ -752,6 +753,19 @@ def load_records_from_dataframe(
                 va.Id10012,
             )
         va.Id10012 = parsed_sub_date
+
+        # ``bulk_create_with_history`` bypasses model ``save()``; populate the
+        # canonical ODK timestamp explicitly so the live and new history rows
+        # are synchronized from first insertion. A malformed value must not sink
+        # the batch — callers wrap this loader in a transaction, so raising here
+        # would roll back an entire ODK pull over one bad row. Load the record
+        # with a null timestamp; validate_vas_for_dashboard() below raises a
+        # CauseCodingIssue for it, exactly as it does for an unparseable
+        # Id10023.
+        try:
+            va.synchronize_submitted_at()
+        except ValidationError:
+            va.submitted_at = None
 
         # if random_locations, assign random field worker to VA which can be used
         # to determine location.

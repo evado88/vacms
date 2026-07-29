@@ -1,10 +1,13 @@
 import logging
 import re
+from datetime import date, datetime, time, timedelta
 from itertools import chain
 
+from django.conf import settings
 from django.contrib.auth.mixins import PermissionRequiredMixin
 from django.db.models import F, Q, TextField, Value
 from django.http import JsonResponse
+from django.utils import timezone
 from django.views.generic import View
 from django.views.generic.edit import FormView
 
@@ -23,6 +26,10 @@ from va_explorer.va_data_management.models import (
     SRSClusterLocation,
     VerbalAutopsy,
 )
+from va_explorer.va_data_management.utils.location_access import (
+    restrict_va_queryset_to_user_locations as restrict_va_queryset_by_user_location,
+)
+from va_explorer.va_data_management.utils.submission_timestamp import export_timezone
 from va_explorer.va_export.forms import ExportRequestForm, VADownloadForm
 from va_explorer.va_export.profiles import ABRIDGED_VA_EXPORT_COLUMNS
 from va_explorer.va_export.streaming import (
@@ -306,6 +313,43 @@ def _apply_date_filter(qs, start_date, end_date, date_field):
     return qs
 
 
+def _submission_date_bounds(start_date, end_date):
+    """Return index-friendly inclusive-date bounds in the export timezone.
+
+    Timestamps are stored in UTC, but a date picked in the export UI means a
+    local calendar day. Bucketing in UTC would push submissions made in the
+    first hours of a local day into the previous day's download.
+    """
+
+    export_tz = export_timezone()
+    start_bound = (
+        timezone.make_aware(datetime.combine(start_date, time.min), export_tz)
+        if start_date
+        else None
+    )
+    # An exclusive upper bound avoids applying a database function to the indexed
+    # column. ``date.max`` cannot be incremented, so that open-ended edge case has
+    # no upper predicate.
+    end_bound = (
+        timezone.make_aware(
+            datetime.combine(end_date + timedelta(days=1), time.min),
+            export_tz,
+        )
+        if end_date and end_date < date.max
+        else None
+    )
+    return start_bound, end_bound
+
+
+def _apply_submission_date_filter(qs, start_date, end_date):
+    start_bound, end_bound = _submission_date_bounds(start_date, end_date)
+    if start_bound:
+        qs = qs.filter(submitted_at__gte=start_bound)
+    if end_bound:
+        qs = qs.filter(submitted_at__lt=end_bound)
+    return qs
+
+
 def _normalize_odk_code(val):
     """Normalise an ODK choice value so '05', '5', and '5.0' all map to '5'."""
     text = str(val or "").strip()
@@ -520,17 +564,24 @@ def _va_query_columns(model, output_columns):
     return list(dict.fromkeys(query_columns))
 
 
-def _filter_va_queryset(request, params, *, model, id_param, source_label):
-    user_records = (
-        request.user.vasa_records if model is VASA else request.user.verbal_autopsies
-    )
-    matching_vas = user_records(
-        date_cutoff="1901-01-01", end_date="9999-12-31"
-    ).exclude(Id10023="dk")
-    matching_vas = _restrict_va_export_queryset_to_user_locations(
-        matching_vas,
+def _scoped_va_queryset(request, model):
+    """Active records the user may see, before any user-selected filter.
+
+    Starts from the active manager rather than ``user.verbal_autopsies()`` /
+    ``user.vasa_records()``: those helpers apply an Id10023 (date-of-death) gate
+    before their location restriction, which permanently discarded submitted
+    VAs/VASAs whose death date was blank or "dk". Both of the restrictions those
+    helpers applied are reapplied here, so access does not broaden.
+    """
+    queryset = restrict_va_queryset_by_user_location(
+        model.objects.all(),
         request.user,
     )
+    return _restrict_va_export_queryset_to_user_locations(queryset, request.user)
+
+
+def _filter_va_queryset(request, params, *, model, id_param, source_label):
+    matching_vas = _scoped_va_queryset(request, model)
 
     # VA and VASA use independent integer sequences, so targeted exports keep
     # source-specific ID lists instead of treating an ID as globally unique.
@@ -572,11 +623,10 @@ def _filter_va_queryset(request, params, *, model, id_param, source_label):
                 else matching_vas.none()
             )
 
-        matching_vas = _apply_date_filter(
+        matching_vas = _apply_submission_date_filter(
             matching_vas,
             params.get("start_date"),
             params.get("end_date"),
-            "Id10023",
         )
         if params.get("causes"):
             matching_vas = matching_vas.filter(causes__cause__in=params["causes"])
@@ -644,9 +694,21 @@ def _export_va_dataset(request, params):
     }
     row_count = sum(source_row_counts.values())
 
+    # A record with no canonical timestamp can never satisfy submitted_at__gte,
+    # so it is invisible to every dated download. Count them per source so that
+    # silent exclusion shows up in the log instead of as a mystery shortfall.
+    undated_counts = {
+        source_label: _scoped_va_queryset(request, model)
+        .filter(submitted_at__isnull=True)
+        .count()
+        for model, source_label, _queryset in source_querysets
+    }
+
     logger.info(
         "VA export requested: user=%s rows=%s va_rows=%s vasa_rows=%s "
-        "record_type=%s format=%s filters={ids:%s, vasa_ids:%s, locations:%s, "
+        "record_type=%s format=%s date_basis=submitted_at "
+        "undated_va=%s undated_vasa=%s export_tz=%s "
+        "filters={ids:%s, vasa_ids:%s, locations:%s, "
         "start:%s, end:%s, causes:%s}",
         getattr(request.user, "email", None),
         row_count,
@@ -654,6 +716,9 @@ def _export_va_dataset(request, params):
         source_row_counts["VASA"],
         record_type,
         fmt,
+        undated_counts["VA"],
+        undated_counts["VASA"],
+        settings.VA_EXPORT_TIME_ZONE,
         bool(params.get("ids")),
         bool(params.get("vasa_ids")),
         params.get("locations") or None,

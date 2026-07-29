@@ -52,6 +52,7 @@ flowchart LR
 
     subgraph UI["UI and admin"]
         LineList["Unified line list\nVA + VASA"]
+        Export["Combined VA/VASA download"]
         ShowVA["VA detail / edit"]
         ShowVASA["VASA detail with SA + repeats"]
         Admin["Admin + review screens"]
@@ -95,6 +96,8 @@ flowchart LR
 
     VA --> LineList
     VASA --> LineList
+    VA --> Export
+    VASA --> Export
     VA --> ShowVA
     VASA --> ShowVASA
     Match --> Admin
@@ -105,7 +108,7 @@ flowchart LR
 
 | Model | Purpose |
 | --- | --- |
-| `BaseVerbalAutopsy` (abstract) | All shared WHO `Idxxxxx` columns + metadata/geo helpers. `VerbalAutopsy` and `VASA` both inherit it, so the two cannot drift apart. |
+| `BaseVerbalAutopsy` (abstract) | All shared WHO `Idxxxxx` columns + metadata/geo helpers. `VerbalAutopsy` and `VASA` both inherit raw ODK `submissiondate` and canonical `submitted_at`, so the two cannot drift apart. |
 | `VASA` | A VASA record. Inherits every WHO column (Ids absent from the VASA form are simply blank), and adds `instrument` (neonate/child/adult/maternal), `source`, `key`, its own `location`/`cluster` FKs, and history. Soft-deletable like VA. |
 | `VASASocialAutopsy` | One-to-one with `VASA`; ~550 generated typed columns for the empty-`WHO_name` social-autopsy questions. **Physically separate from `VASA`, so SA data can never enter coding input.** |
 | `VASACareSeekingNeonate` / `Child` / `Adult` | One model per repeat group (`br_N2213` / `AD_C3253_1` / `ar_A4252`), FK'd to `VASA`, keyed by `key`/`parent_key`. |
@@ -192,7 +195,8 @@ The loader (`utils/vasa_loading.py`):
    adopts them **in place** on the canonical `Idxxxxx` fields — the same values
    `build_pycrossva_records()` sends to coding, so decoded value == stored
    value == coding input;
-4. parses date-of-death / interview dates;
+4. parses date-of-death / interview dates and normalizes raw `submissiondate`
+   into canonical `submitted_at`;
 5. detects the instrument (neonate/child/adult, refined to maternal for a
    female-adult pregnancy death);
 6. routes empty-`WHO_name` answers to `VASASocialAutopsy`;
@@ -245,6 +249,31 @@ pull with `python manage.py import_from_odk` (or the scheduled Celery task).
 `ODKPullService.upsert_into_models` routes those form names to the VASA loader;
 `FORM_REPEAT_TABLE_MAP` maps the repeat forms to their OData tables.
 
+## Export
+
+The `verbalautopsy` dataset in `/va_export/` is a combined download of active
+traditional VA and VASA records visible to the requesting user. CSV and JSON
+rows use `source=VA|VASA` to distinguish the models. With no cause selected,
+the cause relationship is outer-joined so uncoded VA and VASA records remain in
+the download with blank cause fields; selecting a cause intentionally excludes
+uncoded records. Multiple linked causes produce one deterministically ordered
+row per cause.
+
+For this dataset, `start_date` and `end_date` are inclusive ODK submission
+calendar dates in Django's configured timezone. Raw `submissiondate` is retained
+unchanged for provenance. The shared `submitted_at` field is its validated,
+timezone-aware representation, normalized to UTC and indexed for range
+filtering. Queries use a lower-inclusive start-of-day bound and an
+upper-exclusive bound at midnight after the selected end date. They do not use
+the date of death (`Id10023`) as the membership filter, so records with blank or
+`dk` death dates are still downloadable when their submission falls in range.
+
+`Id10023` and the existing `date` output continue to mean date of death.
+Abridged exports include `submitted_at`; full exports contain both canonical
+`submitted_at` and raw `submissiondate`. The combined export covers the core
+VASA record, not its social-autopsy or care-seeking repeat tables. DHIS is a
+separate integration and remains traditional-VA-only.
+
 ## Coding
 
 `run_coding_algorithms()` (and the Celery orchestrator) code both `VerbalAutopsy`
@@ -268,3 +297,6 @@ python manage.py run_coding_algorithms      # codes uncoded VA and VASA records
 - `test_vasa_value_decode.py` — the pure decoder: every `value_rule`, multi-select join, blank-vs-zero, idempotency, SA display labels.
 - `test_vasa_redecode.py` — provenance replay: repairs stale decodes, dry-run safety, combined-target exclusion, decode-issue lifecycle.
 - `test_vasa_line_list_and_detail.py` — VASA rows/routing in the line list; detail tabs; decoded WHO values (no raw codes) and SA choice labels.
+- `va_export/tests/test_views.py` — combined VA/VASA CSV and JSON output,
+  submission-date boundaries, coded and uncoded records, source ordering,
+  permissions, and PII redaction.

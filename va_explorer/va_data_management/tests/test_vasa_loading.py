@@ -5,6 +5,8 @@ and repeat rows br_N2213=3, AD_C3253_1=0, ar_A4252=4.
 """
 
 from collections import Counter
+from datetime import datetime
+from datetime import timezone as datetime_timezone
 from pathlib import Path
 
 import pandas as pd
@@ -117,6 +119,72 @@ def test_ingestion_is_idempotent():
     assert VASA.objects.count() == 6
     assert VASACareSeekingNeonate.objects.count() == 3
     assert VASACareSeekingAdult.objects.count() == 4
+
+
+@pytest.mark.django_db
+def test_ingestion_populates_and_updates_canonical_submission_timestamp():
+    first_raw = "2026-05-15T16:25:49.168+02:00"
+    summary = load_vasa_from_dataframes(
+        _df([_row("uuid:submitted-at", SubmissionDate=first_raw)])
+    )
+    vasa = VASA.objects.get(instanceid="uuid:submitted-at")
+
+    assert summary["errors"] == 0
+    assert vasa.submissiondate == first_raw
+    assert vasa.submitted_at == datetime(
+        2026, 5, 15, 14, 25, 49, 168000, tzinfo=datetime_timezone.utc
+    )
+
+    second_raw = "2026-05-16T01:30:00-04:00"
+    load_vasa_from_dataframes(
+        _df([_row("uuid:submitted-at", SubmissionDate=second_raw)])
+    )
+    vasa.refresh_from_db()
+    assert vasa.submissiondate == second_raw
+    assert vasa.submitted_at == datetime(
+        2026, 5, 16, 5, 30, tzinfo=datetime_timezone.utc
+    )
+
+
+@pytest.mark.django_db
+def test_ingestion_loads_and_flags_an_invalid_submission_timestamp():
+    # A malformed timestamp must not cost the whole submission. The record loads
+    # with a null canonical value, keeps its raw provenance, and raises a
+    # VALIDITY issue so the bad value stays visible and remediable.
+    summary = load_vasa_from_dataframes(
+        _df([_row("uuid:bad-submitted-at", SubmissionDate="2026-05-15 12:00:00")])
+    )
+
+    assert summary["errors"] == 0
+    assert summary["created"] == 1
+
+    vasa = VASA.objects.get(instanceid="uuid:bad-submitted-at")
+    assert vasa.submissiondate == "2026-05-15 12:00:00"
+    assert vasa.submitted_at is None
+
+    issue = DataQualityIssue.objects.get(keys__check="unparseable_submissiondate")
+    assert issue.issue_type == DataQualityIssue.VALIDITY
+    assert issue.details["submissiondate"] == "2026-05-15 12:00:00"
+
+
+@pytest.mark.django_db
+def test_reimporting_a_corrected_submission_timestamp_resolves_the_issue():
+    load_vasa_from_dataframes(
+        _df([_row("uuid:bad-submitted-at", SubmissionDate="2026-05-15 12:00:00")])
+    )
+    assert DataQualityIssue.objects.filter(
+        keys__check="unparseable_submissiondate", status=DataQualityIssue.OPEN
+    ).exists()
+
+    load_vasa_from_dataframes(
+        _df([_row("uuid:bad-submitted-at", SubmissionDate="2026-05-15T12:00:00Z")])
+    )
+
+    vasa = VASA.objects.get(instanceid="uuid:bad-submitted-at")
+    assert vasa.submitted_at == datetime(2026, 5, 15, 12, tzinfo=datetime_timezone.utc)
+    assert not DataQualityIssue.objects.filter(
+        keys__check="unparseable_submissiondate", status=DataQualityIssue.OPEN
+    ).exists()
 
 
 # --------------------------------------------------------------------------- #

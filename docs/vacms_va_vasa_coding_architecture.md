@@ -69,7 +69,8 @@ flowchart LR
     subgraph Consumers
         UI[Unified VA/VASA line list]
         DASH[Dashboards and analytics]
-        EXPORT[VA export / DHIS]
+        EXPORT[Combined VA/VASA download]
+        DHIS[DHIS2 export]
     end
 
     ODK --> VAI
@@ -95,6 +96,8 @@ flowchart LR
     VA --> DASH
     VASA --> DASH
     VA --> EXPORT
+    VASA --> EXPORT
+    VA --> DHIS
 ```
 
 The deployment in [`docker-compose.yml`](../docker-compose.yml) defines Django,
@@ -108,7 +111,7 @@ The major Django modules are:
 | `home` | operational and national dashboards |
 | `va_analytics` | filtered VA/VASA analysis, maps, cause and demographic summaries |
 | `users` | authentication, roles, permissions, and geography-scoped querysets |
-| `va_export` | data export; currently traditional VA only |
+| `va_export` | combined traditional VA/VASA downloads, distinguished by the `source` output field |
 | `dhis_manager` | DHIS2 integration; currently traditional VA only |
 | `va_data_cleanup` / `va_admin` | data-quality review and administrative commands |
 
@@ -160,9 +163,14 @@ behaviours:
 - `linked_death` returns only an authoritative matched `VADeathMatch`; and
 - normal managers hide soft-deleted rows, while `all_objects` includes them.
 
-All questionnaire fields are text-like at this boundary, including dates and
-numeric durations. This is intentional compatibility with ODK/WHO payloads, but
-means validation and canonical formatting cannot be delegated to database types.
+Questionnaire fields are text-like at this boundary, including dates and numeric
+durations. This is intentional compatibility with ODK/WHO payloads. Collection
+time is the exception: raw ODK `submissiondate` remains text for provenance,
+while `submitted_at` is its validated, timezone-aware `DateTimeField`
+representation for range queries and indexing. A shared parser normalizes aware
+ISO-8601 values to UTC and interprets ISO date-only legacy values as midnight in
+the configured Django timezone. Invalid nonblank values are rejected instead of
+being replaced with a death date, creation time, or current time.
 
 ### 2.2 Traditional `VerbalAutopsy`
 
@@ -190,7 +198,8 @@ The traditional loader in
 4. coalesces `_other` fields and converts multi-select spaces to commas;
 5. infers community/facility mode and assigns a facility or SRS cluster;
 6. keeps only fields defined on `VerbalAutopsy`;
-7. parses death and interview dates to canonical strings;
+7. parses death and interview dates to canonical strings and normalizes the raw
+   `submissiondate` into `submitted_at`;
 8. bulk-creates new records with history and validates them; and
 9. optionally schedules Death-register matching.
 
@@ -225,6 +234,23 @@ The main VASA form is
 `znphi_vasa_who_2016`. Its 2,257 survey rows combine common, neonate, child,
 adult/maternal, social-autopsy, calculated/admin, and repeat questions. Exactly
 one age instrument is expected to be populated in a submission.
+
+### 2.4 Export and collection-date semantics
+
+The `verbalautopsy` dataset in `/va_export/` combines active, user-visible
+`VerbalAutopsy` and `VASA` records in one CSV or JSON stream. The `source`
+column identifies `VA` versus `VASA`; core cause fields are outer-joined so an
+uncoded record is retained with blank cause cells. Social-autopsy and repeat
+tables are not flattened into this dataset. DHIS remains a separate,
+traditional-VA-only integration.
+
+For this combined dataset, `start_date` and `end_date` select the inclusive ODK
+submission-date range, not the date of death. Queries use the canonical indexed
+`submitted_at` field with a lower-inclusive bound at local midnight and an
+upper-exclusive bound at midnight after the selected end date. `Id10023` and
+the existing `date` export column continue to represent date of death. Abridged
+output includes canonical `submitted_at`; full output includes both
+`submitted_at` and the unchanged raw `submissiondate`.
 
 ## 3. How VASA variables map to WHO VA identifiers
 
@@ -440,7 +466,8 @@ For each source row the loader:
 6. copies supported admin/location columns;
 7. normalises `instanceID` and ODK `KEY`;
 8. detects the instrument;
-9. parses `Id10023` and `Id10012` dates;
+9. parses `Id10023` and `Id10012` dates and normalizes raw `submissiondate` into
+   canonical `submitted_at`;
 10. routes generated social fields to `VASASocialAutopsy`;
 11. upserts the main record by `instanceid` inside a per-row transaction; and
 12. validates `DeathID`, resolves stale conflict issues, and optionally schedules
@@ -734,8 +761,9 @@ extract a standalone harmonisation service:
 9. **Overwrite CLI parsing is unsafe for automation.** `--overwrite` uses Python
    `bool` argument parsing, for which a non-empty string such as `False` is true.
    Avoid it in an automated harmonisation workflow until corrected.
-10. **VASA export is incomplete.** The unified line list deliberately exports
-    traditional VA IDs only; `va_export` is not wired for VASA or its SA/repeats.
+10. **Combined export deliberately covers core records only.** `va_export`
+    streams traditional VA and VASA records together, but does not flatten VASA
+    social-autopsy or care-seeking repeat tables into the same schema.
 11. **DHIS export is traditional-VA-only.** `run_dhis` queries
     `VerbalAutopsy` and `verbalautopsy_id`, despite shared `DhisStatus` support.
 12. **Multiple-algorithm semantics are incomplete.** Any existing cause makes a

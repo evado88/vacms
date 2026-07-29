@@ -156,6 +156,21 @@ def validate_vas_for_dashboard(verbal_autopsies):
             )
             issues.append(issue)
 
+        # Validate: submissiondate
+        # submitted_at is derived from submissiondate and is what the VA export
+        # filters on. A non-blank raw value that would not parse leaves the
+        # record invisible to every dated download, so surface it here rather
+        # than rejecting the record at ingestion.
+        if va.submitted_at is None and _has_meaningful_text(va.submissiondate):
+            issues.append(
+                _coding_issue(
+                    va,
+                    "Error: field submissiondate, couldn't parse a timezone-aware "
+                    f"timestamp from {va.submissiondate}",
+                    "error",
+                )
+            )
+
         # Validate: ageInYears2
         # ageInYears2 is required for calculating mean age of death
         try:

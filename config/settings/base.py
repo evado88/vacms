@@ -16,6 +16,12 @@ env.read_env(str(ROOT_DIR / ".env"))
 # General
 
 TIME_ZONE = "UTC"
+# Calendar timezone for VA/VASA submission-date bucketing. Storage stays UTC;
+# this only decides which local day a submission timestamp belongs to, so that a
+# date picked in the export UI means the day field staff actually worked. Left
+# separate from TIME_ZONE so it can be set per deployment without moving every
+# rendered timestamp, Celery schedule, and dashboard aggregation.
+VA_EXPORT_TIME_ZONE = env("VA_EXPORT_TIME_ZONE", default="Africa/Lusaka")
 # Default display formats for date and datetime values when rendered in the UI.
 DATE_FORMAT = "Y-m-d"
 DATETIME_FORMAT = "Y-m-d H:i"

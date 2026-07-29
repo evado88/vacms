@@ -89,6 +89,7 @@ class VerbalAutopsyFactory(DjangoModelFactory):
 
     Id10007 = "Example Name"
     Id10023 = "1901-01-01"
+    submissiondate = "2026-01-15T12:00:00Z"
     Id10058 = "hospital"
     location = factory.SubFactory(LocationFacilityFactory)
 
@@ -99,6 +100,7 @@ class VASAFactory(DjangoModelFactory):
 
     Id10007 = "Example Name"
     Id10023 = "1901-01-01"
+    submissiondate = "2026-01-15T12:00:00Z"
     Id10058 = "hospital"
     instrument = "adult"
     location = factory.SubFactory(LocationFacilityFactory)

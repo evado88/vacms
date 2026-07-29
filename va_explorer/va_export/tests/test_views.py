@@ -1,11 +1,14 @@
 import csv
 import io
 import json
+import logging
 import zipfile
+from datetime import datetime
+from datetime import timezone as dt_timezone
 
 import pytest
 from django.contrib.auth.models import Permission
-from django.test import Client, RequestFactory
+from django.test import Client, RequestFactory, override_settings
 from django.urls import reverse
 
 from va_explorer.tests.factories import (
@@ -29,6 +32,7 @@ from va_explorer.va_data_management.models import (
     SRSClusterLocation,
     VerbalAutopsy,
 )
+from va_explorer.va_data_management.utils.submission_timestamp import export_timezone
 from va_explorer.va_export.forms import VADownloadForm
 from va_explorer.va_export.profiles import ABRIDGED_VA_EXPORT_COLUMNS
 
@@ -56,6 +60,13 @@ def user() -> User:
 def _post_export(client, data=None):
     payload = {**DEFAULT_EXPORT_DATES, **(data or {})}
     return client.post(POST_URL, data=payload)
+
+
+def _export_day_start(year, month, day):
+    """Midnight on a local export day, as the UTC instant the query uses."""
+    return datetime(year, month, day, tzinfo=export_timezone()).astimezone(
+        dt_timezone.utc
+    )
 
 
 def build_test_db():
@@ -99,10 +110,26 @@ def build_test_db():
     srs_empty = srs_district2.add_child(name="Empty Facility", location_type="facility")
 
     # create VAs
-    va1 = VerbalAutopsyFactory.create(location=facility_a, Id10023="2019-01-01")
-    va2 = VerbalAutopsyFactory.create(location=facility_b, Id10023="2019-01-03")
-    va3 = VerbalAutopsyFactory.create(location=facility_c, Id10023="2019-01-09")
-    va4 = VerbalAutopsyFactory.create(location=facility_a, Id10023="2020-04-01")
+    va1 = VerbalAutopsyFactory.create(
+        location=facility_a,
+        Id10023="2019-01-01",
+        submissiondate="2019-01-01T12:00:00Z",
+    )
+    va2 = VerbalAutopsyFactory.create(
+        location=facility_b,
+        Id10023="2019-01-03",
+        submissiondate="2019-01-03T12:00:00Z",
+    )
+    va3 = VerbalAutopsyFactory.create(
+        location=facility_c,
+        Id10023="2019-01-09",
+        submissiondate="2019-01-09T12:00:00Z",
+    )
+    va4 = VerbalAutopsyFactory.create(
+        location=facility_a,
+        Id10023="2020-04-01",
+        submissiondate="2020-04-01T12:00:00Z",
+    )
 
     # Create CODs and assign to VAs
     CauseOfDeath.objects.create(cause="cod_b", settings={}, verbalautopsy=va1)
@@ -247,6 +274,12 @@ class TestAPIView:
 
         assert form.is_valid()
         assert form.cleaned_data["va_record_type"] == "abridged"
+
+    def test_download_form_explains_va_submission_date_filter(self):
+        form = VADownloadForm()
+
+        assert "inclusive ODK submission date" in form.fields["start_date"].help_text
+        assert "inclusive ODK submission date" in form.fields["end_date"].help_text
 
     def test_download_form_ignores_va_record_type_for_non_va_dataset(self):
         form = VADownloadForm(
@@ -895,16 +928,24 @@ class TestAPIView:
     def test_va_export_filters_apply_to_vasa_records(self, user: User):
         test_data = build_test_db()
         included = VASAFactory.create(
-            location=test_data["facility_a"], Id10023="2020-06-01"
+            location=test_data["facility_a"],
+            Id10023="2020-06-01",
+            submissiondate="2020-06-01T12:00:00Z",
         )
         wrong_location = VASAFactory.create(
-            location=test_data["facility_b"], Id10023="2020-06-01"
+            location=test_data["facility_b"],
+            Id10023="2020-06-01",
+            submissiondate="2020-06-01T12:00:00Z",
         )
         wrong_date = VASAFactory.create(
-            location=test_data["facility_a"], Id10023="2019-06-01"
+            location=test_data["facility_a"],
+            Id10023="2020-06-01",
+            submissiondate="2019-06-01T12:00:00Z",
         )
         wrong_cause = VASAFactory.create(
-            location=test_data["facility_a"], Id10023="2020-07-01"
+            location=test_data["facility_a"],
+            Id10023="2020-07-01",
+            submissiondate="2020-07-01T12:00:00Z",
         )
         for vasa, cause in (
             (included, "cod_a"),
@@ -934,7 +975,133 @@ class TestAPIView:
         }
         assert exported_vasa_ids == {included.pk}
 
-    def test_uncoded_vasa_is_included_until_a_cause_filter_is_selected(
+    @pytest.mark.parametrize("record_type", ["abridged", "full"])
+    @override_settings(VA_EXPORT_TIME_ZONE="Africa/Lusaka")
+    def test_va_export_uses_inclusive_submission_dates_for_both_sources(
+        self, user: User, record_type
+    ):
+        # Timestamps are stored in UTC but bucketed into local calendar days
+        # (Africa/Lusaka, UTC+2), so 2024-05-01..2024-05-31 inclusive means
+        # [2024-04-30T22:00Z, 2024-05-31T22:00Z). Each fixture below is written
+        # as its UTC instant with the local wall clock it represents.
+        facility = LocationFactory.create(location_type="facility")
+        # 2024-05-01 00:00:00 local — first instant in range. Its *UTC* date is
+        # 30 April, so this row only appears under local-day bucketing.
+        first_instant_va = VerbalAutopsyFactory.create(
+            location=facility,
+            Id10023="",
+            submissiondate="2024-04-30T22:00:00Z",
+        )
+        CauseOfDeath.objects.create(
+            cause="Boundary cause",
+            algorithm="InterVA5",
+            settings={},
+            verbalautopsy=first_instant_va,
+        )
+        # 2024-06-01 00:00:00 local — the exclusive upper bound itself. Death
+        # date is inside the range; submission date is not.
+        death_only_va = VerbalAutopsyFactory.create(
+            location=facility,
+            Id10023="2024-05-15",
+            submissiondate="2024-05-31T22:00:00Z",
+        )
+        # 2024-05-31 23:59:59 local — last instant in range.
+        last_instant_vasa = VASAFactory.create(
+            location=facility,
+            Id10023="dk",
+            submissiondate="2024-05-31T21:59:59Z",
+        )
+        mid_range_vasa = VASAFactory.create(
+            location=facility,
+            Id10023="1990-01-01",
+            submissiondate="2024-05-15T12:00:00+00:00",
+        )
+        # 2024-04-30 23:59:59 local — one second before the range.
+        before_range_vasa = VASAFactory.create(
+            location=facility,
+            Id10023="2024-05-15",
+            submissiondate="2024-04-30T21:59:59Z",
+        )
+        client = Client()
+        client.force_login(user=user)
+
+        response = _post_export(
+            client,
+            data={
+                "va_record_type": record_type,
+                "start_date": "2024-05-01",
+                "end_date": "2024-05-31",
+            },
+        )
+
+        rows = _csv_rows(response)
+        assert [(row["source"], int(row["id"])) for row in rows] == [
+            ("VA", first_instant_va.pk),
+            ("VASA", last_instant_vasa.pk),
+            ("VASA", mid_range_vasa.pk),
+        ]
+        assert ("VA", death_only_va.pk) not in {
+            (row["source"], int(row["id"])) for row in rows
+        }
+        assert ("VASA", before_range_vasa.pk) not in {
+            (row["source"], int(row["id"])) for row in rows
+        }
+        assert rows[0]["Id10023"] == ""
+        assert rows[0]["cause"] == "Boundary cause"
+        assert rows[1]["Id10023"] == "dk"
+        assert rows[1]["cause"] == ""
+        assert rows[0]["submitted_at"].startswith("2024-04-30T22:00:00")
+        assert "submitted_at" in _csv_header(response)
+        assert ("submissiondate" in _csv_header(response)) is (record_type == "full")
+
+    @override_settings(VA_EXPORT_TIME_ZONE="UTC")
+    def test_va_export_day_boundaries_follow_the_export_timezone_setting(
+        self, user: User
+    ):
+        # Same instant, different bucketing: 2024-04-30T22:00Z is 1 May in
+        # Lusaka but still 30 April in UTC, so it drops out of a May range.
+        facility = LocationFactory.create(location_type="facility")
+        late_april_utc_va = VerbalAutopsyFactory.create(
+            location=facility,
+            Id10023="",
+            submissiondate="2024-04-30T22:00:00Z",
+        )
+        client = Client()
+        client.force_login(user=user)
+
+        response = _post_export(
+            client,
+            data={"start_date": "2024-05-01", "end_date": "2024-05-31"},
+        )
+
+        assert ("VA", late_april_utc_va.pk) not in {
+            (row["source"], int(row["id"])) for row in _csv_rows(response)
+        }
+
+    def test_va_export_log_reports_records_with_no_canonical_timestamp(
+        self, user: User, caplog
+    ):
+        # A record with no submitted_at can never satisfy submitted_at__gte, so
+        # it is invisible to every dated download. The log must say so rather
+        # than leaving an unexplained shortfall.
+        facility = LocationFactory.create(location_type="facility")
+        undated_va = VerbalAutopsyFactory.create(location=facility)
+        VerbalAutopsy.all_objects.filter(pk=undated_va.pk).update(
+            submissiondate="15/05/2026", submitted_at=None
+        )
+        client = Client()
+        client.force_login(user=user)
+
+        with caplog.at_level(logging.INFO, logger="va_explorer.va_export.views"):
+            response = _post_export(client)
+
+        rows = _csv_rows(response)
+        assert ("VA", undated_va.pk) not in {
+            (row["source"], int(row["id"])) for row in rows
+        }
+        assert any("undated_va=1" in message for message in caplog.messages)
+
+    def test_undated_uncoded_vasa_is_included_until_a_cause_filter_is_selected(
         self, user: User
     ):
         test_data = build_test_db()
@@ -952,10 +1119,13 @@ class TestAPIView:
         unfiltered_rows = _csv_rows(_post_export(client))
         exported_records = {(row["source"], int(row["id"])) for row in unfiltered_rows}
         assert ("VASA", uncoded_vasa.pk) in exported_records
-        assert ("VASA", undated_vasa.pk) not in exported_records
+        assert ("VASA", undated_vasa.pk) in exported_records
 
         filtered_rows = _csv_rows(_post_export(client, data={"causes": "cod_a"}))
         assert ("VASA", uncoded_vasa.pk) not in {
+            (row["source"], int(row["id"])) for row in filtered_rows
+        }
+        assert ("VASA", undated_vasa.pk) not in {
             (row["source"], int(row["id"])) for row in filtered_rows
         }
 
@@ -1027,6 +1197,19 @@ class TestAPIView:
             "VASA",
         ]
         assert records[-1]["id"] == vasa.pk
+        assert records[-1]["submitted_at"].startswith("2026-01-15T12:00:00")
+        assert records[-1]["submissiondate"] == "2026-01-15T12:00:00Z"
+
+    def test_va_export_log_identifies_submission_date_basis(self, user: User, caplog):
+        client = Client()
+        client.force_login(user=user)
+
+        with caplog.at_level(logging.INFO, logger="va_explorer.va_export.views"):
+            response = _post_export(client)
+
+        assert response.status_code == 200
+        _response_content(response)
+        assert any("date_basis=submitted_at" in message for message in caplog.messages)
 
     def test_vasa_pii_is_redacted_and_provenance_is_not_exported(self):
         test_data = build_test_db()
@@ -1194,7 +1377,6 @@ class TestAPIView:
 
     def test_time_filter(self, user: User):
         build_test_db()
-        # only download data from location a
         start_date, end_date = "2020-01-01", "2021-01-01"
 
         c = Client()
@@ -1217,7 +1399,7 @@ class TestAPIView:
 
     def test_combined_filter_csv(self, user: User):
         test_data = build_test_db()
-        # 1. Download from facility A after 1/1/2020 with COD_a in CSV format.
+        # Download submissions from facility A after 1/1/2020 with COD_a.
         # Assert only VA 4 is downloaded
         start_date = "2020-01-01"
         province = Location.objects.get(location_type="province")
@@ -1239,9 +1421,12 @@ class TestAPIView:
         response = _post_export(c, data=query_data)
         assert response.status_code == 200
 
-        # confirm correct number of VAs downloaded
+        # confirm correct number of VAs downloaded. The lower bound is local
+        # midnight in the export timezone, not UTC midnight.
         db_ct = VerbalAutopsy.objects.filter(
-            Id10023__gte=start_date, causes__cause=cod_name, location__id=loc_a.pk
+            submitted_at__gte=_export_day_start(2020, 1, 1),
+            causes__cause=cod_name,
+            location__id=loc_a.pk,
         ).count()
 
         try:
@@ -1255,7 +1440,7 @@ class TestAPIView:
 
     def test_combined_filter_json(self, user: User):
         test_data = build_test_db()
-        # 2. Download data from facility A from before 2020 with COD b in
+        # Download submissions from facility A through 2020-01-01 with COD b in
         # JSON format. Assert only VA 1 is downloaded
         # NOTE: assumes records are stored in a wrapper with 'count' and 'record' keys.
         # If this structure changes, need to update this test
@@ -1277,9 +1462,12 @@ class TestAPIView:
         c = Client()
         c.force_login(user=user)
 
-        # confirm correct number of VAs downloaded
+        # confirm correct number of VAs downloaded. end_date is inclusive, so
+        # the exclusive bound is local midnight starting the following day.
         db_ct = VerbalAutopsy.objects.filter(
-            Id10023__lte=end_date, causes__cause=cod_name, location__id=loc_a.pk
+            submitted_at__lt=_export_day_start(2020, 1, 2),
+            causes__cause=cod_name,
+            location__id=loc_a.pk,
         ).count()
 
         response = _post_export(c, data=query_data)
@@ -1427,7 +1615,7 @@ class TestAPIView:
         c = Client()
         c.force_login(user=user)
 
-        # A 2020 date window matches exactly one fixture VA (va4, 2020-04-01).
+        # A 2020 submission-date window matches exactly one fixture VA (va4).
         row_counts = {}
         for record_type in ("abridged", "full"):
             response = _post_export(

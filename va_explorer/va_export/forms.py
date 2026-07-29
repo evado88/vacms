@@ -196,14 +196,20 @@ class VADownloadForm(forms.Form):
         label="Earliest Date",
         required=True,
         widget=DateInput(attrs={"class": "datepicker"}),
-        help_text="Earliest record date to download",
+        help_text=(
+            "Earliest date to download. Verbal Autopsy downloads use the "
+            "inclusive ODK submission date."
+        ),
     )
 
     end_date = DateField(
         label="Latest Date",
         required=True,
         widget=DateInput(attrs={"class": "datepicker"}),
-        help_text="Latest record date to download",
+        help_text=(
+            "Latest date to download. Verbal Autopsy downloads use the "
+            "inclusive ODK submission date."
+        ),
     )
 
     locations = ModelMultipleChoiceField(

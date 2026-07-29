@@ -18,6 +18,7 @@ The social-autopsy and repeat field definitions are generated from the XLSForm
 """
 
 from django.db import models
+from django.db.models import Q
 from simple_history.models import HistoricalRecords
 
 from ..vasa.model_fields import REPEAT_FIELD_DEFS, SA_FIELD_DEFS
@@ -46,6 +47,14 @@ class VASA(BaseVerbalAutopsy):
             models.Index(fields=["key"], name="vasa_key_idx"),
             models.Index(fields=["instrument"], name="vasa_instrument_idx"),
             models.Index(fields=["deleted_at"], name="vasa_deleted_at_idx"),
+            models.Index(
+                fields=["submitted_at"],
+                name="vasa_submitted_at_idx",
+                condition=Q(
+                    deleted_at__isnull=True,
+                    submitted_at__isnull=False,
+                ),
+            ),
         ]
 
     location = models.ForeignKey(
