@@ -7,7 +7,7 @@ from datetime import datetime
 from datetime import timezone as dt_timezone
 
 import pytest
-from django.contrib.auth.models import Permission
+from django.contrib.auth.models import Group, Permission
 from django.test import Client, RequestFactory, override_settings
 from django.urls import reverse
 
@@ -30,6 +30,7 @@ from va_explorer.va_data_management.models import (
     Pregnancy,
     PregnancyOutcome,
     SRSClusterLocation,
+    VASASocialAutopsy,
     VerbalAutopsy,
 )
 from va_explorer.va_data_management.utils.submission_timestamp import export_timezone
@@ -924,6 +925,36 @@ class TestAPIView:
             },
         )
         assert "raw_answers" not in _csv_header(full_response)
+
+    def test_full_va_export_maps_vasa_interviewer_id_to_mso_name(self, user: User):
+        mso_group, _ = Group.objects.get_or_create(
+            name="Mortality Surveillance Officer"
+        )
+        UserFactory.create(
+            name="Exported MSO Name",
+            worker_id="A123",
+            groups=[mso_group],
+        )
+        vasa = VASAFactory.create(Id10010="")
+        VASASocialAutopsy.objects.create(vasa=vasa, Q1302=" a123 ")
+        client = Client()
+        client.force_login(user=user)
+
+        full_response = _post_export(
+            client,
+            data={"va_record_type": "full", "vasa_ids": str(vasa.pk)},
+        )
+        full_rows = _csv_rows(full_response)
+
+        assert len(full_rows) == 1
+        assert full_rows[0]["source"] == "VASA"
+        assert full_rows[0]["Id10010"] == "Exported MSO Name"
+
+        abridged_response = _post_export(
+            client,
+            data={"va_record_type": "abridged", "vasa_ids": str(vasa.pk)},
+        )
+        assert "Id10010" not in _csv_header(abridged_response)
 
     def test_va_export_filters_apply_to_vasa_records(self, user: User):
         test_data = build_test_db()

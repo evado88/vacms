@@ -4,7 +4,7 @@ import re
 
 import pandas as pd
 import pytest
-from django.contrib.auth.models import Permission
+from django.contrib.auth.models import Group, Permission
 from django.test import Client
 
 from va_explorer.tests.factories import (
@@ -16,6 +16,7 @@ from va_explorer.tests.factories import (
     VerbalAutopsyFactory,
 )
 from va_explorer.va_data_management.models import (
+    ODKFormChoice,
     VASACareSeekingAdult,
     VASACareSeekingChild,
     VASACareSeekingNeonate,
@@ -54,10 +55,29 @@ def test_line_list_includes_vasa_rows_with_source_and_routing():
     # Both records appear, tagged by source, and VASA routes to its own detail.
     assert "VA Victim" in content
     assert "VASA Victim" in content
-    assert ">Source<" in content
+    assert ">VA Type<" in content
     assert ">VASA<" in content
     assert f"/va_data_management/vasa/{vasa.id}" in content
     assert f"/va_data_management/show/{va.id}" in content
+
+
+def test_line_list_maps_vasa_interviewer_id_to_mso_name():
+    _user, client = _viewer()
+    mso_group, _ = Group.objects.get_or_create(name="Mortality Surveillance Officer")
+    UserFactory.create(
+        name="Mapped MSO Name",
+        worker_id="A123",
+        groups=[mso_group],
+    )
+    vasa = VASAFactory.create(Id10017="VASA Victim", Id10010="")
+    VASASocialAutopsy.objects.create(vasa=vasa, Q1302=" a123 ")
+
+    response = client.get("/va_data_management/")
+
+    assert response.status_code == 200
+    content = response.content.decode()
+    assert "Mapped MSO Name" in content
+    assert "Not Listed" not in content
 
 
 def test_line_list_deceased_filter_applies_to_vasa():
@@ -72,6 +92,122 @@ def test_line_list_deceased_filter_applies_to_vasa():
     assert f"/va_data_management/vasa/{match.id}" in content
     # The non-matching VA is filtered out of both legs.
     assert "VA Person" not in content
+
+
+def test_line_list_component_filters_without_rendering_full_page():
+    _user, client = _viewer()
+    VASAFactory.create(Id10017="Matching", Id10018="Person")
+    VASAFactory.create(Id10017="Excluded", Id10018="Person")
+
+    response = client.get(
+        "/va_data_management/",
+        {"component": "1", "deceased": "Matching Person"},
+    )
+
+    assert response.status_code == 200
+    content = response.content.decode()
+    assert "<html" not in content.lower()
+    assert "Matching Person" in content
+    assert "Excluded Person" not in content
+    assert "<table" in content
+
+
+def test_line_list_deceased_filter_matches_partial_name():
+    _user, client = _viewer()
+    VASAFactory.create(Id10017="Kalumba", Id10018="Person")
+    VASAFactory.create(Id10017="Excluded", Id10018="Person")
+
+    response = client.get(
+        "/va_data_management/",
+        {"component": "1", "deceased": "kalu"},
+    )
+
+    content = response.content.decode()
+    assert response.status_code == 200
+    assert "Kalumba Person" in content
+    assert "Excluded Person" not in content
+
+
+def test_line_list_district_filter_matches_displayed_odk_label():
+    _user, client = _viewer()
+    ODKFormChoice.objects.bulk_create(
+        [
+            ODKFormChoice(
+                form_name="pregnancy",
+                field_name="district",
+                value="10",
+                label="Kalulushi",
+            ),
+            ODKFormChoice(
+                form_name="pregnancy",
+                field_name="district",
+                value="11",
+                label="Ndola",
+            ),
+        ]
+    )
+    VerbalAutopsyFactory.create(Id10017="VA Match", district="10")
+    VASAFactory.create(Id10017="VASA Match", district="10.0")
+    VASAFactory.create(Id10017="Excluded", district="11")
+
+    response = client.get(
+        "/va_data_management/",
+        {"component": "1", "district": "kalu"},
+    )
+
+    content = response.content.decode()
+    assert response.status_code == 200
+    assert "VA Match" in content
+    assert "VASA Match" in content
+    assert "Kalulushi" in content
+    assert "Excluded" not in content
+
+
+def test_line_list_ward_filter_matches_decoded_odk_label():
+    _user, client = _viewer()
+    ODKFormChoice.objects.bulk_create(
+        [
+            ODKFormChoice(
+                form_name="pregnancy",
+                field_name="ward",
+                value="20",
+                label="Chambishi Ward",
+            ),
+            ODKFormChoice(
+                form_name="pregnancy",
+                field_name="ward",
+                value="21",
+                label="Kamfinsa Ward",
+            ),
+        ]
+    )
+    VerbalAutopsyFactory.create(Id10017="VA Ward Match", ward="20")
+    VASAFactory.create(Id10017="VASA Ward Match", ward="20.0")
+    VASAFactory.create(Id10017="Excluded", ward="21")
+
+    response = client.get(
+        "/va_data_management/",
+        {"component": "1", "ward": "chamb"},
+    )
+
+    content = response.content.decode()
+    assert response.status_code == 200
+    assert "VA Ward Match" in content
+    assert "VASA Ward Match" in content
+    assert "Excluded" not in content
+
+
+def test_line_list_uses_dynamic_filters_without_apply_button():
+    _user, client = _viewer()
+
+    response = client.get("/va_data_management/")
+    content = response.content.decode()
+
+    assert response.status_code == 200
+    assert "Apply Filters" not in content
+    assert "data-list-filter" in content
+    assert "data-list-slot" in content
+    assert "list_table.js" in content
 
 
 def test_vasa_detail_renders_sa_repeat_and_dq_tabs():

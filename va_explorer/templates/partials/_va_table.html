@@ -15,7 +15,7 @@
       <th><a href="?{% sort_url 'Id10023' direction='-' %}">Deathdate</a>{% if ob == 'Id10023' %}▲{% elif ob == '-Id10023' %}▼{% endif %}</th>
       <th><a href="?{% sort_url 'cause' direction='-' %}">Cause</a>{% if ob == 'cause' %}▲{% elif ob == '-cause' %}▼{% endif %}</th>
       <th><a href="?{% sort_url 'errors' direction='-' %}">Errors</a>{% if ob == 'errors' %}▲{% elif ob == '-errors' %}▼{% endif %}</th>
-      {% if show_source %}<th>Source</th>{% endif %}
+      {% if show_source %}<th>VA Type</th>{% endif %}
       <th></th>
       {% if va_data_cleanup and perms.va_data_cleanup.download %}
         <th>

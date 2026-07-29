@@ -30,6 +30,10 @@ from va_explorer.va_data_management.utils.location_access import (
     restrict_va_queryset_to_user_locations as restrict_va_queryset_by_user_location,
 )
 from va_explorer.va_data_management.utils.submission_timestamp import export_timezone
+from va_explorer.va_data_management.utils.vasa_interviewers import (
+    mso_names_by_worker_id,
+    normalize_mso_id,
+)
 from va_explorer.va_export.forms import ExportRequestForm, VADownloadForm
 from va_explorer.va_export.profiles import ABRIDGED_VA_EXPORT_COLUMNS
 from va_explorer.va_export.streaming import (
@@ -60,6 +64,7 @@ _VA_ANNOTATION_COLUMNS = [
     "cause_created",
 ]
 _VA_QUERY_HELPER_COLUMNS = ["loc_name", "cluster_name", "record_source"]
+_VASA_INTERVIEWER_ID_COLUMN = "social_autopsy__Q1302"
 # VASA raw_answers stores ingestion provenance, not canonical export values.
 _VA_EXPORT_EXCLUDED_COLUMNS = {"location_id", "cluster_id", "raw_answers"}
 # This ordered registry drives the schema, query construction, counting, and
@@ -561,6 +566,8 @@ def _va_query_columns(model, output_columns):
         *_VA_ANNOTATION_COLUMNS,
         *_VA_QUERY_HELPER_COLUMNS,
     ]
+    if model is VASA and "Id10010" in output_columns:
+        query_columns.append(_VASA_INTERVIEWER_ID_COLUMN)
     return list(dict.fromkeys(query_columns))
 
 
@@ -649,9 +656,11 @@ def _transform_va_row(
     location_geography,
     cluster_geography,
     output_columns,
+    mso_name_lookup,
 ):
     location_id = row.pop("location_id", None)
     cluster_id = row.pop("cluster_id", None)
+    vasa_interviewer_id = row.pop(_VASA_INTERVIEWER_ID_COLUMN, None)
 
     for level, name in location_geography.get(location_id, {}).items():
         row[level] = name
@@ -665,6 +674,10 @@ def _transform_va_row(
         row.pop("loc_name", None), row.pop("cluster_name", None)
     )
     row["source"] = row.pop("record_source")
+    if row["source"] == "VASA" and "Id10010" in output_columns:
+        mapped_name = mso_name_lookup.get(normalize_mso_id(vasa_interviewer_id))
+        if mapped_name:
+            row["Id10010"] = mapped_name
     for column in output_columns:
         row.setdefault(column, None)
     return _redact_row(row, can_view_pii)
@@ -736,6 +749,11 @@ def _export_va_dataset(request, params):
         else {}
     )
     can_view_pii = request.user.can_view_pii
+    mso_name_lookup = (
+        mso_names_by_worker_id()
+        if source_row_counts["VASA"] and "Id10010" in output_columns
+        else {}
+    )
 
     def transform(row):
         return _transform_va_row(
@@ -744,6 +762,7 @@ def _export_va_dataset(request, params):
             location_geography,
             cluster_geography,
             output_columns,
+            mso_name_lookup,
         )
 
     rows = chain.from_iterable(

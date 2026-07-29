@@ -19,7 +19,7 @@ from django.views.generic import (
 )
 from django.views.generic.detail import SingleObjectMixin
 
-from va_explorer.utils.mixins import CustomAuthMixin
+from va_explorer.utils.mixins import AjaxListTableMixin, CustomAuthMixin
 from va_explorer.va_data_management.filters import VAFilter, VASAFilter
 from va_explorer.va_data_management.forms import VASAForm, VerbalAutopsyForm
 from va_explorer.va_data_management.models import (
@@ -36,6 +36,9 @@ from va_explorer.va_data_management.utils.duplicate_issues import (
 )
 from va_explorer.va_data_management.utils.loading import get_va_summary_stats
 from va_explorer.va_data_management.utils.validate import validate_vas_for_dashboard
+from va_explorer.va_data_management.utils.vasa_interviewers import (
+    vasa_interviewer_names,
+)
 from va_explorer.va_data_management.vasa.value_decode import sa_display_value
 
 _VA_GEOGRAPHY_FORM_NAME = "pregnancy"
@@ -73,9 +76,10 @@ def _decode_odk_field(label_map, raw_value):
     return label_map.get(_normalize_odk_code(text), text)
 
 
-class Index(CustomAuthMixin, PermissionRequiredMixin, ListView):
+class Index(AjaxListTableMixin, CustomAuthMixin, PermissionRequiredMixin, ListView):
     permission_required = "va_data_management.view_verbalautopsy"
     template_name = "va_data_management/index.html"
+    list_table_template = "va_data_management/partials/_va_table_card_body.html"
     paginate_by = 15
 
     # Columns selected for both the VA and VASA legs — MUST match exactly (name
@@ -187,11 +191,19 @@ class Index(CustomAuthMixin, PermissionRequiredMixin, ListView):
             for field_name in _VA_GEOGRAPHY_FIELDS
         }
 
+        rows = list(context["object_list"])
+        vasa_ids = {row["id"] for row in rows if row.get("record_source") == "VASA"}
+        mapped_vasa_interviewers = vasa_interviewer_names(vasa_ids)
+
         context["object_list"] = [
             {
                 "id": va["id"],
                 "deceased": va["deceased"],
-                "interviewer": va["Id10010"],
+                "interviewer": (
+                    mapped_vasa_interviewers.get(va["id"], va["Id10010"])
+                    if va.get("record_source") == "VASA"
+                    else va["Id10010"]
+                ),
                 "interviewed": parse_date(va["Id10012"]),
                 "dod": (
                     parse_date(va["Id10023"]) if (va["Id10023"] != "dk") else "Unknown"
@@ -212,7 +224,7 @@ class Index(CustomAuthMixin, PermissionRequiredMixin, ListView):
                 # Drives the Source column and detail-link routing (VA vs VASA).
                 "source": va.get("record_source", "VA"),
             }
-            for va in context["object_list"]
+            for va in rows
         ]
 
         # Unified verbal-autopsy summary (VA + VASA) for the stats banner.

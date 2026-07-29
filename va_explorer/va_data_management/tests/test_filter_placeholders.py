@@ -114,6 +114,7 @@ def test_va_filter_placeholders():
         ("interviewer", "Interviewer"),
         ("deceased", "Deceased"),
         ("district", "District"),
+        ("ward", "Ward"),
         ("cause", "Cause"),
     ]:
         _assert_placeholder(form, name, placeholder)

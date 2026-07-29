@@ -1,11 +1,31 @@
+import re
+
 from crispy_forms.helper import FormHelper
 from django import forms
 from django.core.exceptions import ValidationError
+from django.db.models import Q
 from django.forms import TextInput
 from django_filters import CharFilter, DateFilter, FilterSet
 from fuzzywuzzy import fuzz
 
-from .models import VASA, Death, Household, Pregnancy, PregnancyOutcome, VerbalAutopsy
+from .models import (
+    VASA,
+    Death,
+    Household,
+    ODKFormChoice,
+    Pregnancy,
+    PregnancyOutcome,
+    VerbalAutopsy,
+)
+
+
+def _normalize_odk_code(value):
+    text = str(value or "").strip()
+    if re.fullmatch(r"\d+", text):
+        return str(int(text))
+    if re.fullmatch(r"\d+\.0+", text):
+        return str(int(text.split(".", 1)[0]))
+    return text
 
 
 def validate_integer(value: str):
@@ -118,14 +138,24 @@ class VAFilter(FilterSet):
         ),
     )
     district = CharFilter(
-        field_name="district",
-        lookup_expr="icontains",
+        method="filter_district",
         label="",
         widget=TextInput(
             attrs={
                 "class": "form-text",
                 "placeholder": "District",
                 "aria-label": "District",
+            }
+        ),
+    )
+    ward = CharFilter(
+        method="filter_ward",
+        label="",
+        widget=TextInput(
+            attrs={
+                "class": "form-text",
+                "placeholder": "Ward",
+                "aria-label": "Ward",
             }
         ),
     )
@@ -161,30 +191,79 @@ class VAFilter(FilterSet):
         self.form.helper.disable_csrf = True
 
     def filter_deceased(self, queryset, name, value):
+        value = str(value or "").strip()
         if value:
             threshold = 75
+            needle = " ".join(str(value).split()).casefold()
+            compact_needle = needle.replace(" ", "")
             vas = queryset.values("id", "Id10017", "Id10018")
             matches = [
                 va.get("id")
                 for va in vas
-                if fuzz.token_set_ratio(
+                if self._deceased_name_matches(
+                    va,
                     value,
-                    " ".join(
-                        part for part in [va.get("Id10017"), va.get("Id10018")] if part
-                    ),
+                    needle,
+                    compact_needle,
+                    threshold,
                 )
-                > threshold
             ]
             return queryset.filter(id__in=matches)
         return queryset
+
+    @staticmethod
+    def _deceased_name_matches(va, value, needle, compact_needle, threshold):
+        candidate = " ".join(
+            part for part in [va.get("Id10017"), va.get("Id10018")] if part
+        )
+        normalized_candidate = " ".join(candidate.split()).casefold()
+        return (
+            needle in normalized_candidate
+            or compact_needle in normalized_candidate.replace(" ", "")
+            or fuzz.token_set_ratio(value, candidate) > threshold
+        )
+
+    def filter_district(self, queryset, name, value):
+        return self._filter_decoded_geography(
+            queryset, "district", value, fallback_fields=("area",)
+        )
+
+    def filter_ward(self, queryset, name, value):
+        return self._filter_decoded_geography(queryset, "ward", value)
+
+    @staticmethod
+    def _filter_decoded_geography(queryset, field_name, value, fallback_fields=()):
+        value = str(value or "").strip()
+        if not value:
+            return queryset
+
+        matching_codes = {
+            _normalize_odk_code(raw_code)
+            for raw_code in ODKFormChoice.objects.filter(
+                form_name="pregnancy",
+                field_name=field_name,
+                label__icontains=value,
+            ).values_list("value", flat=True)
+        }
+        stored_code_matches = [
+            raw_value
+            for raw_value in queryset.values_list(field_name, flat=True).distinct()
+            if _normalize_odk_code(raw_value) in matching_codes
+        ]
+        geography_filter = Q(**{f"{field_name}__icontains": value}) | Q(
+            **{f"{field_name}__in": stored_code_matches}
+        )
+        for fallback_field in fallback_fields:
+            geography_filter |= Q(**{f"{fallback_field}__icontains": value})
+        return queryset.filter(geography_filter)
 
 
 class VASAFilter(VAFilter):
     """VASA line-list filter.
 
-    Reuses every VAFilter field (interviewer/deceased/district/date/cause) — VASA
-    shares those WHO columns via BaseVerbalAutopsy — so the same GET params filter
-    the VASA leg of the merged verbal-autopsy line list identically.
+    Reuses every VAFilter field (interviewer/deceased/district/ward/date/cause) —
+    VASA shares those WHO columns via BaseVerbalAutopsy — so the same GET params
+    filter the VASA leg of the merged verbal-autopsy line list identically.
     """
 
     class Meta:
