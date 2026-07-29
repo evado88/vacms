@@ -3,7 +3,7 @@
     "issue_type": "incomplete",
     "subtype": "minimum_viable_record",
     "member_ids": [
-      135
+      125
     ],
     "keys": {
       "PE_04": null,
@@ -28,45 +28,7 @@
     "issue_type": "consent",
     "subtype": "consent_missing_or_invalid",
     "member_ids": [
-      135
-    ],
-    "keys": {
-      "consent": null
-    },
-    "details": {
-      "subtype": "consent_missing_or_invalid"
-    }
-  },
-  {
-    "issue_type": "incomplete",
-    "subtype": "minimum_viable_record",
-    "member_ids": [
-      136
-    ],
-    "keys": {
-      "PE_04": null,
-      "PE_06": null,
-      "enumerator": "nan"
-    },
-    "details": {
-      "subtype": "minimum_viable_record",
-      "missing_fields": [
-        "PE_04",
-        "PE_06",
-        "enumerator"
-      ],
-      "missing_labels": [
-        "Household reference",
-        "Name of pregnant woman",
-        "Enumerator"
-      ]
-    }
-  },
-  {
-    "issue_type": "consent",
-    "subtype": "consent_missing_or_invalid",
-    "member_ids": [
-      136
+      125
     ],
     "keys": {
       "consent": null

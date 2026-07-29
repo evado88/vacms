@@ -3,7 +3,7 @@
     "issue_type": "incomplete",
     "subtype": "minimum_viable_record",
     "member_ids": [
-      586
+      501
     ],
     "keys": {
       "HH_01": "Newest",
@@ -24,7 +24,7 @@
     "issue_type": "consent",
     "subtype": "household_consent_missing_or_invalid",
     "member_ids": [
-      586
+      501
     ],
     "keys": {
       "consent": null,

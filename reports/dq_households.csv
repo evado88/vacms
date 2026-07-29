@@ -1,3 +1,3 @@
 issue_type,subtype,member_ids,keys,details
-incomplete,minimum_viable_record,586,"{""HH_01"": ""Newest"", ""HH_02"": null, ""household"": null, ""enumerator"": null, ""result_list"": null, ""result_other"": null}","{""subtype"": ""minimum_viable_record"", ""violations"": [""household_missing_or_unknown""]}"
-consent,household_consent_missing_or_invalid,586,"{""consent"": null, ""household"": null}","{""subtype"": ""household_consent_missing_or_invalid""}"
+incomplete,minimum_viable_record,501,"{""HH_01"": ""Newest"", ""HH_02"": null, ""household"": null, ""enumerator"": null, ""result_list"": null, ""result_other"": null}","{""subtype"": ""minimum_viable_record"", ""violations"": [""household_missing_or_unknown""]}"
+consent,household_consent_missing_or_invalid,501,"{""consent"": null, ""household"": null}","{""subtype"": ""household_consent_missing_or_invalid""}"

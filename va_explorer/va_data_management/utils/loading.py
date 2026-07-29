@@ -73,6 +73,37 @@ def _has_meaningful_value(value):
     return normalized not in {"", "nan", "none", "null"}
 
 
+def clean_import_value(value, blank=None):
+    """Convert a pandas missing value to a blank before it reaches a model field.
+
+    A blank CSV cell arrives from ``read_csv`` as ``float('nan')``. The form
+    models store answers in TextFields, so Django stringifies that float and
+    persists the literal characters "nan" -- ``null=True`` never gets a chance
+    to fire. Callers must route every value through this on the way into
+    ``model(**row)``.
+
+    ``blank`` is what an absent answer becomes. It defaults to None, but
+    NOT NULL columns (Pregnancy, PregnancyOutcome and Household each have a
+    handful) need "" instead -- see ``blank_values_for_model``.
+
+    Mirrors ``odk.service._clean_import_value``, which already protects the ODK
+    pull path.
+    """
+    if pd.isna(value):
+        return blank
+    return value
+
+
+def blank_values_for_model(model):
+    """Map each concrete field name to the blank value its column accepts.
+
+    None where the column is nullable, "" where it is NOT NULL. Before the NaN
+    fix a missing answer reached the DB as the string "nan", which happened to
+    satisfy NOT NULL; writing None there would now raise IntegrityError.
+    """
+    return {field.name: (None if field.null else "") for field in model._meta.fields}
+
+
 def merge_geopoint_columns(df):
     geopoint_columns = find_geopoint_columns(df.columns)
     if not geopoint_columns:
@@ -337,7 +368,11 @@ def load_odk_csv_to_model(
         v_norm = normalize_value(v)
         if v_norm in odk_map.get(col, {}):
             return odk_map[col][v_norm]
-        return v if pd.isnull(v) or str(v).lower() == "nan" else v_norm
+        # A blank cell has no label to look up; keep it blank rather than letting
+        # the NaN survive to be stringified as "nan" on the model field.
+        if pd.isnull(v) or str(v).lower() == "nan":
+            return None
+        return v_norm
 
     # Map ODK code values to labels
     for col in odk_map_columns:
@@ -355,20 +390,6 @@ def load_odk_csv_to_model(
     model_fields = {f.name for f in model._meta.get_fields()}
     df = df[[col for col in df.columns if col in model_fields]]
 
-    # Identify integer fields in the model
-    int_fields = [
-        f.name
-        for f in model._meta.get_fields()
-        if getattr(f, "get_internal_type", lambda: None)()
-        in [
-            "IntegerField",
-            "BigIntegerField",
-            "SmallIntegerField",
-            "PositiveIntegerField",
-            "PositiveSmallIntegerField",
-        ]
-    ]
-
     # Handle ForeignKey: cluster → SRSClusterLocation
     if "cluster" in df.columns:
         cluster_map = {
@@ -381,14 +402,14 @@ def load_odk_csv_to_model(
 
         df["cluster"] = df["cluster"].apply(get_cluster_instance)
 
-    def nan_to_none_for_intfields(row, int_fields):
-        return {
-            k: (None if (k in int_fields and pd.isnull(v)) else v)
-            for k, v in row.items()
-        }
-
+    blanks = blank_values_for_model(model)
     objects = [
-        model(**nan_to_none_for_intfields(row, int_fields))
+        model(
+            **{
+                key: clean_import_value(value, blanks.get(key))
+                for key, value in row.items()
+            }
+        )
         for row in df.to_dict(orient="records")
     ]
     return objects

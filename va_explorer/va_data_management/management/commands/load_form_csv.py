@@ -15,7 +15,11 @@ from va_explorer.va_data_management.models import (
     SocialMobilization,
 )
 from va_explorer.va_data_management.utils.death_ids import assign_death_ids
-from va_explorer.va_data_management.utils.loading import normalize_dataframe_columns
+from va_explorer.va_data_management.utils.loading import (
+    blank_values_for_model,
+    clean_import_value,
+    normalize_dataframe_columns,
+)
 from va_explorer.va_data_management.utils.repeat_group_dedup import (
     CHILD_DEDUP_SPECS,
     run_dedup_for_model,
@@ -59,7 +63,16 @@ class Command(BaseCommand):
             if field in df.columns:
                 df[field] = df[field].map(lambda v, _map=mapping: _map.get(str(v), v))
 
-        objects = [model(**row) for row in df.to_dict(orient="records")]
+        blanks = blank_values_for_model(model)
+        objects = [
+            model(
+                **{
+                    key: clean_import_value(value, blanks.get(key))
+                    for key, value in row.items()
+                }
+            )
+            for row in df.to_dict(orient="records")
+        ]
         model.objects.bulk_create(objects)
 
         self.stdout.write(f"Imported {len(objects)} records for {form_name}")

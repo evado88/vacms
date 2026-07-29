@@ -13,7 +13,10 @@ from va_explorer.va_data_management.models import (
     PregnancyOutcome,
     PregnancyOutcomeBaby,
 )
-from va_explorer.va_data_management.odk.service import import_dataframe_records
+from va_explorer.va_data_management.odk.service import (
+    _strip_group_prefix,
+    import_dataframe_records,
+)
 from va_explorer.va_data_management.utils.death_ids import is_valid_death_id
 
 pytestmark = pytest.mark.django_db
@@ -458,3 +461,175 @@ def test_odk_pull_stripped_gps_columns_merged(form_name, gps_field):
     import_dataframe_records(form_name, df)
     obj = _FORM_MODELS[form_name].objects.get(key=f"strip-{form_name}")
     assert getattr(obj, gps_field) == "-14.5 28.3 1242 5"
+
+
+def _text_field_names(model):
+    return [
+        field.name
+        for field in model._meta.fields
+        if field.get_internal_type() in {"TextField", "CharField"}
+    ]
+
+
+def _stored_nan_fields(instance):
+    """Field names on an instance that hold the literal string "nan"."""
+    return [
+        name
+        for name in _text_field_names(type(instance))
+        if str(getattr(instance, name)).strip().lower() == "nan"
+    ]
+
+
+def _seed_consent_choices(form_name):
+    for value, label in (("1", "Yes"), ("0", "No")):
+        ODKFormChoice.objects.get_or_create(
+            form_name=form_name,
+            field_name="consent",
+            value=value,
+            defaults={"label": label},
+        )
+
+
+def test_death_csv_blank_cells_are_null_not_the_string_nan(tmp_path):
+    """Blank CSV cells must land as NULL, never as the literal string "nan".
+
+    pandas turns an empty cell into float('nan'); every Death field is a
+    TextField, so an unsanitised value gets stringified and persisted as the
+    four characters "nan". That is what made exports and the record list render
+    "nan" across whole rows.
+    """
+    _seed_consent_choices("death")
+
+    csv_path = Path(tmp_path) / "deaths.csv"
+    # Row 1 consents but leaves later answers blank; row 2 declines consent, so
+    # ODK skip logic blanks everything after DE_02. Both must import as NULL.
+    # DE_05 is code-mapped (odk_map_columns), DE_15 is not -- covers both paths.
+    csv_path.write_text(
+        "key,consent,DE_03,DE_05,DE_15\n"
+        "uuid:consented,1,Alice Banda,,\n"
+        "uuid:declined,0,,,\n"
+    )
+    call_command("load_death_csv", str(csv_path))
+
+    consented = Death.objects.get(key="uuid:consented")
+    declined = Death.objects.get(key="uuid:declined")
+
+    assert consented.consent == "Yes"
+    assert consented.DE_03 == "Alice Banda"
+    assert consented.DE_05 is None
+    assert consented.DE_15 is None
+
+    assert declined.consent == "No"
+    assert declined.DE_03 is None
+    assert declined.DE_05 is None
+
+    for death in (consented, declined):
+        offenders = _stored_nan_fields(death)
+        assert not offenders, f"{death.key} stored 'nan' in {offenders}"
+
+
+def test_pregnancy_csv_blank_cells_are_null_not_the_string_nan(tmp_path):
+    """The NaN fix lives in the shared loader, so siblings inherit it."""
+    # PE_03 is Pregnancy's consent question and is code-mapped; PE_04 is not.
+    for value, label in (("1", "Yes"), ("0", "No")):
+        ODKFormChoice.objects.get_or_create(
+            form_name="pregnancy",
+            field_name="PE_03",
+            value=value,
+            defaults={"label": label},
+        )
+
+    csv_path = Path(tmp_path) / "pregnancies.csv"
+    csv_path.write_text("key,PE_02,PE_03,PE_04\nuuid:preg,Mary Zulu,1,\n")
+    call_command("load_pregnancy_csv", str(csv_path))
+
+    preg = Pregnancy.objects.get(key="uuid:preg")
+    assert preg.PE_02 == "Mary Zulu"
+    assert preg.PE_03 == "Yes"
+    assert preg.PE_04 is None
+    offenders = _stored_nan_fields(preg)
+    assert not offenders, f"stored 'nan' in {offenders}"
+
+
+def test_load_form_csv_blank_cells_are_null_not_the_string_nan(tmp_path):
+    """load_form_csv had no NaN handling at all before this fix."""
+    _seed_odk_definition("death")
+
+    csv_path = Path(tmp_path) / "deaths.csv"
+    csv_path.write_text("key,DE_03,DE_15\nuuid:formcsv,Grace Phiri,\n")
+    call_command("load_form_csv", "death", str(csv_path))
+
+    death = Death.objects.get(key="uuid:formcsv")
+    assert death.DE_03 == "Grace Phiri"
+    assert death.DE_15 is None
+    assert not _stored_nan_fields(death)
+
+
+def test_odk_pull_keeps_hyphenated_question_names(tmp_path):
+    """Hyphenated DE-* question names must survive list_submissions' strip.
+
+    E_DEATH names all 44 of its questions with hyphens (DE-01 ... DE-34).
+    An unconditional c.rsplit("-", 1)[-1] turned those into "01"/"32_mccd",
+    which match no Death field and were dropped without warning, so every
+    ODK-pulled death arrived with empty DE_* columns.
+    """
+    _seed_odk_definition("death")
+
+    df = pd.DataFrame.from_records(
+        [
+            {
+                "key": "hyphen-death",
+                "DE-03": "Nancy Chumbwa",
+                "DE-06": "2026-06-05",
+                "DE-32_mccd": "mccd.jpg",
+                # Split GPS still has to collapse to its bare component name.
+                "DE-34-Latitude": -14.9,
+                "DE-34-Longitude": 28.6,
+            }
+        ]
+    )
+    df.columns = [_strip_group_prefix(c) for c in df.columns]
+    import_dataframe_records("death", df)
+
+    death = Death.objects.get(key="hyphen-death")
+    assert death.DE_03 == "Nancy Chumbwa"
+    assert death.DE_06 == "2026-06-05"
+    assert death.DE_32_mccd == "mccd.jpg"
+    assert death.DE_34 == "-14.9 28.6"
+
+
+def test_strip_group_prefix_only_collapses_gps_components():
+    assert _strip_group_prefix("DE-01") == "DE-01"
+    assert _strip_group_prefix("DE-32_mccd") == "DE-32_mccd"
+    assert _strip_group_prefix("key") == "key"
+    assert _strip_group_prefix("PE-25-Latitude") == "Latitude"
+    assert _strip_group_prefix("DE-34-Accuracy") == "Accuracy"
+    assert _strip_group_prefix("gps-Longitude") == "Longitude"
+
+
+def test_blank_cells_in_not_null_columns_become_empty_string(tmp_path):
+    """NOT NULL text columns must get "" -- None would raise IntegrityError.
+
+    Before the NaN fix a missing answer reached the DB as the string "nan",
+    which happened to satisfy NOT NULL. Pregnancy, PregnancyOutcome and
+    Household each have columns where a naive NaN -> None would now break the
+    import outright.
+    """
+    not_null = [
+        field.name
+        for field in Pregnancy._meta.fields
+        if field.get_internal_type() in {"TextField", "CharField"} and not field.null
+    ]
+    assert not_null, "expected Pregnancy to have NOT NULL text columns"
+    _seed_odk_definition("pregnancy")
+
+    columns = ["key"] + not_null
+    csv_path = Path(tmp_path) / "pregnancies.csv"
+    csv_path.write_text(
+        ",".join(columns) + "\n" + "uuid:notnull" + "," * len(not_null) + "\n"
+    )
+    call_command("load_pregnancy_csv", str(csv_path))
+
+    preg = Pregnancy.objects.get(key="uuid:notnull")
+    for name in not_null:
+        assert getattr(preg, name) == "", f"{name} should be blank, not 'nan'/None"

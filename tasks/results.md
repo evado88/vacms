@@ -1,5 +1,108 @@
 # Results
 
+## 2026-07-29 — Literal `"nan"` in Death records (main)
+
+### Problem
+
+Death records rendered `nan` in the line list and in CSV downloads
+(`unscheduled_deaths_20260727_172446.csv`). The string `"nan"` was physically stored in
+Postgres, not synthesised at render or export time.
+
+**Root cause:** `utils/loading.py::load_odk_csv_to_model` only converted pandas NaN to
+None for **integer** fields. `Death` has zero integer fields — all 60 are
+`TextField(null=True)` — so `int_fields` was empty and the guard a no-op. `float('nan')`
+reached `Death(**row)` and Django's `TextField.get_prep_value()` stringified it to the
+four characters `n-a-n`; `null=True` never got a chance to fire.
+
+Ruled out (verified against `static/data/E_DEATH.xlsx`): ODK skip logic is correct
+(`consent=NO` rows legitimately end at `DE_02`; `DE_16/17/18` are female-only;
+`DE_32_*`/`DE_33_*` are optional `image` questions), `999` is a genuine enumerator
+convention, and the ODK pull path already sanitised NaN correctly. `Death.informant` is
+always empty because `E_DEATH` has an `informant` choice list but no `informant`
+question.
+
+**Second bug found and fixed:** `odk/service.py:737` stripped column prefixes with
+`c.rsplit("-", 1)[-1]`. `E_DEATH` names all 44 questions with hyphens, so `DE-01` became
+`01` and `DE-32_mccd` became `32_mccd` — matching no model field and being silently
+dropped. Every ODK-pulled death landed with empty `DE_*` columns. Reproduced in code
+(`Death.DE_03 is None`) before fixing.
+
+### Files Modified
+- `va_explorer/va_data_management/utils/loading.py` — added `clean_import_value(value,
+  blank)` and `blank_values_for_model(model)`; `load_odk_csv_to_model` now sanitises
+  every field instead of only integer ones; `lookup_label` returns the blank instead of
+  passing the NaN through; deleted the now-dead `int_fields` block
+- `va_explorer/va_data_management/management/commands/load_form_csv.py` — same
+  sanitisation (this command had none at all)
+- `va_explorer/va_data_management/odk/service.py` — new `_strip_group_prefix()`; the pull
+  now collapses a trailing dash segment only when it is a bare GPS component
+- `va_explorer/va_data_management/utils/geopoint.py` — new
+  `is_bare_geopoint_component()`
+- `va_explorer/va_data_management/management/commands/repair_nan_text.py` — **new**
+  one-off repair command
+- `tasks/plan.md` — plan for this work
+
+### Non-obvious constraint
+
+A naive `NaN → None` breaks the sibling loaders. `Death` is entirely `null=True`, but
+`Pregnancy` (7 columns), `PregnancyOutcome` (20) and `Household` (10) have NOT NULL text
+columns where the old `"nan"` string happened to satisfy the constraint — `None` raises
+`IntegrityError` and fails the whole import. `blank_values_for_model` picks `None` or
+`""` per column from `field.null`.
+
+A blanket removal of the pull strip was rejected: `FORM_PRE_NORMALIZE_RENAMES`
+(`odk/service.py:49`) keys `social_mobilization`'s GPS on the bare `Latitude` names the
+strip produces.
+
+### Tests Added
+- `tests/test_form_import.py::test_death_csv_blank_cells_are_null_not_the_string_nan` —
+  blank cells on consented and declined rows become NULL; covers both the code-mapped
+  (`DE_05`) and plain (`DE_15`) paths; sweeps every text field for `"nan"`
+- `...::test_pregnancy_csv_blank_cells_are_null_not_the_string_nan` — shared-helper fix
+- `...::test_load_form_csv_blank_cells_are_null_not_the_string_nan`
+- `...::test_blank_cells_in_not_null_columns_become_empty_string` — the IntegrityError
+  regression above
+- `...::test_odk_pull_keeps_hyphenated_question_names` — `DE-03`/`DE-06`/`DE-32_mccd`
+  survive the pull strip while split GPS still collapses
+- `...::test_strip_group_prefix_only_collapses_gps_components`
+- `tests/test_repair_nan_text.py` — 8 tests: repair, case-insensitivity, `999`/`none`
+  left alone, `--dry-run` writes nothing, idempotence, history-table cleanup, NOT NULL
+  columns get `""`, `--model` scoping
+
+### Test state
+- Affected suites: **144 passed, 7 failed**
+- All 7 failures verified pre-existing on a clean tree (`git stash` baseline):
+  4 in `test_form_import.py` call removed `load_*_definition` commands; 3 in
+  `test_odk_service.py` are stale test doubles (`fetch_expand`/`upsert_gps` kwargs) plus
+  a pre-existing NOT NULL violation in the ODK upsert path
+- `ruff check` and `ruff format --check` clean on all changed files
+- Coverage gate not runnable (full `va_data_management` suite hangs ~2 h, documented)
+
+### Cache Invalidation
+- Bumped `location_tree:version` (N)
+- Bumped `home_dashboard_fastpath:version` (N)
+- None needed: repaired fields are not cache inputs, and dashboards already exclude
+  `"nan"` at read time
+
+### Celery Tasks
+- Modified: none. `repair_nan_text` uses `.update()` specifically to avoid firing
+  `Death.post_save` per row.
+
+### Deployment Notes
+- Migrations must run before code deploy: **N** (no schema change)
+- Feature needs gradual rollout: **N**
+- Runbook: deploy code → `python manage.py repair_nan_text --dry-run` (this also sizes
+  the problem for the first time) → `python manage.py repair_nan_text` → re-download the
+  unscheduled deaths CSV and confirm `DE_32_*`/`DE_33_*` are empty cells
+- After deploy, verify one scheduled death pull populates `DE_*` columns
+
+### Out of scope (user decision)
+- The related `.0` float artifact from the same `read_csv` type inference (phone numbers
+  exporting as `962336485.0`, `DE_10` as `999.0`). Fix would be `dtype=str,
+  keep_default_na=False`.
+- The ~25 `.exclude(<field>__iexact="nan")` read-time workarounds in `va_analytics` and
+  `home` become no-ops after the repair; removing them is a separate cleanup.
+
 ## 2026-07-03 — VASA visualisation: validation & finalisation (dev/vasa)
 
 ### Requirement coverage (docs/vasa_visualisation.md)

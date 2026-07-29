@@ -3,29 +3,25 @@
     "issue_type": "incomplete",
     "subtype": "minimum_viable_record",
     "member_ids": [
-      684
+      1173
     ],
     "keys": {
       "DE_01": null,
-      "DE_03": null,
+      "DE_03": "Nancy Chumbwa",
       "DE_05": null,
-      "DE_06": null,
+      "DE_06": "2026-06-05",
       "enumerator": null
     },
     "details": {
       "subtype": "minimum_viable_record",
       "missing_fields": [
         "DE_01",
-        "DE_03",
         "DE_05",
-        "DE_06",
         "enumerator"
       ],
       "missing_labels": [
         "Household reference",
-        "Name of deceased",
         "Sex of deceased",
-        "Date of death",
         "Enumerator"
       ]
     }
@@ -34,51 +30,7 @@
     "issue_type": "consent",
     "subtype": "consent_missing_or_invalid",
     "member_ids": [
-      684
-    ],
-    "keys": {
-      "consent": null
-    },
-    "details": {
-      "subtype": "consent_missing_or_invalid"
-    }
-  },
-  {
-    "issue_type": "incomplete",
-    "subtype": "minimum_viable_record",
-    "member_ids": [
-      685
-    ],
-    "keys": {
-      "DE_01": null,
-      "DE_03": null,
-      "DE_05": null,
-      "DE_06": null,
-      "enumerator": "nan"
-    },
-    "details": {
-      "subtype": "minimum_viable_record",
-      "missing_fields": [
-        "DE_01",
-        "DE_03",
-        "DE_05",
-        "DE_06",
-        "enumerator"
-      ],
-      "missing_labels": [
-        "Household reference",
-        "Name of deceased",
-        "Sex of deceased",
-        "Date of death",
-        "Enumerator"
-      ]
-    }
-  },
-  {
-    "issue_type": "consent",
-    "subtype": "consent_missing_or_invalid",
-    "member_ids": [
-      685
+      1173
     ],
     "keys": {
       "consent": null

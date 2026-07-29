@@ -22,6 +22,7 @@ from va_explorer.va_data_management.utils.geopoint import (
     _has_meaningful_value as _gp_meaningful,
 )
 from va_explorer.va_data_management.utils.geopoint import (
+    is_bare_geopoint_component,
     merge_geopoint_into,
 )
 from va_explorer.va_data_management.utils.loading import (
@@ -124,6 +125,25 @@ def _clean_import_value(value):
     if pd.isna(value):
         return None
     return value
+
+
+def _strip_group_prefix(column):
+    """Collapse a split-GPS column to its bare component name.
+
+    ODK Central returns geopoints as split columns qualified by their group
+    (``PE-25-Latitude``), and the geopoint merge expects to find them by
+    component. Only that trailing segment is safe to strip: the death form
+    names its questions with hyphens (``DE-01``, ``DE-32_mccd``), so stripping
+    unconditionally turned them into ``01``/``32_mccd``, which match no model
+    field and were silently dropped -- every pulled death landed with empty
+    DE_* columns. Everything that is not a GPS component keeps its full name
+    and is resolved later by ``normalize_dataframe_columns``.
+    """
+    text = str(column)
+    tail = text.rsplit("-", 1)[-1]
+    if tail != text and is_bare_geopoint_component(tail):
+        return tail
+    return text
 
 
 def _run_dq_after_import(form_name: str, created: int, updated: int) -> None:
@@ -734,7 +754,7 @@ class ODKPullService:
                 }
 
             df = pd.DataFrame.from_records(records)
-            df.columns = [c.rsplit("-", 1)[-1] for c in df.columns]
+            df.columns = [_strip_group_prefix(c) for c in df.columns]
 
             if include_attachments:
                 self.download_attachments_if_needed(

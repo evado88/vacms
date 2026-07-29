@@ -1,182 +1,235 @@
-# Death ID Hardening Plan (v2 — Death mints, VASA carries)
+# Literal `"nan"` in Death Records — Fix Plan
 
-Specs: `docs/death_id_assignment.md`, `docs/death_id_hardening_prompt.md`
-Branch: dev/vasa
+Branch: main
+Reported: 2026-07-29, from `unscheduled_deaths_20260727_172446.csv`
 
 ## Context
 
-Death IDs (`NNNNCCSSSS`: 4-digit base, 2 checksum letters, 4-digit sequence)
-uniquely identify deaths within a ward cluster. The division of responsibility:
+Death records show `nan` across many fields in the line list, and CSV downloads show
+`nan` in the same columns.
 
-- **Death records** (community `E_DEATH` form) are registered **without** a
-  death ID — verified: `E_DEATH.xlsx` has no death-ID field. **VACMS creates
-  and assigns** the ID after import.
-- **VASA records** (facility form `znphifacilityvasa_02_final.xlsx`) arrive
-  **with** a DeathID already entered by the interviewer — the form captures it
-  in the `DeathID` field (stored on `VASASocialAutopsy.DeathID`, a blank-able
-  TextField) and validates it in-form with a checksum + regex constraint.
-  **VACMS must never generate or overwrite these** — only validate and flag.
+**This is not a display or export bug — the string `"nan"` is physically stored in
+Postgres.** The CSV loader passes pandas' `float('nan')` straight into `Death(**row)`;
+because every `Death` field is a `TextField`, Django's `get_prep_value()` calls
+`str(nan)` and persists the four characters `n-a-n`. The export dumps it faithfully.
 
-The existing implementation is partial and has verified bugs (below); the
-facility form's regex bug means interviewers can only enter IDs ending
-0001–0009, rejecting 99% of valid IDs.
+### Evidence
 
-## Verified current state (dev DB + code audit, 2026-07-08)
+1. **The export is a pure ORM dump.** `views/deaths.py:170-171` does
+   `value = getattr(death, name)` / `row.append("" if value is None else value)`.
+   No pandas in the export path. A real `NULL` exports as an empty cell.
+2. **Both states appear in one file.** In the reported CSV most rows show `DE_34` =
+   `nan`, but rows `1695` and older show `DE_34` = *empty*. Same column, same export —
+   some rows hold `NULL` (correct), others the string `"nan"` (corrupt).
+3. **The UI contradicts itself, exactly as predicted.** The detail page pipes fields
+   through the `replace` filter (`templatetags/va_explorer_tags.py:136-148`), which maps
+   `"nan" → "N/A"`. The line list (`templates/partials/_death_table.html`) uses
+   `|default:"-"`, which only fires on falsy values — and `"nan"` is truthy. The same
+   record renders `N/A` on detail and `nan` in the list.
+4. **The codebase already knows.** ~25 read-time workarounds of the form
+   `.exclude(<field>__iexact="nan")` exist in `va_analytics/views.py`,
+   `va_analytics/utils/loading.py` and `home/views.py` — the symptom has been papered
+   over at read time instead of fixed at write time.
 
-Data:
-- 2,095 Death rows, **all missing death_id** (clean backfill; no malformed IDs).
-- `ClusterLocationCodes` table **empty**; `wards.csv` has 250 wards.
-- All 75 distinct `Death.ward` values match wards.csv **ward names**; 0 match
-  numeric `ward_code`. Max deaths in one ward: 92 (0001–0999 cap is safe).
+### Root cause
 
-Code:
-- `generate_ward_codes.py` checksum **already matches the spec** (weights
-  3,5,7,9 / 9,7,5,3 mod 19; letter map R,G,A,B,K,Y,N,C,L,S,H,Z,D,E,J,P,F,T,M;
-  cluster code = digits + letter(3579-sum) + letter(9753-sum)) — but buried in
-  ~140 lines of pandas.
-- `assign_death_ids.py` command and `tasks.py::assign_death_ids_task` carry
-  **duplicated** assignment logic.
-- **BUG:** both match `ClusterLocationCodes.ward_code__iexact = Death.ward`;
-  Death.ward holds *names*, ward_code holds *numeric codes* → zero matches
-  even after loading wards.csv. Must match the `ward` (name) column.
-- Death `post_save` signal queues the task (single saves only);
-  `load_death_csv`/`load_form_csv` use `bulk_create` → **no signal** → imports
-  wait up to 15 min for the periodic task. No lock anywhere → signal/periodic/
-  manual runs can race and duplicate sequences.
-- `Death.death_id` = plain TextField, **no unique constraint**. Migration 0019
-  created the column, yet both commands still carry subprocess-makemigrations
-  / raw `ALTER TABLE` fallbacks (dead weight; remove).
-- Sequence formatting `{seq:04d}` is unbounded → could emit IDs the form
-  rejects (>0999).
-- **Form bug confirmed in-repo** at `va_explorer/static/data/
-  znphifacilityvasa_02_final.xlsx`: `string-length(.) =10 and regex(string(.),
-  '[1-9][0-9][0-9][0-9][A-Z][A-Z](000[1-9]|0[1-9][0-9]|[1-9][0-9][0-9])?')` —
-  with length 10 enforced, only suffixes 0001–0009 validate. Also `[A-Z][A-Z]`
-  accepts any letters, not the 19-letter checksum alphabet.
-- VASA import path: `utils/vasa_loading.py::load_vasa_from_csv` →
-  `VASA.objects.create(...)` + `VASASocialAutopsy.objects.update_or_create(...)`
-  (~line 221–224). VASA is not created by the ODK VA pull.
-- DQ machinery to reuse: `utils/dq.py` (`upsert_issue`,
-  `resolve_missing_issues`, stable signatures) — same pattern as
-  `utils/repeat_group_dedup.py`.
-- No tests exist for `assign_death_ids` / `generate_ward_codes`.
+`utils/loading.py:384-393` — the only NaN guard applies to **integer fields only**:
 
-## User decisions (confirmed)
-- Invalid VASA DeathID at import → **flag as DataQualityIssue, import anyway**.
-- Cross-check VASA DeathID against `Death.death_id` → **lookup + flag
-  unmatched as DQ issue; no FK/schema change**.
-- Suffix range stays **0001–0999** (per form intent); overflow reported loudly.
+```python
+def nan_to_none_for_intfields(row, int_fields):
+    return {k: (None if (k in int_fields and pd.isnull(v)) else v) for k, v in row.items()}
 
-## Implementation
+objects = [model(**nan_to_none_for_intfields(row, int_fields)) for row in df.to_dict(orient="records")]
+```
 
-### 1. Shared utility `va_explorer/va_data_management/utils/death_ids.py`
-- `CHECKSUM_LETTERS = "RGABKYNCLSHZDEJPFTM"` (index = mod-19 value)
-- `checksum_letters(base4)` → two letters (3,5,7,9 then 9,7,5,3 weights)
-- `build_prefix(base4)` → `NNNNCC` (validates `[1-9][0-9]{3}`)
-- `DEATH_ID_REGEX = r"^[1-9][0-9]{3}[RGABKYNCLSHZDEJPFTM]{2}0[0-9]{3}$"`
-- `is_valid_death_id(v)` → regex + checksum recompute + suffix ≠ 0000
-- `format_death_id(cluster_code, seq)` → raises if seq outside 1–999
-- `extract_sequence(death_id)` → int | None (valid IDs only)
-- `assign_death_ids(*, dry_run=False, death_ids=None)` — shared service:
-  - ward→cluster: `ClusterLocationCodes.ward__iexact` (name) with
-    `ward_code__iexact` fallback  ← fixes the zero-match bug
-  - sequence continues from highest **valid** existing ID per cluster prefix;
-    malformed existing IDs reported, excluded from continuation, never
-    overwritten
-  - deterministic order: parsed `DE_06` then `id`; unparseable dates last
-  - idempotent; only fills blank death_id; `death_ids=` scopes to PKs
-  - serialized under a Redis cache lock (signal/periodic/manual can't race)
-  - returns summary: assigned, skipped_wards, malformed_existing, overflow
+`Death` has **zero** integer fields — every field in `models/death.py:11-151` is
+`TextField(blank=True, null=True)`. So `int_fields == []` and the guard is a no-op for
+every column. `null=True` never fires because the float is stringified first.
 
-### 2. Migration (va_data_management)
-- Conditional `UniqueConstraint` on `Death.death_id` (when set/non-blank) —
-  DB-level backstop. Safe: zero IDs assigned on this DB.
+Aggravating spots:
+- `utils/loading.py:336-340` — `lookup_label` *detects* the NaN then returns it unchanged:
+  `return v if pd.isnull(v) or str(v).lower() == "nan" else v_norm`
+- `management/commands/load_form_csv.py:62-63` — `model(**row)`, no cleaning at all.
+- `load_death_csv.py:63` — `pd.read_csv` with no `na_values`/`keep_default_na`/`dtype`,
+  so every blank cell becomes `float('nan')`.
 
-### 3. Rewire existing call sites
-- `management/commands/assign_death_ids.py` → thin wrapper over the service;
-  keep `--dry-run` + preview table; add malformed/skipped reporting; **delete**
-  the auto-migration/ALTER TABLE code.
-- `tasks.py::assign_death_ids_task` → call the service (delete ~120 duplicated
-  lines); keep 900s periodic schedule + post_save signal as sweepers.
-- `generate_ward_codes.py` → use `checksum_letters()` instead of the pandas
-  checksum block (keep candidate-filtering rules; add an equivalence test).
+### Ruled out — not the cause
 
-### 4. Death ingest hooks (mirror household-member dedup pattern)
-- `load_death_csv` + `load_form_csv` (form "death"): after `bulk_create`, call
-  `assign_death_ids(death_ids=<created PKs>)` synchronously. Re-imports stay
-  idempotent (existing IDs untouched).
+- **The ODK pull path is clean.** `odk/service.py:123-126` defines `_clean_import_value`
+  (`pd.isna → None`), applied at both the insert (L224) and upsert (L263) sites. The
+  affected records came in via `load_death_csv` / `load_form_csv`, not the scheduled pull.
+- **Skip logic is working correctly** (verified against `static/data/E_DEATH.xlsx`):
+  `consent = NO` rows legitimately have nothing past `DE_02` (`death_group` is gated on
+  `${consent} = '01'`); row `3885`'s blank `DE_16/17/18` is correct because `DE_05 = MALE`
+  and those are gated on `selected(${DE-05},'02')`; row `4179` (FEMALE, ~77) correctly has
+  `NO/NO/NO`. These *should* be blank — the defect is that blank became `"nan"`, not `NULL`.
+- **`DE_32_*` / `DE_33_*` are `image`-type questions** (photos of MCCD, burial permit, NRC)
+  — blank when no photo was taken. Same story.
+- **`999` is genuine enumerator-entered data**, not a bug. It appears only in unconstrained
+  free-text fields (`DE_08`/`DE_10`/`DE_23` NRC, `DE_12`) as an informal "refused/unknown"
+  convention; the form's own sentinels are two-digit (`99 = UNKNOWN`). Left alone.
+- **`Death.informant` is always empty because the question does not exist.** `E_DEATH.xlsx`
+  has an `informant` *choice list* but no `informant` *question*, so `models/death.py:71`
+  can never be populated by this form. Flagged for the data team; not fixed here.
 
-### 5. VASA-side validation (new; per confirmed decisions)
-- In `utils/vasa_loading.py`, where `VASASocialAutopsy` is created/updated:
-  collect each record's `DeathID` and after load run a validation pass:
-  - blank DeathID → no issue (VAID_decide covers "don't have it")
-  - fails `is_valid_death_id` → upsert `DataQualityIssue` (type VALIDITY or
-    DUPLICATE-style stable signature via `utils/dq.py::upsert_issue`),
-    title "VASA Death ID invalid"
-  - valid but no `Death.death_id` match → upsert issue "VASA Death ID not
-    found in death register"
-  - never mutate the stored DeathID; import always proceeds
-  - idempotent + self-healing on re-run (`resolve_missing_issues`)
-- Report counts in `load_vasa_csv` summary output.
+---
 
-### 6. Fix the facility VASA form (in-repo)
-- Edit constraint in `va_explorer/static/data/znphifacilityvasa_02_final.xlsx`
-  (survey sheet, DeathID row) to:
-  `regex(., '^[1-9][0-9]{3}[RGABKYNCLSHZDEJPFTM]{2}0[0-9]{3}$')` (full-string;
-  keeps `string-length(.) = 10` redundant-but-harmless or drop it).
-- Run `manage.py generate_vasa_mapping --check` to confirm no field-map drift
-  (constraint text does not affect field defs).
-- `E_DEATH.xlsx` needs **no change** (no death-ID field — by design).
-- Deployment note: upload revised form to ODK Central (external step).
+## Scope
 
-### 7. Docs
-- Update `docs/death_id_assignment.md`: format spec + checksum table, worked
-  example (2026 → TL), Death-mints/VASA-carries split, ward-name matching,
-  ingest-time assignment, malformed-ID policy, VASA validation DQ issues,
-  removal of auto-migration behavior, runbook.
+- [ ] Stop the CSV loaders persisting `"nan"`; blank cells must become `NULL`
+- [ ] Repair existing corrupted rows, including `simple_history` tables
+- [ ] Investigate the ODK-pull column strip; fix only if reproduced
+- [ ] Affected models: `Death`, `Pregnancy`, `PregnancyOutcome`, `Household` (all four
+      share `load_odk_csv_to_model`), plus `HouseholdMember`, `SocialMobilization` and
+      `CSADailyTracker` (reachable from `load_form_csv`'s `FORM_MODEL_MAP`)
+- [ ] Affected apps: `va_data_management`
 
-## Files touched
-- NEW `va_explorer/va_data_management/utils/death_ids.py`
-- NEW migration (unique constraint)
-- NEW `va_explorer/va_data_management/tests/test_death_ids.py`
-- `management/commands/assign_death_ids.py`, `generate_ward_codes.py`,
-  `load_death_csv.py`, `load_form_csv.py`
-- `tasks.py` (assign_death_ids_task), `utils/vasa_loading.py`
-- `va_explorer/static/data/znphifacilityvasa_02_final.xlsx`
-- `docs/death_id_assignment.md`
+**Out of scope (user decision):** the related `.0` float artifact from the same
+`read_csv` type inference — phone numbers exporting as `962336485.0`, `DE_10` as `999.0`
+(rows 4179/3885). Fix would be `dtype=str, keep_default_na=False`, as
+`utils/vasa_loading.py:865-868` and `utils/xlsform.py:72-73` already do.
 
-## Verification
-- Unit: checksum 2026→TL; `2026TL0001` valid; `DID-2026-0001` invalid;
-  suffixes 0001/0009/0010/0999 valid; 0000 & 1000 invalid; extract_sequence;
-  format overflow raises; pandas-vs-helper checksum equivalence sample.
-- Service: DE_06-then-id ordering; continuation from existing valid IDs;
-  malformed IDs don't poison sequences and aren't overwritten; skipped wards
-  reported; idempotent re-run; PK scoping; dry-run writes nothing.
-- Commands: `assign_death_ids --dry-run` previews without writing; real run
-  backfills; ward-name lookup resolves (use ClusterLocationCodes fixtures).
-- Import: `load_death_csv` test CSV → created rows get valid IDs; re-import
-  preserves them. **Use command/bulk paths, never `Death.objects.create()` in
-  tests** (post_save→Celery broker hang; see tasks/lessons.md).
-- VASA: `load_vasa_csv` fixture (`tests/fixtures/vasa/znphifacilityvasa_02.csv`)
-  with valid/invalid/unmatched DeathIDs → correct DQ issues raised, records
-  imported, re-run idempotent, issues resolve when fixed.
-- Form: unzip xlsx in a test (or one-off check) asserting the DeathID
-  constraint contains the new regex and not `000[1-9]`.
-- Suites: `pytest va_explorer/va_data_management/tests/test_death_ids.py`,
-  existing `test_repeat_group_dedup.py` (DQ machinery untouched), targeted
-  vasa loading tests; `pre-commit run --files ...`; coverage ≥ 60%.
-- End-to-end (dev DB): `generate_ward_codes --initial` →
-  `assign_death_ids --dry-run` → review → `assign_death_ids` → spot-check IDs
-  validate and are unique (2,095 rows).
+## Design
 
-## Runbook (deploy order)
-1. Deploy code + migration.
-2. `python manage.py generate_ward_codes --initial` (250 wards).
-3. `python manage.py assign_death_ids --dry-run` → review skipped wards.
-4. `python manage.py assign_death_ids` (backfills 2,095 deaths).
-5. Upload fixed facility VASA form to ODK Central; verify a 0010-suffix ID
-   passes in ODK Collect.
-6. New deaths: ingest hooks + periodic task keep IDs assigned automatically;
-   VASA imports validate DeathIDs and raise DQ issues.
+- [ ] API endpoint changes: none
+- [ ] Database schema changes: none (data-only repair; no migration)
+- [ ] Permission/group changes: none
+- [ ] Location scoping implications: none — repair is field-value normalisation, does not
+      touch `Location` FKs or querysets. Export/list scoping is unchanged.
+- [ ] Cache invalidation: none. Repaired fields are not inputs to `location_tree:version`
+      or `home_dashboard_fastpath:version`. Dashboards currently *exclude* `"nan"` at read
+      time, so their results are unchanged by the repair.
+- [ ] Reuse, don't reinvent: mirror `odk/service.py:123` `_clean_import_value` rather
+      than writing a new blank-value concept; field enumeration follows the
+      `views/deaths.py:155` `model._meta.fields` pattern; `--dry-run` follows the
+      `load_death_csv.py:30-34` convention.
 
-(On approval: sync this plan into `tasks/plan.md` per project convention.)
+## Implementation Steps
+
+- [ ] **Step 1 — `utils/loading.py`: sanitize NaN for all fields**
+  - Add module-level `clean_import_value(value)` (return `None` for `pd.isna(value)`),
+    next to the existing `_has_meaningful_value` (L69-73), so blank handling has one home.
+  - Replace `nan_to_none_for_intfields` (L384-393) with an unconditional
+    `{k: clean_import_value(v) for k, v in row.items()}`. The int-field special case is
+    subsumed — `pd.isnull` already covers it — so `int_fields` (L359-370) goes away.
+  - Fix `lookup_label` (L340): `return None if pd.isnull(v) or str(v).lower() == "nan"
+    else v_norm`.
+  - This single change fixes all four loaders sharing the helper.
+- [ ] **Step 2 — `management/commands/load_form_csv.py:62`**: route rows through
+      `clean_import_value` before `model(**row)`.
+- [ ] **Step 3 — new `management/commands/repair_nan_text.py`**
+  - For every model reachable from the unsanitised loaders: enumerate
+    `TextField`/`CharField` names from `model._meta.fields`.
+  - Per field: `Model.objects.filter(**{f"{f}__iexact": "nan"}).update(**{f: blank})`,
+    inside `transaction.atomic()`. **`blank` follows `field.null`** — `None` where the
+    column is nullable, `""` where it is not. `Death` is entirely `null=True`, but
+    `Pregnancy` (7), `PregnancyOutcome` (20) and `Household` (10) carry NOT NULL text
+    columns that would raise `IntegrityError` on `None`.
+  - Use `.update()` rather than `save()`: this is a data correction, not a domain event,
+    and `Death.post_save` queues a Celery task that must not fan out per row.
+  - **Repair the `simple_history` tables too** via `Model.history.model.objects` — all
+    four declare `history = HistoricalRecords()` (`models/death.py:154`). Skipping
+    `historicaldeath` leaves `nan` in the detail page's history tab
+    (`views/deaths.py:214`) and lets a revert resurrect it.
+  - `--dry-run` printing per-model / per-field counts before any write.
+  - Match **only** case-insensitive `nan`. Do not extend to `none`/`null`/`999` — those
+    are either rare or genuine data.
+- [x] **Step 4 — investigate the ODK-pull column strip. CONFIRMED and fixed.**
+      `odk/service.py:737` did
+      `df.columns = [c.rsplit("-", 1)[-1] for c in df.columns]`. The death XLSForm names
+      questions with **hyphens** (`DE-01`, `DE-32_mccd`), yielding `01` and `32_mccd`,
+      which match no `Death` field and are silently dropped by
+      `utils/loading.py:316`. If real, ODK-pulled deaths land with *empty* `DE_*` columns
+      — the other half of "not displaying actual values".
+  - **Reproduced in code:** feeding `import_dataframe_records` a pull-shaped frame with
+    `DE-03`/`DE-06`/`DE-32_mccd` and applying the strip yields `Death.DE_03 is None`.
+    All 44 `DE-*` questions in `E_DEATH.xlsx` are affected.
+  - **Fix applied:** new `odk/service.py::_strip_group_prefix` collapses a trailing dash
+    segment **only when it is a bare GPS component** (Latitude/Longitude/Altitude/
+    Accuracy, via the new `utils/geopoint.py::is_bare_geopoint_component`). Everything
+    else keeps its full name and is resolved by `normalize_dataframe_columns`, whose
+    `odk/normalization.py::iter_odk_column_aliases` already emits `raw.replace("-", "_")`
+    and maps `DE-01 → DE_01`, `DE-32_mccd → DE_32_mccd`.
+  - A blanket removal of the strip was rejected: `FORM_PRE_NORMALIZE_RENAMES`
+    (`odk/service.py:49`) keys `social_mobilization`'s GPS on the **bare** `Latitude`
+    names the strip produces, so removing it would break that form.
+
+> Note: `Death` has no `raw_answers` provenance JSON (unlike `models/vasa.py:76-79`), so
+> the original ODK payload is not recoverable from the DB. Repair is necessarily a
+> string-level normalisation — lossless only because `"nan"` never was real data.
+
+> **Trap found while implementing:** a naive `NaN → None` breaks the sibling loaders.
+> `Death` is entirely `null=True`, but `Pregnancy` (7 columns), `PregnancyOutcome` (20)
+> and `Household` (10) have NOT NULL text columns where the old `"nan"` string happened
+> to satisfy the constraint — writing `None` raises `IntegrityError` and fails the whole
+> import. Hence `clean_import_value(value, blank)` plus `blank_values_for_model(model)`,
+> which picks `None` or `""` per column.
+
+## Celery / External Services
+
+- [ ] Celery job changes: none
+- [ ] ODK/DHIS2 implications: Step 4 only, and only if the pull bug is confirmed. The
+      scheduled death pull would need one clean run verified afterwards.
+- [ ] Redis cache keys to invalidate: none
+
+## Testing Strategy
+
+- [ ] `tests/test_form_import.py` — load a death CSV with genuinely blank cells (a
+      `consent=NO` row, and a `consent=YES` row with blank `DE_32_*`); assert fields are
+      `None` and explicitly `assert death.DE_15 != "nan"`. The existing
+      `test_death_import_definition_and_csv` (L56-65) uses a fully-populated CSV, which
+      is why this slipped through.
+- [ ] Same assertion for one sibling loader (pregnancy) to lock in the shared-helper fix.
+- [ ] New `tests/test_repair_nan_text.py` — seed a `Death` with `DE_15="nan"` plus a
+      `HistoricalDeath` row; assert both become `NULL`; assert `--dry-run` writes nothing;
+      assert a legitimate `"999"` is untouched.
+- [ ] If Step 4 confirms the pull bug: regression test for
+      `list_submissions`/`import_dataframe_records` with hyphenated `DE-03` /
+      `DE-32_mccd` columns.
+- [ ] Location scoping tests: not applicable — no queryset or scoping change.
+- [ ] Soft-delete edge cases: not applicable — `Death` is not a `SoftDeletionModel`.
+- [ ] Build `Death` rows via the command/bulk paths or `bulk_create`, **never**
+      `Death.objects.create()` (post_save → Celery broker hang; see `tasks/lessons.md`).
+- [ ] Coverage target: ≥ 60%
+
+## Deployment Checklist
+
+- [ ] Migrations: none. Deploy order is code-first, then run the repair command.
+- [ ] Cache pre-warming: not needed.
+- [ ] Celery schedule changes: none.
+- [ ] Feature flags / gradual rollout: not needed. `--dry-run` is the safety gate.
+
+### Runbook
+
+1. Deploy the loader fixes (Steps 1–2).
+2. `python manage.py repair_nan_text --dry-run` — review per-field counts. *(This also
+   sizes the problem for the first time; a read-only probe was blocked during planning.)*
+3. `python manage.py repair_nan_text`.
+4. Re-download the unscheduled deaths CSV from `/va_data_management/deaths/`; confirm
+   `DE_32_*` / `DE_33_*` are empty cells, not `nan`, and the line list renders `-`.
+5. Cross-check one record (e.g. `death_id 1213SM0027`): list and detail should finally
+   agree.
+6. Step 4 (ODK pull) proceeds independently of steps 1–3.
+
+### Commands
+
+```shell
+pre-commit run --files va_explorer/va_data_management/utils/loading.py \
+  va_explorer/va_data_management/management/commands/load_form_csv.py \
+  va_explorer/va_data_management/management/commands/repair_nan_text.py
+
+pytest va_explorer/va_data_management/tests/test_form_import.py \
+       va_explorer/va_data_management/tests/test_repair_nan_text.py \
+       va_explorer/va_data_management/tests/test_deaths_csv_export.py -v
+
+coverage run -m pytest va_explorer/va_data_management && coverage report
+```
+
+## Follow-ups (not in this change)
+
+- The ~25 `.exclude(<field>__iexact="nan")` read-time workarounds in `va_analytics` and
+  `home` become no-ops after the repair. Leave them for now — removing them is a
+  separate, independently-testable cleanup.
+- `Death.informant` is unreachable from the current `E_DEATH` form — either add the
+  question to the XLSForm or drop the column from the export.
+- The `.0` float artifact (out of scope above).

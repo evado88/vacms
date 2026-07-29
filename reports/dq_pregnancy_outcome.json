@@ -3,7 +3,7 @@
     "issue_type": "incomplete",
     "subtype": "minimum_viable_record",
     "member_ids": [
-      113
+      100
     ],
     "keys": {
       "PO_02": null,
@@ -34,7 +34,7 @@
     "issue_type": "consent",
     "subtype": "consent_missing_or_invalid",
     "member_ids": [
-      113
+      100
     ],
     "keys": {
       "consent": null
@@ -47,14 +47,14 @@
     "issue_type": "incomplete",
     "subtype": "minimum_viable_record",
     "member_ids": [
-      114
+      101
     ],
     "keys": {
       "PO_02": null,
       "PO_04": null,
       "PO_41": "",
       "PO_46": "",
-      "enumerator": "nan"
+      "enumerator": null
     },
     "details": {
       "subtype": "minimum_viable_record",
@@ -78,7 +78,7 @@
     "issue_type": "consent",
     "subtype": "consent_missing_or_invalid",
     "member_ids": [
-      114
+      101
     ],
     "keys": {
       "consent": null

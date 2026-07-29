@@ -24,6 +24,15 @@ def geopoint_component_name(column):
     return match.group(1).lower()
 
 
+def is_bare_geopoint_component(name):
+    """True when ``name`` is exactly Latitude/Longitude/Altitude/Accuracy.
+
+    Used by the ODK pull to decide whether a trailing dash segment is a GPS
+    component worth collapsing to, or a real part of a question name.
+    """
+    return bool(_BARE_COMPONENT_RE.match(str(name)))
+
+
 def find_geopoint_columns(columns):
     geopoint_columns = {}
     for column in columns:
