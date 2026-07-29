@@ -23,7 +23,7 @@ def _viewer():
     return user
 
 
-def _event(status, name, province="Lusaka"):
+def _event(status, name, province="Lusaka", ward="Central Ward", ea="EA 1"):
     # Province filtering matches death__province, so set it on the Death record.
     death = Death.objects.create(
         DE_03=name,
@@ -31,6 +31,8 @@ def _event(status, name, province="Lusaka"):
         DE_05="Male",
         DE_06="2023-01-01",
         province=province,
+        ward=ward,
+        ea=ea,
     )
     return Event.objects.create(
         event_type=Event.EventType.DEATH,
@@ -101,6 +103,33 @@ def test_tab_counts(client):
     assert counts2[Event.VAInterviewStatus.COMPLETED] == 0
 
 
+def test_ward_filter_limits_events_and_tab_counts(client):
+    client.force_login(_viewer())
+    matching = _event(
+        Event.VAInterviewStatus.SCHEDULED,
+        "Matching Person",
+        ward="Chawama Ward",
+    )
+    _event(
+        Event.VAInterviewStatus.SCHEDULED,
+        "Other Person",
+        ward="Kanyama Ward",
+    )
+    _event(
+        Event.VAInterviewStatus.COMPLETED,
+        "Completed Person",
+        ward="Chawama Ward",
+    )
+
+    response, ids = _component_ids(client, ward="chawama")
+
+    assert ids == {matching.id}
+    assert response.context["filters"]["ward"] == "chawama"
+    counts = {tab["value"]: tab["count"] for tab in response.context["status_tabs"]}
+    assert counts[Event.VAInterviewStatus.SCHEDULED] == 1
+    assert counts[Event.VAInterviewStatus.COMPLETED] == 1
+
+
 def test_full_page_renders_tabs_and_no_status_dropdown(client):
     client.force_login(_viewer())
     _make_all()
@@ -112,3 +141,33 @@ def test_full_page_renders_tabs_and_no_status_dropdown(client):
         assert label in content
     assert 'name="interview_status"' not in content  # dropdown removed
     assert "Apply Filters" not in content
+
+
+def test_list_displays_death_record_death_id(client):
+    client.force_login(_viewer())
+    event = _event(Event.VAInterviewStatus.SCHEDULED, "Identified Person")
+    event.death.death_id = "1321BY0062"
+    event.death.save(update_fields=["death_id"])
+
+    response, ids = _component_ids(client)
+
+    assert event.id in ids
+    assert "Death ID" in response.content.decode()
+    assert "1321BY0062" in response.content.decode()
+
+
+def test_list_replaces_status_column_with_death_ward_and_ea(client):
+    client.force_login(_viewer())
+    _event(
+        Event.VAInterviewStatus.SCHEDULED,
+        "Located Person",
+        ward="Chawama Ward",
+        ea="EA 12",
+    )
+
+    response, _ = _component_ids(client)
+    content = response.content.decode()
+
+    assert "<th>Ward-EA</th>" in content
+    assert "Chawama Ward-EA 12" in content
+    assert ">Status</a>" not in content

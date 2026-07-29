@@ -205,3 +205,21 @@ def test_va_schedule_message_removed_on_not_done(client):
     assert not UserMessage.objects.filter(
         user=assigned_user, metadata__event_id=event.pk
     ).exists()
+
+
+def test_event_detail_omits_duplicate_status_and_interviewer_total(client):
+    scheduler, assigned_user, death = _create_users_and_death()
+    death.death_id = "1321BY0062"
+    death.save(update_fields=["death_id"])
+    event = _schedule_event_for_user(client, scheduler, assigned_user, death)
+
+    response = client.get(reverse("cms-event-detail", args=[event.pk]))
+    content = response.content.decode()
+
+    assert response.status_code == 200
+    assert '<div class="text-muted">VA Interview Status</div>' not in content
+    assert "Interviewer Total Scheduled VAs" not in content
+    assert "Update VA Interview Status" in content
+    assert "1321BY0062" in content
+    assert '<div class="row event-detail-fields">' in content
+    assert content.count('class="col-md-6 mb-3"') >= 2

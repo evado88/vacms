@@ -5,7 +5,7 @@
 {% block content %}
 
   <div data-list-table>
-    {% include "partials/filter_bar.html" with note="Filter verbal autopsies by province, district, or interviewer assignment." fields_template="va_cms/partials/_event_list_filter_fields.html" actions_template="va_cms/partials/_event_list_filter_actions.html" class_name="ou-mb-3" list_filter=True %}
+    {% include "partials/filter_bar.html" with note="Filter verbal autopsies by province, district, ward, or interviewer assignment." fields_template="va_cms/partials/_event_list_filter_fields.html" actions_template="va_cms/partials/_event_list_filter_actions.html" class_name="ou-mb-3" list_filter=True %}
 
     <div data-list-slot data-endpoint="{% url 'cms-event-list' %}?component=1">
       {% include "va_cms/partials/_event_list_component.html" %}

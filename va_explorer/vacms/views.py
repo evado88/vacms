@@ -19,6 +19,7 @@ from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.decorators import method_decorator
+from django.utils.text import slugify
 from django.views import View
 from django.views.decorators.http import require_POST
 from django.views.generic import (
@@ -154,6 +155,13 @@ class EventListView(AjaxListTableMixin, ListView):
                 | Q(pregnancy_outcome__district__icontains=filters["district"])
                 | Q(household__district__icontains=filters["district"])
             )
+        if filters["ward"]:
+            queryset = queryset.filter(
+                Q(death__ward__icontains=filters["ward"])
+                | Q(pregnancy__ward__icontains=filters["ward"])
+                | Q(pregnancy_outcome__ward__icontains=filters["ward"])
+                | Q(household__ward__icontains=filters["ward"])
+            )
         if filters["interviewer"]:
             queryset = queryset.filter(
                 Q(va_interview_staff__name__icontains=filters["interviewer"])
@@ -168,6 +176,7 @@ class EventListView(AjaxListTableMixin, ListView):
         filters = {
             "province": params.get("province", "").strip(),
             "district": params.get("district", "").strip(),
+            "ward": params.get("ward", "").strip(),
             "interview_status": params.get("interview_status", "").strip()
             or Event.VAInterviewStatus.SCHEDULED,
             "interviewer": params.get("interviewer", "").strip(),
@@ -203,8 +212,6 @@ class EventListCsvExport(CsvDownloadPermissionMixin, EventListView):
         ("interviewer", "Interviewer"),
         ("province", "Province"),
         ("district", "District"),
-        ("event_type", "Event Type"),
-        ("event_status", "Event Status"),
         ("va_interview_status", "VA Interview Status"),
         ("interview_scheduled_date", "VA Interview Scheduled Date"),
         ("interview_complete_date", "VA Interview Complete Date"),
@@ -213,10 +220,25 @@ class EventListCsvExport(CsvDownloadPermissionMixin, EventListView):
         ("respondent_phone", "Respondent Phone"),
         ("va_not_done_reason", "Not Done Reason"),
     )
+    _FILENAME_FILTERS = ("province", "district", "ward", "interviewer")
+
+    def _export_filename(self):
+        status = slugify(self._filters_context["interview_status"]) or "scheduled"
+        timestamp = timezone.now().strftime("%Y%m%d_%H%M%S")
+        filter_values = []
+        for name in self._FILENAME_FILTERS:
+            value = self._filters_context.get(name, "")
+            if value:
+                safe_value = slugify(value)[:40]
+                if safe_value:
+                    filter_values.append(safe_value)
+
+        parts = [f"{status}_vas", timestamp, *filter_values]
+        return "_".join(parts) + ".csv"
 
     def get(self, request, *args, **kwargs):
         queryset = self.get_queryset()
-        filename = timezone.now().strftime("scheduled_vas_%Y%m%d_%H%M%S.csv")
+        filename = self._export_filename()
         response = HttpResponse(content_type="text/csv")
         response["Content-Disposition"] = f'attachment; filename="{filename}"'
         writer = csv.writer(response)
@@ -242,13 +264,11 @@ class EventListCsvExport(CsvDownloadPermissionMixin, EventListView):
         return [
             event.id,
             death.DE_03 if death else "",
-            event.death_id or "",
+            death.death_id if death else "",
             death.key if death else "",
             interviewer,
             event.record_province or "",
             event.record_district or "",
-            event.get_event_type_display() if event.event_type is not None else "",
-            event.get_event_status_display() if event.event_status is not None else "",
             event.get_va_interview_status_display() or "",
             event.interview_scheduled_date or "",
             event.interview_complete_date or "",
@@ -461,14 +481,9 @@ class EventDetailView(DetailView):
             context["interviewer_contact"] = (
                 interviewer.mobile1 or interviewer.mobile2 or interviewer.email
             )
-            context["interviewer_scheduled_count"] = Event.objects.filter(
-                va_interview_staff=interviewer,
-                va_interview_status=Event.VAInterviewStatus.SCHEDULED,
-            ).count()
         else:
             context["interviewer_name"] = None
             context["interviewer_contact"] = None
-            context["interviewer_scheduled_count"] = None
         context["status_form"] = kwargs.get(
             "status_form", VAInterviewStatusForm(instance=event)
         )

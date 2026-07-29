@@ -1,5 +1,6 @@
 import csv
 import io
+import re
 
 import pytest
 from django.contrib.auth.models import Group
@@ -30,12 +31,13 @@ def _viewer():
     return user
 
 
-def _make_death(name):
+def _make_death(name, **kwargs):
     return Death.objects.create(
         DE_03=name,
         DE_04="1980-01-01",
         DE_05="Male",
         DE_06="2023-01-01",
+        **kwargs,
     )
 
 
@@ -52,7 +54,7 @@ def test_csv_export_headers_and_content_type(client):
     assert response["Content-Type"] == "text/csv"
     disposition = response["Content-Disposition"]
     assert "attachment" in disposition
-    assert ".csv" in disposition
+    assert re.search(r'filename="scheduled_vas_\d{8}_\d{6}\.csv"', disposition)
 
     rows = _parse_csv(response)
     assert rows[0] == [
@@ -63,8 +65,6 @@ def test_csv_export_headers_and_content_type(client):
         "Interviewer",
         "Province",
         "District",
-        "Event Type",
-        "Event Status",
         "VA Interview Status",
         "VA Interview Scheduled Date",
         "VA Interview Complete Date",
@@ -101,6 +101,83 @@ def test_csv_export_respects_status_filter(client):
     ids = {row[0] for row in rows[1:]}
     assert str(completed.id) in ids
     assert str(scheduled.id) not in ids
+    assert re.search(
+        r'filename="completed_vas_\d{8}_\d{6}\.csv"',
+        response["Content-Disposition"],
+    )
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        Event.VAInterviewStatus.SCHEDULED,
+        Event.VAInterviewStatus.COMPLETED,
+        Event.VAInterviewStatus.NOT_DONE,
+        Event.VAInterviewStatus.POSTPONED,
+    ],
+)
+def test_csv_filename_starts_with_active_tab(client, status):
+    client.force_login(_viewer())
+
+    response = client.get(reverse("cms-event-list-csv"), {"interview_status": status})
+
+    assert re.search(
+        rf'filename="{status}_vas_\d{{8}}_\d{{6}}\.csv"',
+        response["Content-Disposition"],
+    )
+
+
+def test_csv_export_honors_filters_and_appends_them_to_filename(client):
+    client.force_login(_viewer())
+    interviewer = UserFactory(name="Jane Doe")
+    other_interviewer = UserFactory(name="John Smith")
+    keep = Event.objects.create(
+        event_type=Event.EventType.DEATH,
+        event_status=Event.EventStatus.VA_INTERVIEW_SCHEDULED,
+        va_interview_status=Event.VAInterviewStatus.SCHEDULED,
+        death=_make_death(
+            "Matching Person",
+            province="Lusaka",
+            district="Lusaka Central",
+            ward="Chawama Ward",
+        ),
+        va_interview_staff=interviewer,
+    )
+    Event.objects.create(
+        event_type=Event.EventType.DEATH,
+        event_status=Event.EventStatus.VA_INTERVIEW_SCHEDULED,
+        va_interview_status=Event.VAInterviewStatus.SCHEDULED,
+        death=_make_death(
+            "Other Person",
+            province="Copperbelt",
+            district="Ndola",
+            ward="Kansenshi Ward",
+        ),
+        va_interview_staff=other_interviewer,
+    )
+
+    response = client.get(
+        reverse("cms-event-list-csv"),
+        {
+            "interview_status": "scheduled",
+            "province": "Lusaka",
+            "district": "Lusaka Central",
+            "ward": "Chawama Ward",
+            "interviewer": "Jane Doe",
+        },
+    )
+
+    rows = _parse_csv(response)
+    assert {row[0] for row in rows[1:]} == {str(keep.id)}
+    assert re.search(
+        r'filename="scheduled_vas_\d{8}_\d{6}'
+        r'_lusaka_lusaka-central_chawama-ward_jane-doe\.csv"',
+        response["Content-Disposition"],
+    )
+    assert not any(
+        label in response["Content-Disposition"]
+        for label in ("province-", "district-", "ward-", "interviewer-")
+    )
 
 
 def test_unscheduled_filter_matches_list_and_csv(client):
@@ -146,6 +223,7 @@ def test_csv_includes_death_fields_and_fallbacks(client):
         DE_04="1980-01-01",
         DE_05="Female",
         DE_06="2023-01-01",
+        death_id="1321BY0062",
         key="DKEY-1",
         supervisor="Sup From Death",
         DE_19="Informant Jane",
@@ -165,6 +243,7 @@ def test_csv_includes_death_fields_and_fallbacks(client):
         DE_04="1975-01-01",
         DE_05="Male",
         DE_06="2023-02-01",
+        death_id="1321BY0063",
         key="DKEY-2",
         supervisor="Sup From Death 2",
         DE_19="Informant John",
@@ -189,14 +268,18 @@ def test_csv_includes_death_fields_and_fallbacks(client):
     fb = rows[str(fallback_event.id)]
     assert fb["Deceased Name"] == "Jane Deceased"
     assert fb["Key"] == "DKEY-1"
-    assert fb["Death ID"] == str(death.id)
+    assert fb["Death ID"] == "1321BY0062"
+    assert "Event Type" not in fb
+    assert "Event Status" not in fb
     assert fb["Supervisor"] == "Sup From Death"
     assert fb["Respondent Name"] == "Informant Jane"
     assert fb["Respondent Phone"] == "0977000111"
 
     ew = rows[str(event_wins.id)]
     assert ew["Deceased Name"] == "John Deceased"
-    assert ew["Death ID"] == str(death2.id)
+    assert ew["Death ID"] == "1321BY0063"
+    assert "Event Type" not in ew
+    assert "Event Status" not in ew
     assert ew["Supervisor"] == "Sup From Event"
     assert ew["Respondent Name"] == "Event Respondent"
     assert ew["Respondent Phone"] == "0955000333"
