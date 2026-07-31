@@ -12,6 +12,7 @@ from django.utils.dateparse import parse_datetime
 from zoneinfo import ZoneInfo
 
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_DAY_FIRST_DATE_RE = re.compile(r"^\d{1,2}/\d{1,2}/\d{4}$")
 
 
 def export_timezone():
@@ -87,3 +88,35 @@ def parse_submission_timestamp(value):
             "Submission timestamps must include a UTC marker or timezone offset."
         )
     return parsed.astimezone(datetime_timezone.utc)
+
+
+def parse_form_date(value):
+    """Return a UTC-aware timestamp for a date typed into a form field.
+
+    Deliberately more tolerant than :func:`parse_submission_timestamp`, and used
+    only for fallback columns such as ``today``. ``submissiondate`` is generated
+    by ODK Central and stays on the strict parser, so a loose value there is
+    still an error rather than a guess.
+
+    In addition to everything the strict parser accepts, this reads the
+    day-first ``DD/MM/YYYY`` form entered by field staff. The format is matched
+    explicitly rather than inferred: every such value in the collected data has
+    a day component up to 31 and a month component that never exceeds 12, so
+    ``14/08/2025`` can only be 14 August.
+    """
+    if _is_blank(value):
+        return None
+
+    if isinstance(value, str) and _DAY_FIRST_DATE_RE.fullmatch(value.strip()):
+        try:
+            parsed_date = datetime.strptime(value.strip(), "%d/%m/%Y").date()
+        except ValueError as exc:
+            raise ValidationError(
+                "Form dates must be a valid ISO-8601 date, a DD/MM/YYYY date, "
+                "or a timezone-aware timestamp."
+            ) from exc
+        return timezone.make_aware(
+            datetime.combine(parsed_date, time.min), export_timezone()
+        ).astimezone(datetime_timezone.utc)
+
+    return parse_submission_timestamp(value)

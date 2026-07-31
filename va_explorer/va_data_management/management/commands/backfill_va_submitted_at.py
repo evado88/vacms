@@ -1,19 +1,43 @@
-"""Populate canonical VA/VASA submission timestamps from raw ODK values."""
+"""Populate canonical submission timestamps from raw ODK values.
+
+Migration 0059 backfills every form model, so this command is the re-runnable
+operator tool: use ``--dry-run`` to audit raw values that cannot be parsed, and
+a plain run to repair records imported by a path that bypassed ``save()``.
+"""
 
 from django.core.exceptions import ValidationError
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
-from va_explorer.va_data_management.models import VASA, VerbalAutopsy
-from va_explorer.va_data_management.utils.submission_timestamp import (
-    parse_submission_timestamp,
+from va_explorer.va_data_management.models import (
+    VASA,
+    CSADailyTracker,
+    Death,
+    Household,
+    Pregnancy,
+    PregnancyOutcome,
+    VerbalAutopsy,
+)
+from va_explorer.va_data_management.models.mixins import derive_submitted_at
+
+# Every model carrying SubmissionTimestampMixin. Each declares its own
+# SUBMISSION_TIMESTAMP_SOURCES, so the derivation (including the ``today``
+# fallback where one applies) stays defined in exactly one place.
+BACKFILL_MODELS = (
+    ("VA", VerbalAutopsy),
+    ("VASA", VASA),
+    ("Household", Household),
+    ("Pregnancy", Pregnancy),
+    ("PregnancyOutcome", PregnancyOutcome),
+    ("Death", Death),
+    ("CSADailyTracker", CSADailyTracker),
 )
 
 
 class Command(BaseCommand):
     help = (
-        "Backfill missing canonical submitted_at values for VA and VASA records "
-        "without creating history entries."
+        "Backfill missing canonical submitted_at values for every ODK form "
+        "model without creating history entries."
     )
 
     def add_arguments(self, parser):
@@ -39,7 +63,7 @@ class Command(BaseCommand):
             self.stdout.write("DRY RUN: no records will be updated.")
 
         total_invalid = 0
-        for label, model in (("VA", VerbalAutopsy), ("VASA", VASA)):
+        for label, model in BACKFILL_MODELS:
             stats = self._backfill_model(
                 model,
                 batch_size=batch_size,
@@ -62,31 +86,41 @@ class Command(BaseCommand):
             )
 
     @staticmethod
+    def _manager(model):
+        """Soft-deleted rows still need a timestamp; plain models have no
+        ``all_objects``."""
+        return getattr(model, "all_objects", model.objects)
+
+    @staticmethod
     def _backfill_model(model, *, batch_size, dry_run):
         stats = {"parsed": 0, "blank": 0, "invalid": 0, "updated": 0}
+        manager = Command._manager(model)
+        source_fields = [
+            field_name for field_name, _parser in model.SUBMISSION_TIMESTAMP_SOURCES
+        ]
         last_pk = 0
 
         while True:
             if dry_run:
                 batch = list(
-                    model.all_objects.filter(
+                    manager.filter(
                         submitted_at__isnull=True,
                         pk__gt=last_pk,
                     )
                     .order_by("pk")
-                    .only("pk", "submissiondate")[:batch_size]
+                    .only("pk", *source_fields)[:batch_size]
                 )
                 Command._parse_batch(batch, stats, update=False, model=model)
             else:
                 with transaction.atomic():
                     batch = list(
-                        model.all_objects.select_for_update()
+                        manager.select_for_update()
                         .filter(
                             submitted_at__isnull=True,
                             pk__gt=last_pk,
                         )
                         .order_by("pk")
-                        .only("pk", "submissiondate")[:batch_size]
+                        .only("pk", *source_fields)[:batch_size]
                     )
                     Command._parse_batch(batch, stats, update=True, model=model)
 
@@ -101,7 +135,9 @@ class Command(BaseCommand):
         updates = []
         for record in batch:
             try:
-                submitted_at = parse_submission_timestamp(record.submissiondate)
+                submitted_at = derive_submitted_at(
+                    record, model.SUBMISSION_TIMESTAMP_SOURCES
+                )
             except ValidationError:
                 stats["invalid"] += 1
                 continue
@@ -115,7 +151,7 @@ class Command(BaseCommand):
             updates.append(record)
 
         if update and updates:
-            model.all_objects.bulk_update(
+            Command._manager(model).bulk_update(
                 updates,
                 ["submitted_at"],
                 batch_size=len(updates),

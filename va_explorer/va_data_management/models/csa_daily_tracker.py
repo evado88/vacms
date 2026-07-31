@@ -1,12 +1,21 @@
 from django.db import models
 from simple_history.models import HistoricalRecords
 
+from va_explorer.va_data_management.models.mixins import (
+    SUBMISSIONDATE_THEN_TODAY,
+    SubmissionTimestampMixin,
+)
 
-class CSADailyTracker(models.Model):
+
+class CSADailyTracker(SubmissionTimestampMixin):
     """
     Model generated from CSA_DAILY_TRACKER.xlsx (ODK form definition)
     and CSA_DAILY_TRACKER.csv (ODK Central export), aligned in style with Death.
     """
+
+    # Matches Pregnancy/PregnancyOutcome: fall back to the form's own date when
+    # a submission arrives without ``submissiondate``.
+    SUBMISSION_TIMESTAMP_SOURCES = SUBMISSIONDATE_THEN_TODAY
 
     # Persist the ODK CSV key so we can dedupe reliably (maps to CSV column: KEY)
     key = models.TextField(unique=True, db_index=True, null=True, blank=True)
@@ -110,6 +119,16 @@ class CSADailyTracker(models.Model):
     end = models.TextField(blank=True, null=True)
 
     history = HistoricalRecords()
+
+    class Meta:
+        indexes = [
+            # The rumour-surveillance export filters this column.
+            models.Index(
+                fields=["submitted_at"],
+                name="csa_tracker_submitted_at_idx",
+                condition=models.Q(submitted_at__isnull=False),
+            ),
+        ]
 
     def __str__(self):
         # keep it lightweight + consistent

@@ -4,6 +4,7 @@ from simple_history.models import HistoricalRecords
 from treebeard.mp_tree import MP_Node
 
 from va_explorer.va_data_management.models.data_quality import DataQualityIssueMember
+from va_explorer.va_data_management.models.mixins import SubmissionTimestampMixin
 
 
 class RepeatGroupQuerySet(models.QuerySet):
@@ -41,7 +42,7 @@ class SRSClusterLocation(MP_Node):
         return self.get_parent().id if self.get_parent() else None
 
 
-class Household(models.Model):
+class Household(SubmissionTimestampMixin):
     # UUID-style primary key (string)
     key = models.CharField(max_length=100, unique=True, db_index=True)
 
@@ -365,6 +366,16 @@ class Household(models.Model):
     )
 
     history = HistoricalRecords()
+
+    class Meta:
+        indexes = [
+            # Every dated export filters this column.
+            models.Index(
+                fields=["submitted_at"],
+                name="household_submitted_at_idx",
+                condition=models.Q(submitted_at__isnull=False),
+            ),
+        ]
 
     def __str__(self):
         return f"Household ({self.province}-{self.district}-{self.ward}-{self.hhn}-{self.hhn})"

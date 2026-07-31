@@ -194,6 +194,9 @@ class DeathFactory(DjangoModelFactory):
         model = Death
 
     key = factory.LazyFunction(lambda: str(uuid.uuid4()))
+    # Every ODK submission carries this; exports derive submitted_at from it, so
+    # a record built without one is invisible to dated downloads.
+    submissiondate = "2026-01-15T12:00:00Z"
     province = Faker("state")
     district = Faker("city")
     ward = Faker("city")
@@ -205,6 +208,7 @@ class HouseholdFactory(DjangoModelFactory):
         model = Household
 
     key = factory.LazyFunction(lambda: str(uuid.uuid4()))
+    submissiondate = "2026-01-15T12:00:00Z"
     province = Faker("state")
     district = Faker("city")
     ward = Faker("city")
@@ -216,6 +220,7 @@ class PregnancyFactory(DjangoModelFactory):
         model = Pregnancy
 
     key = factory.LazyFunction(lambda: str(uuid.uuid4()))
+    submissiondate = "2026-01-15T12:00:00Z"
     province = Faker("state")
     district = Faker("city")
     ward = Faker("city")
@@ -227,6 +232,7 @@ class PregnancyOutcomeFactory(DjangoModelFactory):
         model = PregnancyOutcome
 
     key = factory.LazyFunction(lambda: str(uuid.uuid4()))
+    submissiondate = "2026-01-15T12:00:00Z"
     province = Faker("state")
     district = Faker("city")
     ward = Faker("city")
