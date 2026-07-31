@@ -8,6 +8,21 @@ file (if you haven’t already during Installation & Setup’s Step 4) you can u
 give an idea for how the VA Explorer could be changed each of the options is
 documented below.
 
+## CSRF and cookie settings
+
+Production settings use secure session and CSRF cookies by default. The browser
+must therefore reach VACMS over HTTPS (or through a TLS-terminating proxy that
+sets `X-Forwarded-Proto: https`). Configure every browser origin that submits
+forms in `CSRF_TRUSTED_ORIGINS`, as a comma-separated list including the scheme,
+for example `https://vae.example.org`.
+
+For an instance intentionally served over plain HTTP during local development,
+set `SESSION_COOKIE_SECURE=False` and `CSRF_COOKIE_SECURE=False` in `.env`, then
+restart Django. Otherwise the browser will reject the secure CSRF cookie and
+POST forms will fail with `CSRF cookie not set`. Do not disable secure cookies
+for an internet-facing production deployment; fix HTTPS/proxy forwarding
+instead.
+
 ````{eval-rst}
 .. tabularcolumns:: |p{\dimexpr 0.30\linewidth-2\tabcolsep}|p{\dimexpr 0.25\linewidth-2\tabcolsep}|p{\dimexpr 0.45\linewidth-2\tabcolsep}|
 .. flat-table:: List of all configuration options for the base VA Explorer app along with default values and descriptions for each, plus external references where appropriate

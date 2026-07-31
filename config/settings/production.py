@@ -14,13 +14,19 @@ SECRET_KEY = env("DJANGO_SECRET_KEY", default=get_random_secret_key())
 
 ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=["va_explorer.org"])
 
-CSRF_TRUSTED_ORIGINS = ["https://*.moh.gov.zm"]
+# Keep deployment-specific hostnames out of source control.  This also allows
+# a staging host or an explicitly configured HTTP development endpoint to use
+# the same settings module without silently discarding its CSRF origin list.
+CSRF_TRUSTED_ORIGINS = env.list(
+    "CSRF_TRUSTED_ORIGINS",
+    default=["https://*.moh.gov.zm"],
+)
 
 # Security
 
 # Require HTTPS for session and CSRF cookies.
-SESSION_COOKIE_SECURE = True
-CSRF_COOKIE_SECURE = True
+SESSION_COOKIE_SECURE = env.bool("SESSION_COOKIE_SECURE", default=True)
+CSRF_COOKIE_SECURE = env.bool("CSRF_COOKIE_SECURE", default=True)
 
 # The upstream proxy terminates TLS and forwards requests over HTTP to Nginx,
 # which in turn passes X-Forwarded-Proto: https to Django. Declaring this
