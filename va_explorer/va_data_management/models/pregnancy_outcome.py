@@ -4,9 +4,16 @@ from simple_history.models import HistoricalRecords
 
 from va_explorer.va_data_management.models.data_quality import DataQualityIssueMember
 from va_explorer.va_data_management.models.household_census import RepeatGroupQuerySet
+from va_explorer.va_data_management.models.mixins import (
+    SUBMISSIONDATE_THEN_TODAY,
+    SubmissionTimestampMixin,
+)
 
 
-class PregnancyOutcome(models.Model):
+class PregnancyOutcome(SubmissionTimestampMixin):
+    # See Pregnancy: a subset of submissions carry no ``submissiondate``.
+    SUBMISSION_TIMESTAMP_SOURCES = SUBMISSIONDATE_THEN_TODAY
+
     # UUID-style primary key (string)
     key = models.CharField(max_length=100, unique=True, db_index=True)
 
@@ -225,6 +232,12 @@ class PregnancyOutcome(models.Model):
             models.Index(fields=["PO_41"], name="pregnancy_outcome_delivery_idx"),
             # Submission date used as a date-filter fallback in analytics views
             models.Index(fields=["submissiondate"], name="po_submissiondate_idx"),
+            # Every dated export filters this column.
+            models.Index(
+                fields=["submitted_at"],
+                name="preg_outcome_submitted_at_idx",
+                condition=models.Q(submitted_at__isnull=False),
+            ),
         ]
 
 

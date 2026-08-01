@@ -310,14 +310,6 @@ def _first_non_empty(*values):
     return ""
 
 
-def _apply_date_filter(qs, start_date, end_date, date_field):
-    if start_date:
-        qs = qs.filter(**{f"{date_field}__gte": start_date})
-    if end_date:
-        qs = qs.filter(**{f"{date_field}__lte": end_date})
-    return qs
-
-
 def _submission_date_bounds(start_date, end_date):
     """Return index-friendly inclusive-date bounds in the export timezone.
 
@@ -347,6 +339,14 @@ def _submission_date_bounds(start_date, end_date):
 
 
 def _apply_submission_date_filter(qs, start_date, end_date):
+    """Restrict to submissions inside an inclusive local-date range.
+
+    Every dataset filters the derived ``submitted_at`` column rather than a raw
+    form date. The raw columns are nullable text in several shapes, so comparing
+    them directly dropped records from dated downloads without any error —
+    ``Household.today`` is unset on every row, which made that export
+    unconditionally empty.
+    """
     start_bound, end_bound = _submission_date_bounds(start_date, end_date)
     if start_bound:
         qs = qs.filter(submitted_at__gte=start_bound)
@@ -403,7 +403,7 @@ def _matches_geography_branches(row, branches):
 
 def _export_rumor_surveillance(request, start_date, end_date, loc_query):
     queryset = CSADailyTracker.objects.exclude(desci__isnull=True).exclude(desci="")
-    queryset = _apply_date_filter(queryset, start_date, end_date, "today")
+    queryset = _apply_submission_date_filter(queryset, start_date, end_date)
 
     label_maps = {
         field: _build_odk_label_map(field)
@@ -477,40 +477,49 @@ def _export_non_va_dataset(request, dataset, params):
         "ward": "ward",
     }
 
-    if dataset == "household":
-        model = Household
-        queryset = _restrict_export_queryset_to_user_locations(
-            Household.objects.all(), request.user, _household_field_mapping
-        )
-        date_field = "today"
-        filename = "household_download.csv"
-    elif dataset == "pregnancy":
-        model = Pregnancy
-        queryset = _restrict_export_queryset_to_user_locations(
-            Pregnancy.objects.all(), request.user, field_mapping
-        )
-        date_field = "today"
-        filename = "pregnancy_download.csv"
-    elif dataset == "pregnancy_outcome":
-        model = PregnancyOutcome
-        queryset = _restrict_export_queryset_to_user_locations(
-            PregnancyOutcome.objects.all(), request.user, field_mapping
-        )
-        date_field = "today"
-        filename = "pregnancy_outcome_download.csv"
-    else:
-        model = Death
-        queryset = _restrict_export_queryset_to_user_locations(
-            Death.objects.all(), request.user, field_mapping
-        )
-        date_field = "today"
-        filename = "death_download.csv"
+    # Household has no "ea" column, so it scopes on a shorter geography branch;
+    # otherwise these datasets differ only by model and output filename.
+    death_entry = (Death, field_mapping, "death_download.csv")
+    dataset_entry = {
+        "household": (Household, _household_field_mapping, "household_download.csv"),
+        "pregnancy": (Pregnancy, field_mapping, "pregnancy_download.csv"),
+        "pregnancy_outcome": (
+            PregnancyOutcome,
+            field_mapping,
+            "pregnancy_outcome_download.csv",
+        ),
+        "death": death_entry,
+    }.get(dataset, death_entry)
+    model, location_field_mapping, filename = dataset_entry
 
+    queryset = _restrict_export_queryset_to_user_locations(
+        model.objects.all(), request.user, location_field_mapping
+    )
     if location_ids:
         queryset = (
             queryset.filter(geo_filter) if geo_filter.children else queryset.none()
         )
-    queryset = _apply_date_filter(queryset, start_date, end_date, date_field)
+    queryset = _apply_submission_date_filter(queryset, start_date, end_date)
+
+    # A record with no canonical timestamp can never satisfy submitted_at__gte,
+    # so it is invisible to every dated download. Report it alongside the row
+    # count so a silent shortfall shows up in the log rather than as a mystery
+    # empty export.
+    row_count = queryset.count()
+    log = logger.warning if row_count == 0 else logger.info
+    log(
+        "%s export requested: user=%s rows=%s format=csv date_basis=submitted_at "
+        "undated=%s export_tz=%s filters={locations:%s, start:%s, end:%s}",
+        dataset,
+        getattr(request.user, "email", None),
+        row_count,
+        model.objects.filter(submitted_at__isnull=True).count(),
+        settings.VA_EXPORT_TIME_ZONE,
+        location_ids or None,
+        start_date,
+        end_date,
+    )
+
     columns = _model_export_columns(model)
     can_view_pii = request.user.can_view_pii
     rows = _iter_queryset_rows(
@@ -717,7 +726,10 @@ def _export_va_dataset(request, params):
         for model, source_label, _queryset in source_querysets
     }
 
-    logger.info(
+    # An export that returns nothing is indistinguishable from a healthy one at
+    # the client, so it must not be logged at the same level as a healthy one.
+    log = logger.warning if row_count == 0 else logger.info
+    log(
         "VA export requested: user=%s rows=%s va_rows=%s vasa_rows=%s "
         "record_type=%s format=%s date_basis=submitted_at "
         "undated_va=%s undated_vasa=%s export_tz=%s "

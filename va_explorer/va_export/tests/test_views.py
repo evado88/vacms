@@ -412,7 +412,10 @@ class TestAPIView:
     def test_household_csv_download(self, user: User):
         build_test_db()
         Household.objects.create(
-            key="hh-export-1", today="2026-01-01", province="Central"
+            key="hh-export-1",
+            submissiondate="2026-01-01T12:00:00Z",
+            today="2026-01-01",
+            province="Central",
         )
 
         c = Client()
@@ -449,6 +452,7 @@ class TestAPIView:
         district_b.add_child(name="Shared Ward", location_type="ward")
         Household.objects.create(
             key="hh-lineage-a",
+            submissiondate="2026-01-01T12:00:00Z",
             today="2026-01-01",
             province="Lineage Province",
             district="Lineage District A",
@@ -456,6 +460,7 @@ class TestAPIView:
         )
         Household.objects.create(
             key="hh-lineage-b",
+            submissiondate="2026-01-01T12:00:00Z",
             today="2026-01-01",
             province="Lineage Province",
             district="Lineage District B",
@@ -486,6 +491,7 @@ class TestAPIView:
         district_b.add_child(name="Shared Ward", location_type="ward")
         Household.objects.create(
             key="hh-scope-a",
+            submissiondate="2026-01-01T12:00:00Z",
             today="2026-01-01",
             province="Scoped Province",
             district="Scoped District A",
@@ -493,6 +499,7 @@ class TestAPIView:
         )
         Household.objects.create(
             key="hh-scope-b",
+            submissiondate="2026-01-01T12:00:00Z",
             today="2026-01-01",
             province="Scoped Province",
             district="Scoped District B",
@@ -510,6 +517,7 @@ class TestAPIView:
     def test_non_va_download_redacts_pii(self, user: User):
         Household.objects.create(
             key="hh-pii",
+            submissiondate="2026-01-01T12:00:00Z",
             today="2026-01-01",
             respondent="Private Name",
             hh_gps="-15.4000 28.3000",
@@ -529,6 +537,7 @@ class TestAPIView:
         user.can_view_pii = True
         Household.objects.create(
             key="hh-pii-authorized",
+            submissiondate="2026-01-01T12:00:00Z",
             today="2026-01-01",
             respondent="Visible Name",
             hh_gps="-15.4000 28.3000",
@@ -685,7 +694,12 @@ class TestAPIView:
             "va_explorer.va_data_management.tasks.assign_death_ids_task.delay",
             lambda: None,
         )
-        Death.objects.create(key="death-export-1", today="2026-01-04", DE_03="Decedent")
+        Death.objects.create(
+            key="death-export-1",
+            submissiondate="2026-01-04T12:00:00Z",
+            today="2026-01-04",
+            DE_03="Decedent",
+        )
 
         c = Client()
         c.force_login(user=user)
@@ -1733,3 +1747,132 @@ class TestAPIView:
         )
         assert invalid_response.status_code == 400
         assert "va_record_type" in invalid_response.json()["errors"]
+
+
+class TestSubmissionDateFiltering:
+    """Every dataset filters the derived ``submitted_at``, not a raw form date.
+
+    Regression cover for downloads that returned a valid but empty ZIP:
+    ``Household.today`` is unset on every real row, so filtering it excluded
+    every household record, and VA/VASA rows whose ``submitted_at`` was never
+    backfilled were invisible for the same reason.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _no_death_id_task(self, monkeypatch):
+        monkeypatch.setattr(
+            "va_explorer.va_data_management.tasks.assign_death_ids_task.delay",
+            lambda *args, **kwargs: None,
+        )
+
+    def test_household_exports_rows_that_have_no_today_value(self, user: User):
+        # Exactly the production shape: submissiondate set, today never captured.
+        Household.objects.create(
+            key="hh-no-today",
+            submissiondate="2026-01-15T12:00:00Z",
+            today=None,
+            province="Central",
+        )
+        client = Client()
+        client.force_login(user=user)
+
+        response = _post_export(client, data={"dataset": "household"})
+
+        rows = _zip_csv_rows(response, "household_download.csv")
+        assert [row["key"] for row in rows] == ["hh-no-today"]
+
+    @pytest.mark.parametrize(
+        ("dataset", "model", "member"),
+        [
+            ("household", Household, "household_download.csv"),
+            ("pregnancy", Pregnancy, "pregnancy_download.csv"),
+            ("pregnancy_outcome", PregnancyOutcome, "pregnancy_outcome_download.csv"),
+            ("death", Death, "death_download.csv"),
+        ],
+    )
+    def test_record_without_a_canonical_timestamp_is_excluded(
+        self, user: User, dataset, model, member
+    ):
+        record = model.objects.create(
+            key=f"{dataset}-undated", submissiondate="2026-01-15T12:00:00Z"
+        )
+        client = Client()
+        client.force_login(user=user)
+
+        assert (
+            len(_zip_csv_rows(_post_export(client, {"dataset": dataset}), member)) == 1
+        )
+
+        # Simulate a row imported before the canonical column existed.
+        model.objects.filter(pk=record.pk).update(submitted_at=None)
+
+        assert _zip_csv_rows(_post_export(client, {"dataset": dataset}), member) == []
+
+    def test_pregnancy_falls_back_to_today_when_submissiondate_is_missing(
+        self, user: User
+    ):
+        # The day-first values in the collected data only ever appear on rows
+        # that have no submissiondate at all.
+        Pregnancy.objects.create(
+            key="preg-day-first", submissiondate="", today="02/09/2025"
+        )
+        client = Client()
+        client.force_login(user=user)
+
+        response = _post_export(
+            client,
+            data={
+                "dataset": "pregnancy",
+                "start_date": "2025-09-02",
+                "end_date": "2025-09-02",
+            },
+        )
+
+        rows = _zip_csv_rows(response, "pregnancy_download.csv")
+        assert [row["key"] for row in rows] == ["preg-day-first"]
+
+    def test_date_range_bounds_follow_the_export_timezone(self, user: User):
+        # 23:30 Lusaka on the 2nd is 21:30 UTC on the 2nd; bucketing in UTC
+        # would still include it, so pick an instant that only lands on the
+        # right local day: 22:30 UTC on the 2nd is 00:30 Lusaka on the 3rd.
+        Household.objects.create(key="hh-inside", submissiondate="2025-09-02T21:30:00Z")
+        Household.objects.create(
+            key="hh-next-local-day", submissiondate="2025-09-02T22:30:00Z"
+        )
+        client = Client()
+        client.force_login(user=user)
+
+        response = _post_export(
+            client,
+            data={
+                "dataset": "household",
+                "start_date": "2025-09-02",
+                "end_date": "2025-09-02",
+            },
+        )
+
+        rows = _zip_csv_rows(response, "household_download.csv")
+        assert [row["key"] for row in rows] == ["hh-inside"]
+
+    def test_empty_export_is_logged_at_warning(self, user: User, caplog):
+        Household.objects.create(
+            key="hh-outside-range", submissiondate="2020-01-01T12:00:00Z"
+        )
+        client = Client()
+        client.force_login(user=user)
+
+        with caplog.at_level(logging.INFO, logger="va_explorer.va_export.views"):
+            response = _post_export(
+                client,
+                data={
+                    "dataset": "household",
+                    "start_date": "2026-01-01",
+                    "end_date": "2026-01-31",
+                },
+            )
+        # Consume the stream so the export actually runs to completion.
+        assert _zip_csv_rows(response, "household_download.csv") == []
+
+        empty = [r for r in caplog.records if "rows=0" in r.getMessage()]
+        assert empty, "an empty export must be logged"
+        assert empty[0].levelno == logging.WARNING

@@ -3,9 +3,10 @@ from django.db import models
 from simple_history.models import HistoricalRecords
 
 from va_explorer.va_data_management.models.data_quality import DataQualityIssueMember
+from va_explorer.va_data_management.models.mixins import SubmissionTimestampMixin
 
 
-class Death(models.Model):
+class Death(SubmissionTimestampMixin):
 
     # Persist the CSV key so we can dedupe reliably
     key = models.TextField(unique=True, db_index=True, null=True, blank=True)
@@ -160,6 +161,12 @@ class Death(models.Model):
             models.Index(fields=["death_id"], name="death_id_idx"),
             # Date of death used for mortality trend grouping/filtering
             models.Index(fields=["DE_06"], name="death_date_idx"),
+            # Every dated export filters this column.
+            models.Index(
+                fields=["submitted_at"],
+                name="death_submitted_at_idx",
+                condition=models.Q(submitted_at__isnull=False),
+            ),
         ]
         constraints = [
             # Death IDs are minted by utils/death_ids.py; the DB backstop

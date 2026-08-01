@@ -1,5 +1,99 @@
 # Results
 
+## 2026-07-31 — `/va_export/` downloads returned a valid ZIP with zero records
+
+### Problem
+
+VA/VASA downloads returned an empty CSV in production (worked locally); household
+returned an empty CSV everywhere. No error surfaced — valid ZIP, header row only.
+
+**Root cause:** every `/va_export/` download is mandatorily date-filtered
+(`forms.py` requires `start_date`/`end_date` for any non-ID export), and the datasets
+filtered **three different date bases**, two of them raw nullable text columns compared
+lexicographically:
+
+| Dataset | Filtered | Result |
+|---|---|---|
+| VerbalAutopsy, VASA | `submitted_at` | correct, but NULL until backfilled |
+| Household | `today` | **NULL on all 152,270 rows → always zero** |
+| Pregnancy, PregnancyOutcome, Death, CSADailyTracker | `today` | worked only for ISO values |
+
+Migration `0057` added `submitted_at` to VA/VASA as a plain `AddField(null=True)` with no
+data migration, so any environment that ran `migrate` without the separate
+`backfill_va_submitted_at` command had every VA/VASA row invisible to dated exports. That
+is the production-only half. Household was broken everywhere because `today` is never
+populated by the census form. A further 292 Pregnancy rows stored `today` as `DD/MM/YYYY`
+and sorted outside every ISO range.
+
+### Fix
+
+One canonical `submitted_at` derived from `submissiondate` on every ODK form model, and a
+single date filter for the whole export.
+
+- `models/mixins.py` — new `SubmissionTimestampMixin` (extracted from `BaseVerbalAutopsy`,
+  which now inherits it) with a declarative `SUBMISSION_TIMESTAMP_SOURCES` of
+  `(field_name, parser)` pairs. Pregnancy, PregnancyOutcome and CSADailyTracker declare
+  `today` as a fallback; VA/VASA/Household/Death do not.
+- `utils/submission_timestamp.py` — added `parse_form_date()`, tolerant of day-first
+  `DD/MM/YYYY`, used **only** for fallback columns. `parse_submission_timestamp()` is
+  unchanged, so ODK Central values stay strictly validated.
+- `migrations/0059` — `AddField` on the five operational models + their `historical*`
+  tables, and a `RunPython` backfilling **all seven** models (including the VA/VASA rows
+  `0057` left NULL). Non-atomic, batched, idempotent; skips unparseable values with a
+  warning rather than aborting an unattended `migrate`.
+- `migrations/0060` — partial `submitted_at` indexes, `AddIndexConcurrently`.
+- `va_export/views.py` — all paths use `_apply_submission_date_filter`; the
+  string-comparison `_apply_date_filter` is deleted. The four near-identical non-VA
+  branches collapse into one table-driven lookup. Zero-row exports now log at WARNING, and
+  the non-VA branch reports row/undated counts (previously it logged nothing).
+- `backfill_va_submitted_at` — widened to every form model, honours each model's declared
+  sources, and handles models without `all_objects`.
+
+### Verification
+
+Migration on the live DB: **0 blank, 0 invalid** across 247,350 rows
+(Household 152,270 · CSADailyTracker 76,736 · PregnancyOutcome 8,732 · Pregnancy 6,360 ·
+Death 3,252; VA/VASA already populated).
+
+End-to-end downloads through the view:
+
+| Dataset | Before | After |
+|---|---|---|
+| household | **0** | **152,270** |
+| pregnancy | 6,068 | **6,360** |
+| pregnancy_outcome | 8,732 | 8,732 |
+| death | 3,252 | 3,252 |
+| rumor_surveillance | 4,859 | 4,859 |
+| verbalautopsy (VA+VASA) | 0 in production | 3,808 |
+
+Tests: 147 passed (`va_export` + all submitted_at suites). 90% coverage on the export
+modules; mixin, parser and backfill command at 100%. `pre-commit` clean.
+Five failures in `vacms`/`home` were confirmed pre-existing by re-running them in a clean
+`git worktree` at HEAD.
+
+### Deployment notes
+
+- Migrations must run before the code deploy is exercised; `0059` is the fix for
+  production's empty VA/VASA export, so `migrate` alone repairs it.
+- `0060` uses `AddIndexConcurrently` (cannot run in a transaction); run off-peak.
+- `python manage.py backfill_va_submitted_at --dry-run` should report `updated=0 invalid=0`
+  afterwards.
+- Unrelated but confirmed drift: the collected `static/js/va_export.js` in `STATIC_ROOT` is
+  a May-25 build serving an obsolete XHR path against the current template. Run
+  `collectstatic` + `python -m whitenoise.compress "$STATIC_ROOT"` (collectstatic does not
+  regenerate `.gz`).
+
+### Still open
+
+`va_export` hand-rolls its own location scoping rather than using the shared
+`restrict_queryset_to_user_locations()` helper, and `_tree_geography_branches` skips nodes
+whose `location_type` is not in the field mapping — the tree holds only
+`country/province/district/facility` while the mappings expect
+`province/district/constituency/ward/ea`, so a user restricted to a facility or country
+node makes `_restrict_export_queryset_to_user_locations` return `.none()`. No local user
+has any `location_restrictions`, so none of that code has ever executed here. Needs
+production data before changing access-control code.
+
 ## 2026-07-29 — Literal `"nan"` in Death records (superseded)
 
 > This initial implementation report is retained for provenance but its blanket

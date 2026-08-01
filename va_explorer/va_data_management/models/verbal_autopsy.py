@@ -4,11 +4,7 @@ import hashlib
 import logging
 
 from django.conf import settings
-from django.core.exceptions import (
-    FieldDoesNotExist,
-    ObjectDoesNotExist,
-    ValidationError,
-)
+from django.core.exceptions import FieldDoesNotExist, ObjectDoesNotExist
 from django.db import models
 from django.db.models import Count, JSONField, Q
 from simple_history.models import HistoricalRecords
@@ -27,7 +23,7 @@ from ..constants import (
     _select_vaccines,
 )
 from ..utils.multi_select import MultiSelectField
-from ..utils.submission_timestamp import parse_submission_timestamp
+from .mixins import SubmissionTimestampMixin
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +56,7 @@ class Location(MP_Node):
         return self.get_parent().id
 
 
-class BaseVerbalAutopsy(SoftDeletionModel):
+class BaseVerbalAutopsy(SubmissionTimestampMixin, SoftDeletionModel):
     """Shared field + helper definitions for WHO-VA-shaped instruments.
 
     Concrete instruments (``VerbalAutopsy``, ``VASA``) inherit every WHO
@@ -69,53 +65,15 @@ class BaseVerbalAutopsy(SoftDeletionModel):
     FKs, history tracking, duplicate detection, Meta indexes) live on the
     concrete subclasses. Because this base is abstract, its shared fields
     materialise directly on both concrete tables.
+
+    ``submitted_at`` and its derivation come from
+    :class:`~va_explorer.va_data_management.models.mixins.SubmissionTimestampMixin`,
+    shared with the operational forms so every dated export filters the same
+    kind of column.
     """
 
     class Meta:
         abstract = True
-
-    def synchronize_submitted_at(self):
-        """Refresh the canonical timestamp derived from raw ODK provenance.
-
-        Raises ``ValidationError`` for a malformed non-blank raw value. Ingestion
-        callers catch it and flag the record so the bad value stays visible and
-        remediable; ``save()`` deliberately does not, see below.
-        """
-        self.submitted_at = parse_submission_timestamp(self.submissiondate)
-        return self.submitted_at
-
-    def save(self, *args, **kwargs):
-        # ``update_fields`` is Model.save()'s 4th positional parameter; collapse
-        # it into kwargs so there is only one form to reason about below.
-        if len(args) >= 4:
-            kwargs["update_fields"] = args[3]
-            args = args[:3]
-        update_fields = kwargs.get("update_fields")
-
-        # Only re-derive when this save actually writes the raw value. An
-        # unrelated write must not touch the canonical column: soft deletion is
-        # implemented as ``save()`` (va_explorer/models.py), so re-deriving
-        # unconditionally would let one bad legacy value block deletes, edits,
-        # re-coding, and geocoding for that record forever.
-        if update_fields is None or "submissiondate" in update_fields:
-            try:
-                self.synchronize_submitted_at()
-            except ValidationError:
-                # ``submitted_at`` is purely derived from ``submissiondate``.
-                # If the source is unparseable the derived value is unknown, and
-                # retaining a stale timestamp would make exports misreport when
-                # this record arrived. Null it and leave a trace instead.
-                logger.warning(
-                    "%s %s: unparseable submissiondate %r; submitted_at cleared",
-                    type(self).__name__,
-                    self.pk,
-                    self.submissiondate,
-                )
-                self.submitted_at = None
-            if update_fields is not None:
-                kwargs["update_fields"] = set(update_fields) | {"submitted_at"}
-
-        super().save(*args, **kwargs)
 
     # The VA fields collected as part of the WHO VA form or local versions
     # TODO: Need an approach that supports different variants in different countries
@@ -138,9 +96,6 @@ class BaseVerbalAutopsy(SoftDeletionModel):
     hospital = models.TextField("Hospital", blank=True)
     community_va = models.TextField("Community VA", blank=True, null=True)
     submissiondate = models.TextField("Submission Date", blank=True)
-    submitted_at = models.DateTimeField(
-        "Canonical submission timestamp", null=True, blank=True, editable=False
-    )
     Id10002 = models.TextField(
         "Is this a region of high HIV/AIDS mortality?", blank=True
     )

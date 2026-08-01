@@ -3,9 +3,16 @@ from django.db import models
 from simple_history.models import HistoricalRecords
 
 from va_explorer.va_data_management.models.data_quality import DataQualityIssueMember
+from va_explorer.va_data_management.models.mixins import (
+    SUBMISSIONDATE_THEN_TODAY,
+    SubmissionTimestampMixin,
+)
 
 
-class Pregnancy(models.Model):
+class Pregnancy(SubmissionTimestampMixin):
+    # A subset of pregnancy submissions carry no ``submissiondate``; the form's
+    # own ``today`` column is the only record of when they arrived.
+    SUBMISSION_TIMESTAMP_SOURCES = SUBMISSIONDATE_THEN_TODAY
 
     # Persist the CSV key so we can dedupe reliably
     key = models.TextField(unique=True, db_index=True, null=True, blank=True)
@@ -135,6 +142,12 @@ class Pregnancy(models.Model):
             models.Index(fields=["created"], name="pregnancy_created_idx"),
             # LMP date used for pregnancy event trend grouping/filtering.
             models.Index(fields=["PE_09A"], name="pregnancy_lmp_idx"),
+            # Every dated export filters this column.
+            models.Index(
+                fields=["submitted_at"],
+                name="pregnancy_submitted_at_idx",
+                condition=models.Q(submitted_at__isnull=False),
+            ),
         ]
 
     def __str__(self):
