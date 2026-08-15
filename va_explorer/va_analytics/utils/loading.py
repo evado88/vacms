@@ -849,13 +849,31 @@ def _get_filtered_vasa_queryset(
 
 
 def _filter_params_from_request(request):
+    region_of_interest = _request_param(request, "region_of_interest", "") or None
+    if not region_of_interest:
+        geography_level = _compact_spaces(
+            _request_param(request, "geography_level", "")
+        ).lower()
+        geography_value = _compact_spaces(
+            _request_param(request, "geography_value", "")
+        )
+        level_label = {
+            "province": "Province",
+            "district": "District",
+            "constituency": "Constituency",
+            "ward": "Ward",
+            "ea": "EA",
+        }.get(geography_level)
+        if level_label and geography_value:
+            region_of_interest = f"{geography_value} {level_label}"
+
     return {
         "start_date": _request_param(request, "start_date", "1901-01-01")
         or "1901-01-01",
         "end_date": _request_param(request, "end_date", "")
         or datetime.today().strftime("%Y-%m-%d"),
         "cause_of_death": _request_param(request, "cause_of_death", "") or None,
-        "region_of_interest": _request_param(request, "region_of_interest", "") or None,
+        "region_of_interest": region_of_interest,
         "age": _request_param(request, "age", "") or None,
         "sex": _request_param(request, "sex", "") or None,
         "source": _request_param(request, "source", "") or None,

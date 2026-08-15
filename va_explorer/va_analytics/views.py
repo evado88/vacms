@@ -7,6 +7,7 @@ from datetime import timezone as dt_timezone
 from statistics import median
 
 import pandas as pd
+from django.conf import settings
 from django.contrib.auth.mixins import PermissionRequiredMixin
 from django.core.cache import cache
 from django.db.models import (
@@ -66,12 +67,16 @@ from va_explorer.va_data_management.utils.date_parsing import (
     get_interview_dates,
     parse_date,
 )
-from va_explorer.va_data_management.utils.geopoint import parse_geopoint
+from va_explorer.va_data_management.utils.geopoint import (
+    allocate_proportional_limits,
+    parse_geopoint,
+)
 from va_explorer.va_data_management.utils.location_access import (
     restrict_queryset_to_user_locations,
 )
 
 from .utils.loading import (
+    _derive_va_geo_levels,
     _resolve_geo_name,
     get_filtered_va_queryset,
     get_filtered_vasa_queryset,
@@ -82,6 +87,14 @@ logger = logging.getLogger(__name__)
 
 GPS_DEFAULT_LIMIT = 2000
 GPS_CACHE_TIMEOUT = 3600  # 1 hour
+
+GPS_HIERARCHY = (
+    ("province", "Province"),
+    ("district", "District"),
+    ("constituency", "Constituency"),
+    ("ward", "Ward"),
+    ("ea", "EA"),
+)
 
 TREND_SUBMISSION_HARD_START_DATE = DASHBOARD_CHART_START_ISO
 PREGNANCY_TREND_HARD_START_DATE = DASHBOARD_CHART_START_ISO
@@ -676,21 +689,193 @@ def _build_map_counts(filtered_qs):
     return province_data, district_data
 
 
-def _gps_cache_key(*, event_type, qs_signature, limit, offset, pii):
+def _outcomes_gps_max_points():
+    try:
+        configured = int(settings.OUTCOMES_DASHBOARD_GPS_MAX_POINTS)
+    except (AttributeError, TypeError, ValueError):
+        configured = 5000
+    return max(0, configured)
+
+
+def _gps_hierarchy_for_view(map_view):
+    normalized = (map_view or "Province").strip().lower()
+    level_index = {
+        "province": 0,
+        "district": 1,
+        "constituency": 2,
+        "ward": 3,
+        "ea": 4,
+    }.get(normalized, 0)
+    return GPS_HIERARCHY[: level_index + 1]
+
+
+def _gps_cache_key(
+    *,
+    event_type,
+    qs_signature,
+    limit,
+    offset,
+    pii,
+    hierarchy=(),
+    sources=(),
+):
     """Build a PII-aware cache key for a GPS points response."""
     raw = json.dumps(
         {
+            "version": 2,
             "et": event_type,
             "qs": qs_signature,
             "limit": limit,
             "offset": offset,
             "pii": bool(pii),
+            "hierarchy": list(hierarchy),
+            "sources": list(sources),
         },
         sort_keys=True,
         default=str,
     )
     digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()
     return f"gps_points:{event_type}:{digest}"
+
+
+def _normalized_geo_value(value, level_label):
+    resolved = _resolve_geo_name(value, level_label)
+    return " ".join(str(resolved or "").split()).strip()
+
+
+def _normalized_geo_key(geo_values, hierarchy):
+    return tuple(
+        _normalized_geo_value(geo_values.get(field_name), level_label).casefold()
+        for field_name, level_label in hierarchy
+    )
+
+
+def _record_geo_values(record, hierarchy):
+    return {
+        field_name: _normalized_geo_value(getattr(record, field_name, ""), level_label)
+        for field_name, level_label in hierarchy
+    }
+
+
+def _serialize_gps_record(
+    record,
+    *,
+    gps_field,
+    event_type,
+    geo_values=None,
+    point_id_prefix=None,
+):
+    parsed = parse_geopoint(getattr(record, gps_field, None))
+    if not parsed:
+        return None
+    point = {
+        "id": f"{point_id_prefix or event_type}_{record.pk}",
+        "event_type": event_type,
+        "latitude": parsed["latitude"],
+        "longitude": parsed["longitude"],
+    }
+    if parsed.get("altitude") is not None:
+        point["altitude"] = parsed["altitude"]
+    if parsed.get("accuracy") is not None:
+        point["accuracy"] = parsed["accuracy"]
+    for field_name, value in (geo_values or {}).items():
+        point[field_name] = (value or "").strip()
+    return point
+
+
+def _gps_group_allocations(group_counts, *, limit, offset):
+    group_keys = sorted(group_counts)
+    capacities = [group_counts[key] for key in group_keys]
+    skip_counts = allocate_proportional_limits(capacities, offset)
+    remaining = [
+        max(0, capacity - skipped) for capacity, skipped in zip(capacities, skip_counts)
+    ]
+    take_counts = allocate_proportional_limits(remaining, limit)
+    return (
+        group_keys,
+        dict(zip(group_keys, skip_counts)),
+        dict(zip(group_keys, take_counts)),
+    )
+
+
+def _build_hierarchical_gps_points(
+    filtered_qs,
+    *,
+    gps_field,
+    event_type,
+    hierarchy,
+    limit,
+    offset,
+):
+    model = filtered_qs.model
+    model_field_names = {field.name for field in model._meta.get_fields()}
+    tooltip_fields = [
+        field_name
+        for field_name, _label in GPS_HIERARCHY
+        if field_name in model_field_names
+    ]
+    hierarchy_fields = [field_name for field_name, _label in hierarchy]
+    gps_qs = filtered_qs.exclude(**{f"{gps_field}__isnull": True}).exclude(
+        **{gps_field: ""}
+    )
+
+    group_counts = {}
+    group_rows = (
+        gps_qs.values(*hierarchy_fields)
+        .annotate(count=Count("pk"))
+        .order_by(*hierarchy_fields)
+    )
+    for row in group_rows:
+        geo_values = {
+            field_name: row.get(field_name) for field_name in hierarchy_fields
+        }
+        key = _normalized_geo_key(geo_values, hierarchy)
+        group_counts[key] = group_counts.get(key, 0) + (row.get("count") or 0)
+
+    total_with_gps = sum(group_counts.values())
+    _group_keys, skip_by_group, take_by_group = _gps_group_allocations(
+        group_counts, limit=limit, offset=offset
+    )
+    if not any(take_by_group.values()):
+        return [], total_with_gps, total_with_gps > offset
+
+    only_fields = list(
+        dict.fromkeys(["id", gps_field, *tooltip_fields, *hierarchy_fields])
+    )
+    records = (
+        gps_qs.select_related(None).only(*only_fields).order_by(*hierarchy_fields, "id")
+    )
+    skipped_by_group = dict.fromkeys(group_counts, 0)
+    collected_by_group = dict.fromkeys(group_counts, 0)
+    points = []
+    for record in records.iterator(chunk_size=500):
+        active_geo = _record_geo_values(record, hierarchy)
+        key = _normalized_geo_key(active_geo, hierarchy)
+        if skipped_by_group.get(key, 0) < skip_by_group.get(key, 0):
+            skipped_by_group[key] = skipped_by_group.get(key, 0) + 1
+            continue
+        if collected_by_group.get(key, 0) >= take_by_group.get(key, 0):
+            continue
+
+        tooltip_geo = {
+            field_name: " ".join(
+                str(getattr(record, field_name, "") or "").split()
+            ).strip()
+            for field_name, _level_label in GPS_HIERARCHY
+            if field_name in tooltip_fields
+        }
+        point = _serialize_gps_record(
+            record,
+            gps_field=gps_field,
+            event_type=event_type,
+            geo_values=tooltip_geo,
+        )
+        if point is None:
+            continue
+        points.append(point)
+        collected_by_group[key] = collected_by_group.get(key, 0) + 1
+
+    return points, total_with_gps, total_with_gps > (offset + len(points))
 
 
 def _build_gps_points(
@@ -701,6 +886,7 @@ def _build_gps_points(
     limit=GPS_DEFAULT_LIMIT,
     offset=0,
     cache_signature=None,
+    hierarchy=(),
 ):
     """Extract parsed GPS points from a queryset.
 
@@ -724,6 +910,7 @@ def _build_gps_points(
             limit=limit,
             offset=offset,
             pii=True,
+            hierarchy=tuple(field_name for field_name, _label in hierarchy),
         )
         cached = cache.get(cache_key)
         if cached is not None:
@@ -731,10 +918,25 @@ def _build_gps_points(
     else:
         cache_key = None
 
+    if hierarchy:
+        result = _build_hierarchical_gps_points(
+            filtered_qs,
+            gps_field=gps_field,
+            event_type=event_type,
+            hierarchy=hierarchy,
+            limit=limit,
+            offset=offset,
+        )
+        if cache_key:
+            cache.set(cache_key, result, timeout=GPS_CACHE_TIMEOUT)
+        return result
+
     model = filtered_qs.model
     model_field_names = {f.name for f in model._meta.get_fields()}
     geo_fields = [
-        f for f in ("province", "district", "ward", "ea") if f in model_field_names
+        field_name
+        for field_name, _label in GPS_HIERARCHY
+        if field_name in model_field_names
     ]
     only_fields = ["id", gps_field] + geo_fields
 
@@ -752,22 +954,17 @@ def _build_gps_points(
     for record in qs.iterator(chunk_size=500):
         if len(points) >= limit:
             break
-        raw = getattr(record, gps_field, None)
-        parsed = parse_geopoint(raw)
-        if not parsed:
+        point = _serialize_gps_record(
+            record,
+            gps_field=gps_field,
+            event_type=event_type,
+            geo_values={
+                field_name: (getattr(record, field_name, "") or "").strip()
+                for field_name in geo_fields
+            },
+        )
+        if point is None:
             continue
-        point = {
-            "id": f"{event_type}_{record.pk}",
-            "event_type": event_type,
-            "latitude": parsed["latitude"],
-            "longitude": parsed["longitude"],
-        }
-        if parsed.get("altitude") is not None:
-            point["altitude"] = parsed["altitude"]
-        if parsed.get("accuracy") is not None:
-            point["accuracy"] = parsed["accuracy"]
-        for f in geo_fields:
-            point[f] = (getattr(record, f, "") or "").strip()
         points.append(point)
 
     truncated = total_with_gps > (offset + len(points))
@@ -777,18 +974,20 @@ def _build_gps_points(
     return result
 
 
-def _gps_request_params(request):
+def _gps_request_params(
+    request, *, default_limit=GPS_DEFAULT_LIMIT, max_limit=GPS_DEFAULT_LIMIT
+):
     """Parse common GPS query parameters from a request."""
     include = (request.GET.get("include_gps_points") or "").lower() == "true"
     try:
-        limit = int(request.GET.get("gps_limit") or GPS_DEFAULT_LIMIT)
+        limit = int(request.GET.get("gps_limit") or default_limit)
     except (TypeError, ValueError):
-        limit = GPS_DEFAULT_LIMIT
+        limit = default_limit
     try:
         offset = int(request.GET.get("gps_offset") or 0)
     except (TypeError, ValueError):
         offset = 0
-    return include, max(0, min(limit, GPS_DEFAULT_LIMIT)), max(0, offset)
+    return include, max(0, min(limit, max_limit)), max(0, offset)
 
 
 def _qs_cache_signature(filtered_qs):
@@ -799,8 +998,182 @@ def _qs_cache_signature(filtered_qs):
         return None
 
 
+def _resolved_gps_queryset(filtered_qs, gps_field):
+    model_field_names = {field.name for field in filtered_qs.model._meta.get_fields()}
+    required_fields = [
+        "id",
+        gps_field,
+        "community_va",
+        "province",
+        "district",
+        "constituency",
+        "ward",
+        "ea",
+        "area",
+        "hospital",
+        "location",
+        "cluster",
+    ]
+    only_fields = [
+        field_name for field_name in required_fields if field_name in model_field_names
+    ]
+    related_fields = [
+        field_name
+        for field_name in ("location", "cluster")
+        if field_name in model_field_names
+    ]
+    qs = filtered_qs.exclude(**{f"{gps_field}__isnull": True}).exclude(
+        **{gps_field: ""}
+    )
+    if related_fields:
+        qs = qs.select_related(*related_fields)
+    return qs.only(*only_fields).order_by("id")
+
+
+def _derived_record_geo_values(record, resolver):
+    derived = resolver(record)
+    return {
+        field_name: _normalized_geo_value(derived.get(level_label), level_label)
+        for field_name, level_label in GPS_HIERARCHY
+    }
+
+
+def _derived_record_display_geo_values(record, resolved_geo_values):
+    return {
+        field_name: (
+            " ".join(str(getattr(record, field_name, "") or "").split()).strip()
+            or resolved_geo_values.get(field_name, "")
+        )
+        for field_name, _level_label in GPS_HIERARCHY
+    }
+
+
+def _build_resolved_combined_gps_points(
+    sources,
+    *,
+    hierarchy,
+    limit,
+    offset,
+    geo_resolver,
+):
+    source_signatures = tuple(
+        (
+            qs.model._meta.label_lower,
+            gps_field,
+            event_type,
+            _qs_cache_signature(qs),
+        )
+        for qs, gps_field, event_type in sources
+    )
+    cache_key = _gps_cache_key(
+        event_type="combined",
+        qs_signature=None,
+        limit=limit,
+        offset=offset,
+        pii=True,
+        hierarchy=tuple(field_name for field_name, _label in hierarchy),
+        sources=source_signatures,
+    )
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    prepared_sources = [
+        (
+            _resolved_gps_queryset(qs, gps_field),
+            gps_field,
+            event_type,
+            qs.model._meta.model_name,
+        )
+        for qs, gps_field, event_type in sources
+    ]
+    counts_by_group_source = {}
+    group_counts = {}
+    for source_index, (qs, _gps_field, _event_type, _source_key) in enumerate(
+        prepared_sources
+    ):
+        for record in qs.iterator(chunk_size=250):
+            geo_values = _derived_record_geo_values(record, geo_resolver)
+            group_key = _normalized_geo_key(geo_values, hierarchy)
+            pair = (group_key, source_index)
+            counts_by_group_source[pair] = counts_by_group_source.get(pair, 0) + 1
+            group_counts[group_key] = group_counts.get(group_key, 0) + 1
+
+    total_with_gps = sum(group_counts.values())
+    group_keys, skip_by_group, take_by_group = _gps_group_allocations(
+        group_counts, limit=limit, offset=offset
+    )
+
+    skip_by_pair = {}
+    take_by_pair = {}
+    for group_key in group_keys:
+        source_counts = [
+            counts_by_group_source.get((group_key, source_index), 0)
+            for source_index in range(len(prepared_sources))
+        ]
+        source_skips = allocate_proportional_limits(
+            source_counts, skip_by_group.get(group_key, 0)
+        )
+        remaining = [
+            max(0, count - skipped)
+            for count, skipped in zip(source_counts, source_skips)
+        ]
+        source_takes = allocate_proportional_limits(
+            remaining, take_by_group.get(group_key, 0)
+        )
+        for source_index, skipped in enumerate(source_skips):
+            skip_by_pair[(group_key, source_index)] = skipped
+        for source_index, taken in enumerate(source_takes):
+            take_by_pair[(group_key, source_index)] = taken
+
+    skipped_by_pair = dict.fromkeys(counts_by_group_source, 0)
+    collected_by_pair = dict.fromkeys(counts_by_group_source, 0)
+    points = []
+    for source_index, (qs, gps_field, event_type, source_key) in enumerate(
+        prepared_sources
+    ):
+        for record in qs.iterator(chunk_size=250):
+            geo_values = _derived_record_geo_values(record, geo_resolver)
+            group_key = _normalized_geo_key(geo_values, hierarchy)
+            pair = (group_key, source_index)
+            if skipped_by_pair.get(pair, 0) < skip_by_pair.get(pair, 0):
+                skipped_by_pair[pair] = skipped_by_pair.get(pair, 0) + 1
+                continue
+            if collected_by_pair.get(pair, 0) >= take_by_pair.get(pair, 0):
+                continue
+            point = _serialize_gps_record(
+                record,
+                gps_field=gps_field,
+                event_type=event_type,
+                geo_values=_derived_record_display_geo_values(record, geo_values),
+                point_id_prefix=source_key,
+            )
+            if point is None:
+                continue
+            points.append(point)
+            collected_by_pair[pair] = collected_by_pair.get(pair, 0) + 1
+
+    result = (
+        points,
+        total_with_gps,
+        total_with_gps > (offset + len(points)),
+    )
+    cache.set(cache_key, result, timeout=GPS_CACHE_TIMEOUT)
+    return result
+
+
 def _attach_gps_payload(
-    payload, request, filtered_qs, *, gps_field, event_type, extra_sources=None
+    payload,
+    request,
+    filtered_qs,
+    *,
+    gps_field,
+    event_type,
+    extra_sources=None,
+    hierarchy=(),
+    default_limit=GPS_DEFAULT_LIMIT,
+    max_limit=GPS_DEFAULT_LIMIT,
+    geo_resolver=None,
 ):
     """Attach GPS-related fields to a map API payload, applying PII gating.
 
@@ -808,7 +1181,9 @@ def _attach_gps_payload(
     tuples whose points are combined with the primary queryset's — used to fold
     VASA GPS points onto the verbal-autopsy layer.
     """
-    include, limit, offset = _gps_request_params(request)
+    include, limit, offset = _gps_request_params(
+        request, default_limit=default_limit, max_limit=max_limit
+    )
     if not include:
         return payload
     user = getattr(request, "user", None)
@@ -829,6 +1204,20 @@ def _attach_gps_payload(
     sources = [(filtered_qs, gps_field, event_type)]
     if extra_sources:
         sources.extend(extra_sources)
+    if geo_resolver is not None:
+        points, total, truncated = _build_resolved_combined_gps_points(
+            sources,
+            hierarchy=hierarchy,
+            limit=limit,
+            offset=offset,
+            geo_resolver=geo_resolver,
+        )
+        payload["gps_points"] = points
+        payload["gps_total"] = total
+        payload["gps_truncated"] = truncated
+        payload["gps_pii_denied"] = False
+        return payload
+
     combined_points = []
     combined_total = 0
     truncated_any = False
@@ -840,6 +1229,7 @@ def _attach_gps_payload(
             limit=limit,
             offset=offset,
             cache_signature=_qs_cache_signature(qs),
+            hierarchy=hierarchy,
         )
         combined_points.extend(points)
         combined_total += total
@@ -1397,6 +1787,7 @@ class DashboardAPIView(APIView):
         sex = request.query_params.get("sex") or None
         source = request.query_params.get("source") or None
         compare_by = request.query_params.get("compare_by") or "province"
+        map_view = request.query_params.get("map_view") or "Province"
         # VASA is folded into the verbal-autopsy analytics; build both querysets
         # (the source filter selects between them / by community/facility).
         filtered_qs = get_filtered_va_queryset(request)
@@ -1422,6 +1813,10 @@ class DashboardAPIView(APIView):
             gps_field="geopoint",
             event_type="verbal_autopsy",
             extra_sources=[(filtered_vasa_qs, "geopoint", "verbal_autopsy")],
+            hierarchy=_gps_hierarchy_for_view(map_view),
+            default_limit=_outcomes_gps_max_points(),
+            max_limit=_outcomes_gps_max_points(),
+            geo_resolver=_derive_va_geo_levels,
         )
         return Response(data)
 
@@ -3799,6 +4194,9 @@ class PregnancyOutcomesMapAPIView(_PregnancyOutcomesBaseAPIView):
             filtered_qs,
             gps_field=self.gps_field,
             event_type=self.gps_event_type,
+            hierarchy=_gps_hierarchy_for_view(filter_state["map_view"]),
+            default_limit=_outcomes_gps_max_points(),
+            max_limit=_outcomes_gps_max_points(),
         )
         return Response(payload)
 
@@ -3927,6 +4325,9 @@ class PregnancyMapAPIView(PregnancyOutcomesMapAPIView):
             filtered_qs,
             gps_field=self.gps_field,
             event_type=self.gps_event_type,
+            hierarchy=_gps_hierarchy_for_view(filter_state["map_view"]),
+            default_limit=_outcomes_gps_max_points(),
+            max_limit=_outcomes_gps_max_points(),
         )
         return Response(payload)
 
@@ -4059,6 +4460,9 @@ class DeathsMapAPIView(APIView):
             filtered_qs,
             gps_field=self.gps_field,
             event_type=self.gps_event_type,
+            hierarchy=_gps_hierarchy_for_view(map_view),
+            default_limit=_outcomes_gps_max_points(),
+            max_limit=_outcomes_gps_max_points(),
         )
         return Response(payload)
 

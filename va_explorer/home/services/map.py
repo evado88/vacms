@@ -28,6 +28,7 @@ from va_explorer.va_data_management.models import (
     PregnancyOutcome,
     VerbalAutopsy,
 )
+from va_explorer.va_data_management.utils.geopoint import allocate_proportional_limits
 from va_explorer.va_data_management.utils.location_access import (
     restrict_queryset_to_user_locations,
 )
@@ -608,13 +609,13 @@ def _attach_home_gps_payload(
         )
         for event_type in event_types
     ]
-    event_limits = _allocate_proportional_gps_limits(event_counts, limit)
+    event_limits = allocate_proportional_limits(event_counts, limit)
     source_limits = [0] * len(sources)
     for event_type, event_limit in zip(event_types, event_limits):
         source_indexes = [
             index for index, source in enumerate(sources) if source[2] == event_type
         ]
-        limits = _allocate_proportional_gps_limits(
+        limits = allocate_proportional_limits(
             [source_counts[index] for index in source_indexes], event_limit
         )
         for source_index, source_limit in zip(source_indexes, limits):
@@ -638,51 +639,3 @@ def _attach_home_gps_payload(
     payload["gps_total"] = combined_total
     payload["gps_truncated"] = combined_total > len(combined_points)
     payload["gps_pii_denied"] = False
-
-
-def _allocate_proportional_gps_limits(counts, limit):
-    """Allocate a capped sample without starving small non-empty sources."""
-    capacities = [max(0, int(count or 0)) for count in counts]
-    allocation = [0] * len(capacities)
-    active_indexes = [index for index, count in enumerate(capacities) if count]
-    target = min(max(0, int(limit or 0)), sum(capacities))
-    if not active_indexes or target <= 0:
-        return allocation
-
-    if target < len(active_indexes):
-        ranked = sorted(active_indexes, key=lambda index: (-capacities[index], index))
-        for index in ranked[:target]:
-            allocation[index] = 1
-        return allocation
-
-    for index in active_indexes:
-        allocation[index] = 1
-    remaining = target - len(active_indexes)
-    if remaining <= 0:
-        return allocation
-
-    residual_capacities = [
-        capacities[index] - allocation[index] for index in range(len(capacities))
-    ]
-    residual_total = sum(residual_capacities)
-    if residual_total <= 0:
-        return allocation
-
-    remainders = []
-    for index in active_indexes:
-        exact_share = remaining * residual_capacities[index] / residual_total
-        whole_share = min(residual_capacities[index], int(exact_share))
-        allocation[index] += whole_share
-        remainders.append((exact_share - whole_share, capacities[index], index))
-
-    leftover = target - sum(allocation)
-    for _fraction, _capacity, index in sorted(
-        remainders, key=lambda item: (-item[0], -item[1], item[2])
-    ):
-        if leftover <= 0:
-            break
-        if allocation[index] >= capacities[index]:
-            continue
-        allocation[index] += 1
-        leftover -= 1
-    return allocation

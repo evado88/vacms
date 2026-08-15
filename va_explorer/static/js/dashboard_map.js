@@ -253,6 +253,7 @@ const dashboard = new Vue({
                 fitToDataBounds: false,
                 noDataMessage: "No geographic VA data available for the selected filters.",
                 userCanViewPII: this.userCanViewPII,
+                gpsFollowsDrilldown: true,
             });
         }
 

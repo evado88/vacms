@@ -2,14 +2,18 @@
 
 import pytest
 from django.contrib.auth.models import Permission
+from django.core.cache import cache
+from django.test import override_settings
 from django.urls import reverse
 
 from va_explorer.tests.factories import GroupFactory, UserFactory
 from va_explorer.va_data_management.models import (
+    VASA,
     Death,
     Location,
     Pregnancy,
     PregnancyOutcome,
+    SRSClusterLocation,
     VerbalAutopsy,
 )
 
@@ -402,3 +406,304 @@ def test_map_ea_sums_match_geojson_ea_names(
 
     assert {"ea_name": "05055012002", "count": 1} in data["map_ea_sums"]
     assert "EA_05055012002" not in {row["ea_name"] for row in data["map_ea_sums"]}
+
+
+def _regular_gps_record(model, index, province):
+    common = {
+        "key": f"balanced-{model._meta.model_name}-{index}",
+        "province": province,
+        "district": f"{province} District",
+        "constituency": f"{province} Constituency",
+        "ward": f"{province} Ward",
+        "ea": f"{province} EA",
+        "submissiondate": "2026-02-01",
+        "today": "2026-02-01",
+    }
+    coordinate = f"-1{index % 8}.5 2{index % 8}.3"
+    if model is Pregnancy:
+        return model(PE_25=coordinate, PE_09A="2026-02-01", **common)
+    if model is PregnancyOutcome:
+        return model(gps=coordinate, **common)
+    return model(DE_34=coordinate, DE_06="2026-02-01", **common)
+
+
+@pytest.mark.django_db
+@override_settings(OUTCOMES_DASHBOARD_GPS_MAX_POINTS=4)
+@pytest.mark.parametrize(
+    ("endpoint_name", "model"),
+    [
+        ("va_analytics:pregnancy-map-api", Pregnancy),
+        ("va_analytics:po-map-api", PregnancyOutcome),
+        ("va_analytics:outcomes-deaths-map-api", Death),
+    ],
+)
+def test_default_cap_balances_province_batched_records(client, endpoint_name, model):
+    cache.clear()
+    provinces = ["Lusaka", "Southern", "Copperbelt", "Central"]
+    records = []
+    for province in provinces:
+        records.extend(
+            _regular_gps_record(model, len(records) + offset, province)
+            for offset in range(3)
+        )
+    model.objects.bulk_create(records)
+    _make_user_with_perms(client, ["view_dashboard", "view_pii"])
+
+    data = client.get(
+        reverse(endpoint_name),
+        {"include_gps_points": "true", "map_view": "Province"},
+    ).json()
+
+    assert data["gps_total"] == 12
+    assert data["gps_truncated"] is True
+    assert len(data["gps_points"]) == 4
+    assert {point["province"] for point in data["gps_points"]} == set(provinces)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("endpoint_name", "model"),
+    [
+        ("va_analytics:pregnancy-map-api", Pregnancy),
+        ("va_analytics:po-map-api", PregnancyOutcome),
+        ("va_analytics:outcomes-deaths-map-api", Death),
+    ],
+)
+@pytest.mark.parametrize(
+    ("map_view", "active_field"),
+    [
+        ("Province", "province"),
+        ("District", "district"),
+        ("Constituency", "constituency"),
+        ("Ward", "ward"),
+        ("EA", "ea"),
+    ],
+)
+def test_outcomes_gps_balances_the_active_geographic_level(
+    client, endpoint_name, model, map_view, active_field
+):
+    cache.clear()
+    base_geo = {
+        "province": "Root",
+        "district": "Root District",
+        "constituency": "Root Constituency",
+        "ward": "Root Ward",
+        "ea": "Root EA",
+    }
+    records = []
+    for index, active_value in enumerate(["Alpha", "Alpha", "Alpha", "Beta"]):
+        geo = {**base_geo, active_field: active_value}
+        record = _regular_gps_record(model, index, geo["province"])
+        record.key = f"hierarchy-{model._meta.model_name}-{active_field}-{index}"
+        for field_name, value in geo.items():
+            setattr(record, field_name, value)
+        records.append(record)
+    model.objects.bulk_create(records)
+    _make_user_with_perms(client, ["view_dashboard", "view_pii"])
+
+    data = client.get(
+        reverse(endpoint_name),
+        {
+            "include_gps_points": "true",
+            "gps_limit": "2",
+            "map_view": map_view,
+        },
+    ).json()
+
+    assert len(data["gps_points"]) == 2
+    assert {point[active_field] for point in data["gps_points"]} == {
+        "Alpha",
+        "Beta",
+    }
+
+
+@pytest.mark.django_db
+def test_gps_drilldown_filters_to_parent_before_balancing_children(client):
+    cache.clear()
+    rows = [
+        ("Alpha", "District A", "-14.1 28.1"),
+        ("Alpha", "District B", "-14.2 28.2"),
+        ("Beta", "District C", "-14.3 28.3"),
+    ]
+    Pregnancy.objects.bulk_create(
+        [
+            Pregnancy(
+                key=f"parent-filter-{index}",
+                province=province,
+                district=district,
+                PE_25=gps,
+                PE_09A="2026-02-01",
+                submissiondate="2026-02-01",
+                today="2026-02-01",
+            )
+            for index, (province, district, gps) in enumerate(rows)
+        ]
+    )
+    _make_user_with_perms(client, ["view_dashboard", "view_pii"])
+
+    data = client.get(
+        reverse("va_analytics:pregnancy-map-api"),
+        {
+            "include_gps_points": "true",
+            "gps_limit": "2",
+            "map_view": "District",
+            "geography_level": "province",
+            "geography_value": "Alpha",
+        },
+    ).json()
+
+    assert data["gps_total"] == 2
+    assert {point["province"] for point in data["gps_points"]} == {"Alpha"}
+    assert {point["district"] for point in data["gps_points"]} == {
+        "District A",
+        "District B",
+    }
+
+
+@pytest.mark.django_db
+def test_hierarchy_and_offset_have_independent_deterministic_samples(client):
+    cache.clear()
+    Pregnancy.objects.bulk_create(
+        [
+            Pregnancy(
+                key=f"cache-offset-{index}",
+                province="Alpha",
+                district="District A" if index < 3 else "District B",
+                PE_25=f"-1{index}.5 2{index}.3",
+                PE_09A="2026-02-01",
+                submissiondate="2026-02-01",
+                today="2026-02-01",
+            )
+            for index in range(4)
+        ]
+    )
+    _make_user_with_perms(client, ["view_dashboard", "view_pii"])
+    endpoint = reverse("va_analytics:pregnancy-map-api")
+
+    province_page = client.get(
+        endpoint,
+        {"include_gps_points": "true", "gps_limit": "2", "map_view": "Province"},
+    ).json()
+    district_page = client.get(
+        endpoint,
+        {"include_gps_points": "true", "gps_limit": "2", "map_view": "District"},
+    ).json()
+    district_next_page = client.get(
+        endpoint,
+        {
+            "include_gps_points": "true",
+            "gps_limit": "2",
+            "gps_offset": "2",
+            "map_view": "District",
+        },
+    ).json()
+
+    assert {point["district"] for point in province_page["gps_points"]} == {
+        "District A"
+    }
+    assert {point["district"] for point in district_page["gps_points"]} == {
+        "District A",
+        "District B",
+    }
+    assert {point["id"] for point in district_page["gps_points"]}.isdisjoint(
+        {point["id"] for point in district_next_page["gps_points"]}
+    )
+    assert district_next_page["gps_total"] == 4
+    assert district_next_page["gps_truncated"] is False
+
+
+@pytest.mark.django_db
+@override_settings(OUTCOMES_DASHBOARD_GPS_MAX_POINTS=4)
+def test_va_and_vasa_share_one_geographically_balanced_cap(client):
+    cache.clear()
+    for index, province in enumerate(["Alpha", "Alpha", "Alpha", "Beta"]):
+        VerbalAutopsy.objects.create(
+            instanceid=f"balanced-va-{index}",
+            geopoint=f"-1{index}.1 2{index}.1",
+            Id10023="2026-02-01",
+            community_va="yes",
+            province=province,
+        )
+    for index, province in enumerate(["Alpha", "Beta", "Beta", "Beta"]):
+        VASA.objects.create(
+            instanceid=f"balanced-vasa-{index}",
+            geopoint=f"-1{index}.2 2{index}.2",
+            Id10023="2026-02-01",
+            community_va="yes",
+            province=province,
+        )
+    _make_user_with_perms(client, ["view_dashboard", "view_pii"])
+
+    data = client.get(
+        reverse("va_analytics:dashboard-api"),
+        {"include_gps_points": "true", "map_view": "Province", "source": "all"},
+    ).json()
+
+    assert data["gps_total"] == 8
+    assert data["gps_truncated"] is True
+    assert len(data["gps_points"]) == 4
+    assert {point["province"] for point in data["gps_points"]} == {
+        "Alpha",
+        "Beta",
+    }
+    assert {point["id"].split("_", 1)[0] for point in data["gps_points"]} == {
+        "verbalautopsy",
+        "vasa",
+    }
+
+
+@pytest.mark.django_db
+def test_va_gps_uses_standard_geography_aliases_and_cluster_hierarchy(client):
+    cache.clear()
+    province = SRSClusterLocation.add_root(
+        name="Derived Province", location_type="province", code="P1", status="Active"
+    )
+    district = province.add_child(
+        name="D-One", location_type="district", code="D1", status="Active"
+    )
+    constituency = district.add_child(
+        name="C-One",
+        location_type="constituency",
+        code="C1",
+        status="Active",
+    )
+    ward = constituency.add_child(
+        name="W-One", location_type="ward", code="W1", status="Active"
+    )
+    ea = ward.add_child(
+        name="123456789", location_type="ea", code="EA1", status="Active"
+    )
+    VerbalAutopsy.objects.create(
+        instanceid="cluster-derived-gps",
+        geopoint="-14.5 28.3",
+        Id10023="2026-02-01",
+        community_va="yes",
+        cluster=ea,
+    )
+    VerbalAutopsy.objects.create(
+        instanceid="outside-derived-gps",
+        geopoint="-15.0 29.0",
+        Id10023="2026-02-01",
+        community_va="yes",
+        province="Outside",
+    )
+    _make_user_with_perms(client, ["view_dashboard", "view_pii"])
+
+    data = client.get(
+        reverse("va_analytics:dashboard-api"),
+        {
+            "include_gps_points": "true",
+            "map_view": "EA",
+            "geography_level": "province",
+            "geography_value": "Derived",
+        },
+    ).json()
+
+    assert data["gps_total"] == 1
+    assert len(data["gps_points"]) == 1
+    point = data["gps_points"][0]
+    assert point["province"] == "Derived"
+    assert point["district"] == "D-One"
+    assert point["constituency"] == "C-One"
+    assert point["ward"] == "W-One"
+    assert point["ea"] == "123456789"

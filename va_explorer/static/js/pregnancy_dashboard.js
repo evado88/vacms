@@ -113,6 +113,7 @@
           styleVariant: "va",
           noDataMessage: "No mapped pregnancy events in current filter range.",
           userCanViewPII,
+          gpsFollowsDrilldown: true,
         })
       : null;
 

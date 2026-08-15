@@ -47,6 +47,25 @@ def test_vasa_loader_exposes_each_repeat_group():
     }
 
 
+def test_va_vasa_export_repairs_are_available_as_maintenance_commands():
+    groups = grouped_command_specs()
+    maintenance = {spec.key for spec in groups["Maintenance"]}
+
+    assert {
+        "backfill_va_submitted_at",
+        "resolve_vasa_locations",
+    }.issubset(maintenance)
+
+    backfill = ALLOWLIST["backfill_va_submitted_at"]
+    assert {field.flag for field in backfill.inputs} == {
+        "--dry-run",
+        "--batch-size",
+    }
+
+    location_backfill = ALLOWLIST["resolve_vasa_locations"]
+    assert {field.flag for field in location_backfill.inputs} == {"--dry-run"}
+
+
 def test_favorites_include_required_commands():
     favorites = {item.key for item in REGISTRY_ITEMS if item.favorite}
     assert REQUIRED_FAVORITES.issubset(favorites)

@@ -17,6 +17,54 @@ _BARE_COMPONENT_RE = re.compile(
 )
 
 
+def allocate_proportional_limits(counts, limit):
+    """Allocate a capped sample without starving small non-empty groups."""
+    capacities = [max(0, int(count or 0)) for count in counts]
+    allocation = [0] * len(capacities)
+    active_indexes = [index for index, count in enumerate(capacities) if count]
+    target = min(max(0, int(limit or 0)), sum(capacities))
+    if not active_indexes or target <= 0:
+        return allocation
+
+    if target < len(active_indexes):
+        ranked = sorted(active_indexes, key=lambda index: (-capacities[index], index))
+        for index in ranked[:target]:
+            allocation[index] = 1
+        return allocation
+
+    for index in active_indexes:
+        allocation[index] = 1
+    remaining = target - len(active_indexes)
+    if remaining <= 0:
+        return allocation
+
+    residual_capacities = [
+        capacities[index] - allocation[index] for index in range(len(capacities))
+    ]
+    residual_total = sum(residual_capacities)
+    if residual_total <= 0:
+        return allocation
+
+    remainders = []
+    for index in active_indexes:
+        exact_share = remaining * residual_capacities[index] / residual_total
+        whole_share = min(residual_capacities[index], int(exact_share))
+        allocation[index] += whole_share
+        remainders.append((exact_share - whole_share, capacities[index], index))
+
+    leftover = target - sum(allocation)
+    for _fraction, _capacity, index in sorted(
+        remainders, key=lambda item: (-item[0], -item[1], item[2])
+    ):
+        if leftover <= 0:
+            break
+        if allocation[index] >= capacities[index]:
+            continue
+        allocation[index] += 1
+        leftover -= 1
+    return allocation
+
+
 def geopoint_component_name(column):
     match = GEOPOINT_COMPONENT_RE.match(str(column))
     if not match:

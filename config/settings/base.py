@@ -44,6 +44,12 @@ LOCALE_PATHS = [str(ROOT_DIR / "locale")]
 
 # App-specific Configuration
 
+# Maximum number of PII GPS markers returned by each Outcomes Dashboard map
+# request.  The frontend can request fewer points, but cannot exceed this cap.
+OUTCOMES_DASHBOARD_GPS_MAX_POINTS = env.int(
+    "OUTCOMES_DASHBOARD_GPS_MAX_POINTS", default=5000
+)
+
 # ==> Configuration for automatic duplicates detection
 # VA Explorer will automatically mark Verbal Autopsies as duplicates if
 # QUESTIONS_TO_AUTODETECT_DUPLICATES is defined

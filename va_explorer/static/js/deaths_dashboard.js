@@ -109,6 +109,7 @@
           fitToDataBounds: false,
           noDataMessage: "No mapped deaths in current filter range.",
           userCanViewPII,
+          gpsFollowsDrilldown: true,
         })
       : null;
 

@@ -159,6 +159,7 @@
           styleVariant: "va",
           noDataMessage: "No mapped outcomes in current filter range.",
           userCanViewPII,
+          gpsFollowsDrilldown: true,
         })
       : null;
 

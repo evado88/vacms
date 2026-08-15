@@ -91,6 +91,7 @@
       includeSelectionInRequest = true,
       userCanViewPII = false,
       enableDrilldown = true,
+      gpsFollowsDrilldown = false,
     } = options;
 
     const state = {
@@ -497,9 +498,26 @@
         userCanViewPII: true,
         fetchPoints: async () => {
           const params = buildParams(state.filters || {});
-          if (!includeSelectionInRequest) {
+          if (gpsFollowsDrilldown) {
+            const visibleLevel = LEVEL_CONFIG[currentLevel()]?.label || "Province";
+            const selection = currentSelection();
+            params.set("map_view", visibleLevel);
+            if (selection.geography_level && selection.geography_value) {
+              params.set("geography_level", selection.geography_level);
+              params.set("geography_value", selection.geography_value);
+            } else {
+              params.delete("geography_level");
+              params.delete("geography_value");
+            }
+          } else if (!includeSelectionInRequest) {
             params.delete("geography_level");
             params.delete("geography_value");
+          } else {
+            const selection = currentSelection();
+            if (selection.geography_level && selection.geography_value) {
+              params.set("geography_level", selection.geography_level);
+              params.set("geography_value", selection.geography_value);
+            }
           }
           params.set("include_gps_points", "true");
           const requestUrl = params.toString()

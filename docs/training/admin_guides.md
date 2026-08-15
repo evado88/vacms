@@ -168,6 +168,44 @@ from within the container. Below is a selection of management commands,
 generally useful to admins. An even fuller list of these can be found under
 [Development Commands](../develop.md#development-commands)
 
+### Repairing VA/VASA download eligibility
+
+VA/VASA downloads use the canonical submission timestamp and the requesting
+user's location scope. Older or bulk-imported records can therefore be absent
+from an otherwise valid download when either `submitted_at` is missing or a
+VASA record has not been mapped to a location. Both repair commands are
+idempotent and are also available under **Admin Panel → Maintenance**.
+
+Audit first, without changing the database:
+
+```shell
+python manage.py backfill_va_submitted_at --dry-run
+python manage.py resolve_vasa_locations --dry-run
+```
+
+For `backfill_va_submitted_at`, `parsed` is the number of missing timestamps
+that can be repaired, `blank` means that no source submission date is present,
+and `invalid` means that the raw value must be corrected before the record can
+appear in a dated download. `updated=0` is expected during a dry run. Despite
+its historical name, the command checks all ODK form models, not only VA/VASA.
+
+After reviewing the output, apply the repairs and verify that nothing remains
+repairable:
+
+```shell
+python manage.py backfill_va_submitted_at --batch-size 1000
+python manage.py resolve_vasa_locations
+python manage.py backfill_va_submitted_at --dry-run
+python manage.py resolve_vasa_locations --dry-run
+```
+
+Run `resolve_vasa_locations` only after the location tree and SRS EA population
+reference data have been loaded or refreshed. Unresolved VASA geography is
+reported and retained as a data-quality issue rather than guessed. Normal
+deployments should still run `python manage.py migrate`; migration `0059`
+performs the initial submission-timestamp backfill, while the management
+command is the repeatable repair for later imports that bypass model saving.
+
 ````{eval-rst}
 .. tabularcolumns:: |p{\dimexpr 0.25\linewidth-2\tabcolsep}|p{\dimexpr 0.25\linewidth-2\tabcolsep}|p{\dimexpr 0.50\linewidth-2\tabcolsep}|
 .. flat-table:: Descriptions and lists of parameters for select management commands related to administration of VA Explorer
