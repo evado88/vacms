@@ -79,6 +79,7 @@ caption: Additional Info
 ---
 
 reference
+odk_vacms_architecture
 Offline Docs <https://va-explorer.github.io/va_explorer/_static/VAExplorerDocs.pdf>
 ```
 

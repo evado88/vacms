@@ -291,6 +291,34 @@ class DeathsApiSchemaTests(TestCase):
         )
         assert response.status_code == 400
 
+    def test_map_applies_demographic_and_geography_filters(self):
+        Death.objects.bulk_create(
+            [
+                Death(
+                    key="death-filtered-map",
+                    DE_04="1990-01-01",
+                    DE_05="Female",
+                    DE_06="2026-03-01",
+                    province="Southern",
+                    district="Choma",
+                    submissiondate="2026-03-02",
+                )
+            ]
+        )
+
+        data = self.client.get(
+            reverse("va_analytics:outcomes-deaths-map-api"),
+            {
+                "sex": "Female",
+                "age_group": "adult",
+                "geography_level": "province",
+                "geography_value": "Southern",
+            },
+        ).json()
+
+        assert data["map_total_events"] == 1
+        assert data["province_counts"] == [{"name": "Southern", "count": 1}]
+
     def test_mortality_trend_hard_starts_at_january_2025(self):
         Death.objects.bulk_create(
             [

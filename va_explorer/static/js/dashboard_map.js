@@ -238,7 +238,7 @@ const dashboard = new Vue({
                 breadcrumbId: "vaMapBreadcrumb",
                 emptyStateId: "vaMapEmpty",
                 endpoint: this.mapEndpoint || this.vaCauseTrendEndpoint,
-                buildParams: () => this.buildDashboardQueryParams(false),
+                buildParams: () => this.buildDashboardQueryParams(true),
                 onSelectionChange: async (selection) => {
                     this.mapSelection = {
                         geography_level: selection?.geography_level || "",

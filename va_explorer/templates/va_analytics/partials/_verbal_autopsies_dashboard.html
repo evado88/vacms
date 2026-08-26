@@ -100,7 +100,7 @@
       <!-- Trend (mirrors Mortality Trend) -->
       <section class="sectionContainer" id="vaTrendSection" data-component="trend">
         <div class="dashboard-section-head">
-          <h2>Cause of Death Trend</h2>
+          <h2>Probable Cause of Death Trend</h2>
           <small class="text-muted">Monthly multi-cause trend</small>
         </div>
         <div class="chartsContainer" ref="trend">
@@ -116,7 +116,7 @@
         <div class="va-inner-col">
           <section class="sectionContainer" id="vaCodSection" data-component="causes">
             <div class="dashboard-section-head">
-              <h2>Cause of Death Analysis</h2>
+              <h2><% causeOfDeathValue === 'percentage' ? 'Cause Specific Mortality Fractions' : 'Probable Cause of Death Analysis' %></h2>
               <div class="chart-mode-toggle">
                 <input id="COD_count" type="radio" value="count" v-model="causeOfDeathValue">
                 <label for="COD_count">Count</label>
@@ -165,7 +165,7 @@
       <!-- Regional Comparison (mirrors Reporting Timeliness) -->
       <section class="sectionContainer" id="vaRegionalComparisonSection" data-component="regional-comparison">
         <div class="dashboard-section-head">
-          <h2>Cause of Death Comparison</h2>
+          <h2>Probable Cause of Death Comparison</h2>
           <small class="text-muted">Top 5 COD + Other</small>
         </div>
         <div class="mainFiltersContainer va-compare-filter">

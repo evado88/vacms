@@ -125,7 +125,7 @@
     </section>
 
     <section class="sectionContainer topCausesView">
-      <h2>Cause of Death Analysis</h2>
+      <h2><% causeOfDeathValue === 'percentage' ? 'Cause Specific Mortality Fractions' : 'Probable Cause of Death Analysis' %></h2>
       <div>
         <input id="COD_count" type="radio" value="count" v-model="causeOfDeathValue">
         <label for="COD_count" style="vertical-align: super; font-size: 12px">Count</label>

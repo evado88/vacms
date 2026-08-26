@@ -104,7 +104,7 @@
             };
             refreshDataOnly().catch((err) => console.error(err));
           },
-          includeSelectionInRequest: false,
+          includeSelectionInRequest: true,
           styleVariant: "va",
           fitToDataBounds: false,
           noDataMessage: "No mapped deaths in current filter range.",

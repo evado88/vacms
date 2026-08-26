@@ -155,7 +155,7 @@
             };
             refreshDataOnly().catch((err) => console.error(err));
           },
-          includeSelectionInRequest: false,
+          includeSelectionInRequest: true,
           styleVariant: "va",
           noDataMessage: "No mapped outcomes in current filter range.",
           userCanViewPII,

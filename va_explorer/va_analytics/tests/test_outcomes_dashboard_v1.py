@@ -237,3 +237,25 @@ class TestPregnancyOutcomesApiSchemas:
             "map_ward_sums",
             "map_ea_sums",
         }.issubset(set(data.keys()))
+
+    def test_map_applies_outcome_and_geography_filters(self, client):
+        PregnancyOutcome.objects.create(
+            key="po-filtered-map",
+            po_group="Stillbirth",
+            PO_41="2026-02-02",
+            province="Southern",
+            district="Choma",
+            submissiondate="2026-02-02",
+        )
+
+        data = client.get(
+            reverse("va_analytics:po-map-api"),
+            {
+                "pregnancy_outcome": "Stillbirth",
+                "geography_level": "province",
+                "geography_value": "Southern",
+            },
+        ).json()
+
+        assert data["map_total_events"] == 1
+        assert data["province_counts"] == [{"name": "Southern", "count": 1}]

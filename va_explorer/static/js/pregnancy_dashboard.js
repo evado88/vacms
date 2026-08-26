@@ -109,7 +109,7 @@
             };
             refreshDataOnly().catch((err) => console.error(err));
           },
-          includeSelectionInRequest: false,
+          includeSelectionInRequest: true,
           styleVariant: "va",
           noDataMessage: "No mapped pregnancy events in current filter range.",
           userCanViewPII,

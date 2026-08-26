@@ -183,3 +183,26 @@ class PregnancyDashboardEndpointSchemaTests(TestCase):
             "map_ward_sums",
             "map_ea_sums",
         }.issubset(set(data.keys()))
+
+    def test_map_applies_date_and_geography_filters(self):
+        Pregnancy.objects.create(
+            key="preg-filtered-map",
+            PE_09A="2026-03-01",
+            province="Southern",
+            district="Choma",
+            submissiondate="2026-03-02",
+        )
+
+        data = self.client.get(
+            reverse("va_analytics:pregnancy-map-api"),
+            {
+                "time_preset": "custom",
+                "start_datetime": "2026-03-01",
+                "end_datetime": "2026-03-31",
+                "geography_level": "province",
+                "geography_value": "Southern",
+            },
+        ).json()
+
+        assert data["map_total_events"] == 1
+        assert data["province_counts"] == [{"name": "Southern", "count": 1}]
